@@ -2,6 +2,7 @@ import { Children, isValidElement, useEffect, useLayoutEffect, useRef, useState,
 import { createPortal } from "react-dom";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "./dialog";
+import { sanitizeNumericInput } from "@/lib/number-input";
 
 export { Button } from "./button";
 export { ConfirmDialog, Dialog, Modal, cn } from "./dialog";
@@ -10,8 +11,12 @@ export type { ModalProps } from "./dialog";
 type FieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string };
 
 export function Field({ label, hint, className = "", ...props }: FieldProps) {
-  const { placeholder, ...inputProps } = props;
-  return <label className={cn("modal-field", className)}>{label ? <span className="modal-field-label">{label}</span> : null}<input className="floating-input modal-field-input" placeholder={placeholder} {...inputProps} />{hint ? <span className="modal-field-hint">{hint}</span> : null}</label>;
+  const { placeholder, type, onChange, ...inputProps } = props;
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (type === "number") event.target.value = sanitizeNumericInput(event.target.value);
+    onChange?.(event);
+  };
+  return <label className={cn("modal-field", className)}>{label ? <span className="modal-field-label">{label}</span> : null}<input className="floating-input modal-field-input" placeholder={placeholder} type={type} onChange={handleChange} {...inputProps} />{hint ? <span className="modal-field-hint">{hint}</span> : null}</label>;
 }
 
 type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & { label: string; hint?: string; searchable?: boolean; searchPlaceholder?: string; children: ReactNode };

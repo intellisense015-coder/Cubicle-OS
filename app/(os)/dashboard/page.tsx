@@ -11,9 +11,11 @@ import { DataTable } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getDemoSession, getDemoValue } from "@/lib/demo-session";
 import { getWorkspaceRecords, isAssignableWorkspace } from "@/lib/workspace-records";
+import { syncWorkspaceBilling } from "@/lib/billing";
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { normalizeLeadStage } from "@/lib/lead-stages";
+import { getActiveMemberInvoices } from "@/lib/billing";
 
 function formatDashboardFollowUp(value) {
   if (!value || value === "Not scheduled") return value || "Not scheduled";
@@ -171,15 +173,18 @@ export default function DashboardPage() {
     setSession(current);
 
     const loadDashboardData = () => {
-      const workspaces = getWorkspaceRecords().filter(isAssignableWorkspace);
+      const workspaces = syncWorkspaceBilling(getWorkspaceRecords()).workspaces.filter(isAssignableWorkspace);
       setWorkspaceRows(workspaces);
       setSpaceOccupancy({
         occupied: workspaces.filter((workspace) => workspace.status === "occupied").length,
         total: workspaces.length,
       });
 
+      const savedMembers = getDemoValue("members");
       const savedInvoices = getDemoValue("invoices");
-      setInvoiceRows(Array.isArray(savedInvoices) ? savedInvoices : []);
+      const activeMemberInvoices = getActiveMemberInvoices(savedInvoices, Array.isArray(savedMembers) ? savedMembers : [], workspaces);
+      const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
+      setInvoiceRows(activeMemberInvoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
 
       const savedApprovals = getDemoValue("approvals");
       setApprovalRows(Array.isArray(savedApprovals) ? savedApprovals : []);

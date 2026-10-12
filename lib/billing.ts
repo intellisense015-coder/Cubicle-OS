@@ -18,6 +18,75 @@ export interface WorkspaceInvoice {
   graceUntil: string;
   paymentStatus: BillingStatus;
   emailStatus: string;
+  membershipPeriodId?: string;
+}
+
+/**
+ * Return only invoices that resolve to a current member record. Older demo
+ * invoices may not have memberId, so exact account matches are migrated while
+ * stale or manually-created non-member records are excluded.
+ */
+export function getValidMemberInvoices(invoices: readonly any[], members: readonly any[]) {
+  const memberList = Array.isArray(members) ? members : [];
+  const memberIds = new Set(memberList.map((member) => member.id).filter(Boolean));
+  const memberByAccount = new Map(memberList.map((member) => [
+    `${member.member} - ${member.company || "No company"}`,
+    member.id
+  ]));
+
+  return (Array.isArray(invoices) ? invoices : []).flatMap((invoice) => {
+    if (!invoice || typeof invoice !== "object") return [];
+    if (invoice.memberId && memberIds.has(invoice.memberId)) return [invoice];
+    const inferredMemberId = memberByAccount.get(String(invoice.account || ""));
+    return inferredMemberId ? [{ ...invoice, memberId: inferredMemberId }] : [];
+  });
+}
+
+function isActiveMember(member: any) {
+  return !["inactive", "deactivated", "disabled", "archived"].includes(String(member?.status || "active").trim().toLowerCase());
+}
+
+function invoicePeriodKey(invoice: any) {
+  const issueDate = String(invoice?.issueDate || "").slice(0, 7);
+  if (/^\d{4}-\d{2}$/.test(issueDate)) return issueDate;
+  return String(invoice?.period || "");
+}
+
+function invoiceSequence(invoice: any) {
+  return Number(String(invoice?.invoice || "").match(/(\d+)$/)?.[1] || 0);
+}
+
+/**
+ * Invoice read model used by the dashboard and register. It removes inactive
+ * members, stale workspace assignments, and duplicate invoices for the same
+ * member and billing period while preserving the best current assignment.
+ */
+export function getActiveMemberInvoices(invoices: readonly any[], members: readonly any[], workspaces: readonly any[] = []) {
+  const memberList = Array.isArray(members) ? members : [];
+  const activeMembers = memberList.filter(isActiveMember);
+  const activeMemberIds = new Set(activeMembers.map((member) => member.id).filter(Boolean));
+  const memberById = new Map(activeMembers.map((member) => [member.id, member]));
+  const workspaceById = new Map((Array.isArray(workspaces) ? workspaces : []).map((workspace) => [workspace.id, workspace]));
+  const validInvoices = getValidMemberInvoices(invoices, memberList).filter((invoice) => {
+    if (!invoice.memberId || !activeMemberIds.has(invoice.memberId)) return false;
+    if (!invoice.workspaceId) return true;
+    const workspace = workspaceById.get(invoice.workspaceId);
+    return Boolean(workspace && workspace.memberId === invoice.memberId && workspace.status === "occupied");
+  });
+  const bestByPeriod = new Map<string, any>();
+
+  for (const invoice of validInvoices) {
+    const member = memberById.get(invoice.memberId);
+    const key = `${invoice.memberId}::${invoicePeriodKey(invoice)}`;
+    const current = bestByPeriod.get(key);
+    const preferredWorkspace = member?.spaceId && invoice.workspaceId === member.spaceId;
+    const currentPreferredWorkspace = member?.spaceId && current?.workspaceId === member.spaceId;
+    if (!current || (preferredWorkspace && !currentPreferredWorkspace) || (preferredWorkspace === currentPreferredWorkspace && invoiceSequence(invoice) > invoiceSequence(current))) {
+      bestByPeriod.set(key, invoice);
+    }
+  }
+
+  return [...bestByPeriod.values()];
 }
 
 const invoiceAmount = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
@@ -88,14 +157,15 @@ function createInvoiceId(existing: readonly WorkspaceInvoice[], year: number) {
 export function syncWorkspaceBilling(workspaces: readonly any[]) {
   const savedInvoices = getDemoValue("invoices");
   const savedMembers = getDemoValue("members");
-  const invoices: WorkspaceInvoice[] = Array.isArray(savedInvoices) ? [...savedInvoices] : [];
   const members = Array.isArray(savedMembers) ? savedMembers : [];
+  const invoices: WorkspaceInvoice[] = getValidMemberInvoices(savedInvoices, members);
   const today = new Date();
   const todayKey = localDateKey(today);
 
   for (const workspace of workspaces) {
     if (!workspace.memberId) continue;
     const member = members.find((item) => item.id === workspace.memberId);
+    if (!member || !isActiveMember(member) || workspace.status !== "occupied") continue;
     const billingStartDate = parseDate(workspace.billingStartDate || member?.billingStartDate || member?.joined);
     if (!billingStartDate || todayKey < localDateKey(billingStartDate)) continue;
 
@@ -128,6 +198,7 @@ export function syncWorkspaceBilling(workspaces: readonly any[]) {
         graceUntil: localDateKey(graceUntil),
         paymentStatus: existing?.paymentStatus === "Paid" ? "Paid" : getBillingStatus({ paymentStatus: existing?.paymentStatus || "Due soon", dueDate: localDateKey(dueDate), graceUntil: localDateKey(graceUntil) }, today),
         emailStatus: existing?.emailStatus || "Not sent"
+        ,membershipPeriodId: workspace.membershipPeriodId || member.currentMembershipId || ""
       } satisfies WorkspaceInvoice;
       if (existingIndex >= 0) invoices[existingIndex] = invoice;
       else invoices.push(invoice);

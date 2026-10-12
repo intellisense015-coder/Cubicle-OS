@@ -23,7 +23,8 @@ const DEFAULT_NAV_GROUPS: NavGroupItem[] = [
   {
     label: "Workspace", icon: UsersRound, items: [
       { label: "Leads", href: "/leads", icon: UsersRound },
-      { label: "Members & Companies", href: "/members", icon: Building2 },
+      { label: "Members", href: "/members", icon: UsersRound },
+      { label: "Companies", href: "/companies", icon: Building2 },
       { label: "Visits", href: "/visits", icon: CalendarDays },
       { label: "Floor Plan", href: "/floor-plan", icon: DoorOpen },
       { label: "Workspaces", href: "/workspaces", icon: DoorOpen }

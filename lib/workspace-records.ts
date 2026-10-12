@@ -1,7 +1,7 @@
 import { floor4 } from "@/features/floor-plan/floor-4";
 import { isRentable, type AreaLiveData, type FloorArea, type FloorConfig } from "@/features/floor-plan/types";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { syncWorkspaceBilling } from "@/lib/billing";
+import { isMaintenanceVisible, maintenanceCategoryName, normalizeMaintenanceStatus, type MaintenanceStatus } from "@/lib/maintenance";
 
 export const workspaceTypes = ["Private office", "Cabin", "Dedicated desk", "Shared desk", "Meeting room", "Shared room", "Phone booth", "Shared facility"];
 const EMPTY_WORKSPACE_DATA_VERSION = "empty-floor-plan-v2";
@@ -59,6 +59,9 @@ function baseRecord(area: FloorArea) {
     billingStartDate: "",
     dueDay: 5,
     gracePeriodDays: 3,
+    maintenanceCategoryId: "",
+    maintenanceStatus: "deactivated" as MaintenanceStatus,
+    maintenanceReason: "",
     paymentStatus: "Not assigned",
     status: "available",
     floor: floor4.name
@@ -74,6 +77,7 @@ export function getWorkspaceRecords() {
   const currentVersion = getDemoValue(WORKSPACE_DATA_VERSION_KEY);
   const hasSavedRecords = Array.isArray(saved) && saved.length > 0;
   const merged = mergeWorkspaceRecords(hasSavedRecords ? saved : getInitialWorkspaceRecords());
+  const shouldInitialize = !hasSavedRecords || currentVersion !== EMPTY_WORKSPACE_DATA_VERSION;
   const records = currentVersion === EMPTY_WORKSPACE_DATA_VERSION || !hasSavedRecords
     ? merged
     : merged.map((record) => ({
@@ -85,9 +89,11 @@ export function getWorkspaceRecords() {
       paymentStatus: "Not assigned",
       status: "available"
     }));
-  saveDemoValue("workspaces", records);
-  saveDemoValue(WORKSPACE_DATA_VERSION_KEY, EMPTY_WORKSPACE_DATA_VERSION);
-  return syncWorkspaceBilling(records).workspaces;
+  if (shouldInitialize) {
+    saveDemoValue("workspaces", records);
+    saveDemoValue(WORKSPACE_DATA_VERSION_KEY, EMPTY_WORKSPACE_DATA_VERSION);
+  }
+  return records;
 }
 
 export function isAssignableWorkspace(workspace) {
@@ -122,11 +128,18 @@ export function workspaceRecordsToAreaData(records): AreaLiveData[] {
     const record = byAreaId.get(area.id) || baseRecord(area);
     const assignedMember = memberById.get(record.memberId);
     const occupied = record.status === "occupied";
+    const maintenanceStatus = normalizeMaintenanceStatus(record.maintenanceStatus);
+    const maintenance = isMaintenanceVisible(maintenanceStatus) ? {
+      category: maintenanceCategoryName(record.maintenanceCategoryId || record.maintenanceCategory),
+      status: maintenanceStatus,
+      reason: String(record.maintenanceReason || "No reason provided"),
+    } : undefined;
     return {
       areaId: area.id,
-      occupancy: record.status === "reserved" || record.status === "maintenance" ? record.status : occupied ? "occupied" : "available",
+      occupancy: maintenance ? "maintenance" : record.status === "reserved" || record.status === "maintenance" ? record.status : occupied ? "occupied" : "available",
       paymentStatus: record.paymentStatus === "Overdue" ? "overdue" : record.paymentStatus === "Grace" ? "grace" : record.paymentStatus === "Due soon" ? "due-soon" : record.paymentStatus === "Paid" ? "paid" : "unknown",
-      ...(occupied ? { member: { id: record.memberId || area.id, name: assignedMember?.company || record.company || "No company", contactName: assignedMember?.member || record.occupant || undefined, email: assignedMember?.email || undefined, employees: record.capacity || undefined, monthlyRent: assignedMember?.rent || record.monthlyRent || undefined } } : {})
+      ...(occupied ? { member: { id: record.memberId || area.id, name: assignedMember?.company || record.company || "No company", contactName: assignedMember?.member || record.occupant || undefined, email: assignedMember?.email || undefined, employees: record.capacity || undefined, monthlyRent: assignedMember?.rent || record.monthlyRent || undefined } } : {}),
+      ...(maintenance ? { maintenance } : {})
     };
   });
 }

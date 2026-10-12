@@ -1,3 +1,5 @@
+import type { MaintenanceStatus } from "@/lib/maintenance";
+
 /** All geometry is measured in original floor-image pixels. */
 export type Point = [number, number];
 export type AreaShape =
@@ -16,6 +18,7 @@ export interface AreaLiveData {
   member?: { id: string; name: string; contactName?: string; email?: string; phone?: string; employees?: number; monthlyRent?: string };
   outstandingPkr?: number;
   dueDate?: string; // YYYY-MM-DD, already interpreted using your business timezone
+  maintenance?: { category: string; status: MaintenanceStatus; reason: string };
 }
 export const STATUS_LABELS: Record<MapStatus, string> = {
   available: "Available", occupied: "Occupied", "due-soon": "Due soon", grace: "Due",
@@ -28,6 +31,7 @@ export function isRentable(area: FloorArea): boolean {
 /** Missing API records must never imply an office is vacant. */
 export function getAreaStatus(area: FloorArea, live?: AreaLiveData): MapStatus {
   if (!live) return isRentable(area) ? "unknown" : "shared";
+  if (live.maintenance && live.maintenance.status !== "deactivated") return "maintenance";
   if (live.occupancy === "available") return "available";
   if (live.occupancy === "reserved") return "reserved";
   if (live.occupancy === "maintenance") return "maintenance";

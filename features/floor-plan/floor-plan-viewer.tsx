@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/primitives";
 import { Dialog } from "@/components/ui/dialog";
 import { floor4 } from "./floor-4";
 import { getAreaStatus, isRentable, STATUS_LABELS, type AreaLiveData, type FloorArea, type FloorConfig, type MapStatus } from "./types";
 import { useToast } from "@/components/ui/toast-provider";
+import { MAINTENANCE_STATUS_LABELS } from "@/lib/maintenance";
 
 export interface FloorPlanViewerProps {
   floor?: FloorConfig;
@@ -22,6 +23,25 @@ export interface FloorPlanViewerProps {
 }
 const legend: MapStatus[] = ["available", "occupied", "due-soon", "grace", "overdue"];
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+function areaBounds(area: FloorArea) {
+  const shape = area.shape;
+  if (shape.type === "rect") return { x: shape.x, y: shape.y, width: shape.width, height: shape.height };
+  if (shape.type === "circle") return { x: shape.cx - shape.r, y: shape.cy - shape.r, width: shape.r * 2, height: shape.r * 2 };
+  const xs = shape.points.map(([x]) => x), ys = shape.points.map(([, y]) => y);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+function WorkspaceContextCard({ area, live, areaStatus, paymentLabel, pinned, style, onDismiss }: { area: FloorArea; live?: AreaLiveData; areaStatus: MapStatus; paymentLabel: string; pinned: boolean; style: CSSProperties; onDismiss: () => void }) {
+  return <div className={`fp-adjacent-card${pinned ? " fp-adjacent-card-pinned" : ""}`} role={pinned ? "dialog" : "status"} style={style}>
+    <div className="fp-details-heading"><div><div className="fp-eyebrow">Workspace details</div><strong>{live?.member?.contactName || live?.member?.name || area.name}</strong></div>{pinned ? <button type="button" className="fp-close" onClick={onDismiss} aria-label="Close workspace details">×</button> : null}</div>
+    <div className={`fp-badge fp-status-${areaStatus}`}>{STATUS_LABELS[areaStatus]}</div>
+    {live?.maintenance ? <div className="fp-maintenance-details"><span className={`fp-maintenance-badge fp-maintenance-${live.maintenance.status}`}>{MAINTENANCE_STATUS_LABELS[live.maintenance.status]}</span><dl><dt>Maintenance</dt><dd>{live.maintenance.category}</dd><dt>Reason</dt><dd>{live.maintenance.reason}</dd></dl></div> : null}
+    <dl><dt>Space</dt><dd>{area.name}</dd>{live?.member ? <><dt>Assigned to</dt><dd>{live.member.contactName || "Assigned member"}</dd><dt>Company</dt><dd>{live.member.name}</dd>{live.member.email ? <><dt>Email</dt><dd>{live.member.email}</dd></> : null}{live.member.monthlyRent ? <><dt>Monthly rent</dt><dd>{live.member.monthlyRent}</dd></> : null}{live.member.employees ? <><dt>Capacity</dt><dd>{live.member.employees} people</dd></> : null}</> : <><dt>Assignment</dt><dd>{areaStatus === "available" ? "Available for assignment" : "No member data available"}</dd></>}<dt>Payment</dt><dd>{paymentLabel}</dd></dl>
+    <p className="fp-id">Area ID: {area.id}</p>
+  </div>;
+}
 
 function AreaGeometry({ area }: { area: FloorArea }) {
   const shape = area.shape;
@@ -52,21 +72,19 @@ export function FloorPlanViewer({ floor = floor4, data, loading = false, error, 
   const matches = (area: FloorArea) => filter === "all" || status(area) === filter;
   const matching = floor.areas.filter(matches);
   const selectedArea = pinned ? floor.areas.find(area => area.id === pinned) : undefined;
-  const selectedLive = selectedArea ? lookup(selectedArea) : undefined;
-  const selectedStatus = selectedArea ? status(selectedArea) : undefined;
-  const selectedPaymentLabel = selectedLive?.paymentStatus === "paid" ? "Paid"
-    : selectedLive?.paymentStatus === "due-soon" ? "Due soon"
-      : selectedLive?.paymentStatus === "grace" ? "Due"
-        : selectedLive?.paymentStatus === "overdue" ? "Overdue" : "Not assigned";
-  const hoveredArea = hovered ? floor.areas.find(area => area.id === hovered) : undefined;
-  const hoveredLive = hoveredArea ? lookup(hoveredArea) : undefined;
-  const hoveredStatus = hoveredArea ? status(hoveredArea) : undefined;
-  const hoveredPaymentLabel = hoveredLive?.paymentStatus === "paid" ? "Paid"
-    : hoveredLive?.paymentStatus === "due-soon" ? "Due soon"
-      : hoveredLive?.paymentStatus === "grace" ? "Due"
-        : hoveredLive?.paymentStatus === "overdue" ? "Overdue" : "Not assigned";
+  const contextArea = selectedArea || (hovered ? floor.areas.find(area => area.id === hovered) : undefined);
+  const contextLive = contextArea ? lookup(contextArea) : undefined;
+  const contextStatus = contextArea ? status(contextArea) : undefined;
+  const contextPaymentLabel = contextLive?.paymentStatus === "paid" ? "Paid"
+    : contextLive?.paymentStatus === "due-soon" ? "Due soon"
+      : contextLive?.paymentStatus === "grace" ? "Due"
+        : contextLive?.paymentStatus === "overdue" ? "Overdue" : "Not assigned";
   const vw = floor.width / zoom, vh = floor.height / zoom;
   const ox = clamp(origin.x, 0, floor.width - vw), oy = clamp(origin.y, 0, floor.height - vh);
+  const contextPosition = contextArea ? areaBounds(contextArea) : undefined;
+  const contextOnLeft = contextPosition ? contextPosition.x + contextPosition.width > ox + vw * 0.68 : false;
+  const contextLeft = contextPosition ? clamp(((contextOnLeft ? contextPosition.x - 250 : contextPosition.x + contextPosition.width + 14) - ox) / vw * 100, 1, 78) : 0;
+  const contextTop = contextPosition ? clamp((contextPosition.y + contextPosition.height / 2 - 100 - oy) / vh * 100, 2, 78) : 0;
 
   useEffect(() => { setHovered(null); setPinned(null); setZoom(1); setOrigin({ x: 0, y: 0 }); setImageFailed(false); }, [floor.id, floor.image]);
   useEffect(() => {
@@ -137,39 +155,8 @@ export function FloorPlanViewer({ floor = floor4, data, loading = false, error, 
             </g>;
           })}
         </svg>
-        {hoveredArea && hoveredStatus && hovered !== pinned ? <div className="fp-hover-card" role="status"><strong>{hoveredArea.name}</strong><span className={`fp-badge fp-status-${hoveredStatus}`}>{hoveredStatus === "occupied" ? "Occupied" : "Vacant"}</span><dl><dt>Member</dt><dd>{hoveredLive?.member?.contactName || "Unassigned"}</dd><dt>Email</dt><dd>{hoveredLive?.member?.email || "—"}</dd><dt>Payment</dt><dd>{hoveredPaymentLabel}</dd></dl></div> : null}
+        {contextArea && contextStatus ? <WorkspaceContextCard area={contextArea} live={contextLive} areaStatus={contextStatus} paymentLabel={contextPaymentLabel} pinned={Boolean(pinned)} style={{ left: `${contextLeft}%`, top: `${contextTop}%` }} onDismiss={dismiss} /> : null}
       </div>
-      <aside className="fp-details" aria-live="polite">
-        {selectedArea && selectedStatus ? <>
-          <div className="fp-details-heading">
-            <div>
-              <div className="fp-eyebrow">Workspace details</div>
-              <h3>{selectedLive?.member?.contactName || selectedLive?.member?.name || selectedArea.name}</h3>
-            </div>
-            <button type="button" className="fp-close" onClick={dismiss} aria-label="Close workspace details">×</button>
-          </div>
-          <div className={`fp-badge fp-status-${selectedStatus}`}>{STATUS_LABELS[selectedStatus]}</div>
-          <dl>
-            <dt>Space</dt>
-            <dd>{selectedArea.name}</dd>
-            {selectedLive?.member ? <>
-              <dt>Assigned to</dt>
-              <dd>{selectedLive.member.contactName || "Assigned member"}</dd>
-              <dt>Company</dt>
-              <dd>{selectedLive.member.name}</dd>
-              {selectedLive.member.email ? <><dt>Email</dt><dd>{selectedLive.member.email}</dd></> : null}
-              {selectedLive.member.monthlyRent ? <><dt>Monthly rent</dt><dd>{selectedLive.member.monthlyRent}</dd></> : null}
-              {selectedLive.member.employees ? <><dt>Capacity</dt><dd>{selectedLive.member.employees} people</dd></> : null}
-            </> : <>
-              <dt>Assignment</dt>
-              <dd>{selectedStatus === "available" ? "Available for assignment" : "No member data available"}</dd>
-            </>}
-            <dt>Payment</dt>
-            <dd>{selectedPaymentLabel}</dd>
-          </dl>
-          <p className="fp-id">Area ID: {selectedArea.id}</p>
-        </> : <div className="fp-empty"><h3>Select a workspace</h3><p>Click an occupied space to view the assigned person and workspace details.</p></div>}
-      </aside>
     </div>
   </section>;
 }

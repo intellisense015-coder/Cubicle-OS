@@ -28,6 +28,7 @@ import {
   Mail,
   LucideIcon,
 } from "lucide-react";
+import { getSystemNotifications, type SystemNotification } from "@/lib/system-notifications";
 
 // ==========================================
 // Types
@@ -75,7 +76,8 @@ const DEFAULT_BRANCHES: BranchItem[] = [
 const DEFAULT_SEARCH_MODULES: SearchResultItem[] = [
   { label: "Dashboard", href: "/dashboard", category: "Overview", icon: LayoutDashboard },
   { label: "Leads", href: "/leads", category: "Workspace", icon: Users },
-  { label: "Members & Companies", href: "/members", category: "Workspace", icon: Building2 },
+  { label: "Members", href: "/members", category: "Workspace", icon: Users },
+  { label: "Companies", href: "/companies", category: "Workspace", icon: Building2 },
   { label: "Visits", href: "/visits", category: "Workspace", icon: CalendarDays },
   { label: "Floor Plan", href: "/floor-plan", category: "Workspace", icon: DoorOpen },
   { label: "Workspaces", href: "/workspaces", category: "Workspace", icon: DoorOpen },
@@ -134,9 +136,24 @@ export function OsHeader({
   const [searchFocused, setSearchFocused] = useState(false);
   const [branchSearch, setBranchSearch] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [notifications, setNotifications] = useState<SystemNotification[]>([]);
 
   const headerRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const refreshNotifications = () => setNotifications(getSystemNotifications());
+    refreshNotifications();
+    const handleDemoChange = (event: CustomEvent<{ key?: string }>) => {
+      if (["invoices", "members", "leads", "visits", "approvals", "workspaces"].includes(event.detail?.key || "")) refreshNotifications();
+    };
+    window.addEventListener("cubicle-demo-change", handleDemoChange as EventListener);
+    window.addEventListener("focus", refreshNotifications);
+    return () => {
+      window.removeEventListener("cubicle-demo-change", handleDemoChange as EventListener);
+      window.removeEventListener("focus", refreshNotifications);
+    };
+  }, []);
 
   // Sync dark mode state with document
   useEffect(() => {
@@ -220,7 +237,7 @@ export function OsHeader({
     .slice(0, 2)
     .toUpperCase();
 
-  const totalNotifications = lowStockCount + pendingBalanceCount;
+  const totalNotifications = notifications.reduce((total, notification) => total + notification.count, 0);
 
   return (
     <>
@@ -413,7 +430,7 @@ export function OsHeader({
                 <div className="notif-header-row">
                   <div>
                     <h3 className="notif-title">Action Items</h3>
-                    <p className="dropdown-desc">Inventory & ledger alerts</p>
+                    <p className="dropdown-desc">Workspace and billing alerts</p>
                   </div>
                   <button
                     type="button"
@@ -425,33 +442,10 @@ export function OsHeader({
                 </div>
 
                 <div className="notif-list">
-                  <div
-                    className="notif-card tone-danger"
-                    onClick={() => {
-                      onNavigate?.("/dashboard/inventory/low-stock");
-                      setOpenDropdown(null);
-                    }}
-                  >
-                    <div className="notif-card-text">
-                      <span className="notif-card-label">Low Stock Fabric Rolls</span>
-                      <span className="notif-card-sub">Rolls with &lt; 15m remaining</span>
-                    </div>
-                    <span className="notif-pill pill-danger">{lowStockCount}</span>
-                  </div>
-
-                  <div
-                    className="notif-card tone-brand"
-                    onClick={() => {
-                      onNavigate?.("/dashboard/accounting/customer-ledgers");
-                      setOpenDropdown(null);
-                    }}
-                  >
-                    <div className="notif-card-text">
-                      <span className="notif-card-label">Outstanding Customer Dues</span>
-                      <span className="notif-card-sub">Ledgers over credit period</span>
-                    </div>
-                    <span className="notif-pill pill-brand">{pendingBalanceCount}</span>
-                  </div>
+                  {notifications.length ? notifications.map((notification) => <button key={notification.id} type="button" className={`notif-card tone-${notification.tone}`} onClick={() => { onNavigate?.(notification.href); setOpenDropdown(null); }}>
+                    <span className="notif-card-text"><span className="notif-card-label">{notification.title}</span><span className="notif-card-sub">{notification.detail}</span></span>
+                    <span className={`notif-pill pill-${notification.tone}`}>{notification.count}</span>
+                  </button>) : <div className="notif-empty-state">No workspace notifications right now.</div>}
                 </div>
               </div>
             )}

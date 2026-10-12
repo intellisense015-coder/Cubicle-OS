@@ -24,16 +24,23 @@
       </form>
     </aside>
     <main class="preview">
+      <div class="proposal-pages">
       <section class="page" aria-label="Proposal page 1"><img class="artwork" src="assets/page-1.png" alt="Fixed proposal artwork, page 1" /><span class="field field-seat_title" data-field="seat_title"></span><span class="field field-subtitle1" data-field="subtitle1"></span><span class="field field-proposal_heading" data-field="proposal_heading"></span><span class="field field-client_name" data-field="client_name"></span></section>
       <section class="page" aria-label="Proposal page 2"><img class="artwork" src="assets/page-2.png" alt="Fixed proposal artwork, page 2" /></section>
       <section class="page" aria-label="Proposal page 3"><img class="artwork" src="assets/page-3.png" alt="Fixed proposal artwork, page 3" /></section>
       <section class="page" aria-label="Proposal page 4"><img class="artwork" src="assets/page-4.png" alt="Fixed proposal artwork, page 4" /><span class="field field-office_line" data-field="office_line"></span><span class="field field-gross" data-field="gross"></span><span class="field field-discount" data-field="discount"></span><span class="field field-monthly" data-field="monthly"></span><span class="field field-per_seat_note" data-field="per_seat_note"></span><div id="floor-map" aria-label="Floor plan selection area"><div id="selection" tabindex="0" role="button" aria-label="Selected office. Drag or use arrow keys to move."><span id="resize" aria-label="Resize selection"></span></div></div></section>
+      </div>
     </main>
     <script src="proposal.js"></script>
     <script>
       window.addEventListener("message", function (event) {
         if (event.source !== window.parent || !event.data || event.data.type !== "proposal-template-data") return;
         if (window.proposal) window.proposal.setData(event.data.payload);
+      });
+      window.addEventListener("message", function (event) {
+        if (event.source !== window.parent || !event.data || event.data.type !== "proposal-template-action") return;
+        if (event.data.action === "save-pdf") document.querySelector("#download")?.click();
+        if (event.data.action === "send-pdf") document.querySelector("#send")?.click();
       });
       window.addEventListener("proposalchange", function (event) {
         if (window.parent !== window) window.parent.postMessage({ type: "proposal-template-change", payload: event.detail }, "*");

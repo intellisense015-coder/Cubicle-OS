@@ -36,7 +36,7 @@ export function Modal({ open, onClose, title, description, children, footerActio
     (firstFocusable || dialogRef.current)?.focus();
     return undefined;
   }, [open]);
-  return <AnimatePresence>{open ? <motion.div className="modal-overlay" role="presentation" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><motion.section ref={dialogRef} role="dialog" aria-modal="true" aria-label={title || "Dialog"} tabIndex={-1} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.97 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }} className={cn("modal-card", transparent && "invoice-modal-card", wide && "modal-card-wide", noScroll && "modal-card-no-scroll")}>
+  return <AnimatePresence>{open ? <motion.div className="modal-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}><motion.section ref={dialogRef} role="dialog" aria-modal="true" aria-label={title || "Dialog"} tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.97 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }} className={cn("modal-card", transparent && "invoice-modal-card", wide && "modal-card-wide", noScroll && "modal-card-no-scroll")}>
     <header className="modal-header"><div><h2 className="modal-title">{title}</h2>{description ? <p className="modal-description">{description}</p> : null}</div><button type="button" onClick={onClose} className="modal-close-btn" aria-label="Close dialog"><X size={16} /></button></header>
     <div className={cn("modal-body", title.startsWith("Filter") && "filter-modal-body")}>{children}</div>
     {footerActions ? <footer className="modal-footer">{footerActions}</footer> : null}
@@ -58,6 +58,7 @@ export function Dialog({ open, onClose, children, ariaLabel = "Dialog" }: { open
     return undefined;
   }, [open]);
   const trapFocus = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
     if (event.key !== "Tab") return;
     const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])") || []).filter((element) => !element.hasAttribute("disabled"));
     if (!focusable.length) { event.preventDefault(); dialogRef.current?.focus(); return; }
@@ -66,5 +67,5 @@ export function Dialog({ open, onClose, children, ariaLabel = "Dialog" }: { open
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   };
-  return <AnimatePresence>{open ? <motion.div className="modal-overlay dialog-backdrop" role="presentation" aria-hidden="false" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><motion.div ref={dialogRef} className="modal-card dialog-card" role="dialog" aria-modal="true" aria-label={ariaLabel} tabIndex={-1} onKeyDown={trapFocus} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>{children}<button type="button" className="modal-close-btn dialog-close" onClick={onClose} aria-label="Close dialog"><X size={17} /></button></motion.div></motion.div> : null}</AnimatePresence>;
+  return <AnimatePresence>{open ? <motion.div className="modal-overlay dialog-backdrop" role="presentation" aria-hidden="false" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><motion.div ref={dialogRef} className="modal-card dialog-card" role="dialog" aria-modal="true" aria-label={ariaLabel} tabIndex={-1} onKeyDown={trapFocus} initial={{ opacity: 0, y: 8, scale: 0.97 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>{children}<button type="button" className="modal-close-btn dialog-close" onClick={onClose} aria-label="Close dialog"><X size={17} /></button></motion.div></motion.div> : null}</AnimatePresence>;
 }

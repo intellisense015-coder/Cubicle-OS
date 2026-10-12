@@ -21,13 +21,14 @@ import { leadRows } from "@/lib/module-b-data";
 import DynamicInvoiceTemplate, { invoiceFromRecord } from "@/components/invoices/invoice-template";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
+import { numericField, numericString } from "@/lib/number-input";
 import { z } from "zod";
 
 const quotationSchema = z.object({
   leadId: z.string().trim().min(1, "Choose a lead."),
   date: z.string().min(1, "Choose a quotation date."),
   itemDescription: z.string().trim().min(1, "Enter an item description."),
-  amount: z.string().trim().min(1, "Enter a total amount."),
+  amount: z.string().regex(/^\d+(\.\d+)?$/, "Enter a valid numeric amount.").min(1, "Enter a total amount."),
 });
 
 function getEligibleLeads(rows) {
@@ -117,10 +118,10 @@ function QuotationForm({ initialQuotation, eligibleLeads, onCancel, onSave }) {
   const leadOptions = initialQuotation && !eligibleLeads.some((lead) => lead.id === initialLeadId)
     ? [{ id: initialLeadId, name: initialQuotation.customerName, company: initialQuotation.account }, ...eligibleLeads]
     : eligibleLeads;
-  const formApi = useForm({ resolver: zodResolver(quotationSchema), defaultValues: { leadId: initialLeadId, date: initialQuotation?.date || "2026-10-05", itemDescription: initialQuotation?.itemDescription || "Workspace services", amount: initialQuotation?.amount || "PKR 0" }, mode: "onBlur" });
+  const formApi = useForm({ resolver: zodResolver(quotationSchema), defaultValues: { leadId: initialLeadId, date: initialQuotation?.date || "2026-10-05", itemDescription: initialQuotation?.itemDescription || "Workspace services", amount: numericString(initialQuotation?.amount, "0") }, mode: "onBlur" });
   const { register, handleSubmit, formState, setValue, watch } = formApi;
   const error = (field) => formState.errors[field]?.message;
-  return <div className="dialog-content quotation-form"><div className="card-heading"><div><h2>{initialQuotation ? "Edit quotation" : "Create quotation"}</h2></div></div><form className="inline-form-grid" onSubmit={handleSubmit(onSave)}><SelectField className="quotation-to-select" label="To" value={watch("leadId")} hint={error("leadId")} disabled={!leadOptions.length} onChange={(event) => setValue("leadId", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">{leadOptions.length ? "Select a lead" : "No eligible leads"}</option>{leadOptions.map((lead) => <option value={lead.id} key={lead.id}>{lead.company} - {lead.name}</option>)}</SelectField><label className="settings-label">Date<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><label className="settings-label">Item description<Input className={error("itemDescription") ? "has-error" : ""} {...register("itemDescription")} placeholder="Workspace services" />{error("itemDescription") && <span className="lead-form-error">{error("itemDescription")}</span>}</label><label className="settings-label">Total<Input className={error("amount") ? "has-error" : ""} {...register("amount")} placeholder="PKR 48,000" />{error("amount") && <span className="lead-form-error">{error("amount")}</span>}</label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting || !leadOptions.length}><ReceiptText size={15} /> {initialQuotation ? "Save changes" : "Create quotation"}</Button></div></form></div>;
+  return <div className="dialog-content quotation-form"><div className="card-heading"><div><h2>{initialQuotation ? "Edit quotation" : "Create quotation"}</h2></div></div><form className="inline-form-grid" onSubmit={handleSubmit(onSave)}><SelectField className="quotation-to-select" label="To" value={watch("leadId")} hint={error("leadId")} disabled={!leadOptions.length} onChange={(event) => setValue("leadId", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">{leadOptions.length ? "Select a lead" : "No eligible leads"}</option>{leadOptions.map((lead) => <option value={lead.id} key={lead.id}>{lead.company} - {lead.name}</option>)}</SelectField><label className="settings-label">Date<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><label className="settings-label">Item description<Input className={error("itemDescription") ? "has-error" : ""} {...register("itemDescription")} placeholder="Workspace services" />{error("itemDescription") && <span className="lead-form-error">{error("itemDescription")}</span>}</label><label className="settings-label">Total<Input className={error("amount") ? "has-error" : ""} {...numericField(register, "amount")} placeholder="0" />{error("amount") && <span className="lead-form-error">{error("amount")}</span>}</label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting || !leadOptions.length}><ReceiptText size={15} /> {initialQuotation ? "Save changes" : "Create quotation"}</Button></div></form></div>;
 }
 
 export default function QuotationsPage() {

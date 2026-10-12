@@ -11,7 +11,8 @@ import { AppSkeleton } from "@/components/ui/skeleton";
 const PAGE_TITLES = {
   "/dashboard": "Dashboard",
   "/leads": "Leads",
-  "/members": "Members & Companies",
+  "/members": "Members",
+  "/companies": "Companies",
   "/visits": "Visits",
   "/invoices": "Invoices",
   "/quotations": "Quotations",

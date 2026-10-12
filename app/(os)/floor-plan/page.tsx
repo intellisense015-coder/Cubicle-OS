@@ -7,7 +7,8 @@ import { FloorPlanViewer } from "@/features/floor-plan/floor-plan-viewer";
 import { floor4 } from "@/features/floor-plan/floor-4";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { PageShell } from "@/components/ui/page-shell";
-import { applyWorkspaceRecordsToFloor, getWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
+import { getDemoValue } from "@/lib/demo-session";
+import { applyWorkspaceRecordsToFloor, getWorkspaceRecords, mergeWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
 
 export default function FloorPlanPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -15,6 +16,15 @@ export default function FloorPlanPage() {
 
   useEffect(() => {
     setWorkspaces(getWorkspaceRecords());
+    const handleDemoChange = (event) => {
+      if (event.detail?.key === "workspaces") {
+        const saved = getDemoValue("workspaces");
+        setWorkspaces(mergeWorkspaceRecords(Array.isArray(saved) ? saved : []));
+      }
+      if (event.detail?.key === "maintenanceCategories") setWorkspaces((current) => [...current]);
+    };
+    window.addEventListener("cubicle-demo-change", handleDemoChange);
+    return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
   }, []);
 
   const floor = useMemo(() => applyWorkspaceRecordsToFloor(workspaces), [workspaces]);
