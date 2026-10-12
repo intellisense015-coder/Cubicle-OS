@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Cubicle Proposal Preview</title>
+    <link rel="stylesheet" href="proposal.css" />
+  </head>
+  <body>
+    <aside class="editor" aria-hidden="true">
+      <form id="proposal-form">
+        <h1>Proposal editor</h1>
+        <p>Fill the fields, then print to PDF. On page 4, drag the red box, drag its corner to resize, or click the map to move it.</p>
+        <label for="proposal_number">Proposal number</label><input id="proposal_number" name="proposal_number" type="text" maxlength="70" />
+        <label for="date">Proposal date</label><input id="date" name="date" type="date" maxlength="70" />
+        <label for="seat_title">Seat heading</label><input id="seat_title" name="seat_title" type="text" maxlength="70" />
+        <label for="subtitle">Seat subtitle</label><textarea id="subtitle" name="subtitle" rows="2" maxlength="100"></textarea>
+        <label for="client_name">Client name</label><input id="client_name" name="client_name" type="text" maxlength="70" />
+        <label for="office">Office number</label><input id="office" name="office" type="text" maxlength="70" />
+        <label for="seats">Number of seats</label><input id="seats" name="seats" type="number" min="1" step="1" />
+        <label for="rate">Price per seat (PKR)</label><input id="rate" name="rate" type="number" min="0" step="1" />
+        <label for="discount">Discount (PKR)</label><input id="discount" name="discount" type="number" min="0" step="1" />
+        <p id="totals"></p><button type="button" id="send">Send PDF</button><button type="button" id="print">Print PDF</button><button type="button" id="download">Download PDF</button><p id="status" role="status"></p>
+      </form>
+    </aside>
+    <main class="preview">
+      <section class="page" aria-label="Proposal page 1"><img class="artwork" src="assets/page-1.png" alt="Fixed proposal artwork, page 1" /><span class="field field-seat_title" data-field="seat_title"></span><span class="field field-subtitle1" data-field="subtitle1"></span><span class="field field-proposal_heading" data-field="proposal_heading"></span><span class="field field-client_name" data-field="client_name"></span></section>
+      <section class="page" aria-label="Proposal page 2"><img class="artwork" src="assets/page-2.png" alt="Fixed proposal artwork, page 2" /></section>
+      <section class="page" aria-label="Proposal page 3"><img class="artwork" src="assets/page-3.png" alt="Fixed proposal artwork, page 3" /></section>
+      <section class="page" aria-label="Proposal page 4"><img class="artwork" src="assets/page-4.png" alt="Fixed proposal artwork, page 4" /><span class="field field-office_line" data-field="office_line"></span><span class="field field-gross" data-field="gross"></span><span class="field field-discount" data-field="discount"></span><span class="field field-monthly" data-field="monthly"></span><span class="field field-per_seat_note" data-field="per_seat_note"></span><div id="floor-map" aria-label="Floor plan selection area"><div id="selection" tabindex="0" role="button" aria-label="Selected office. Drag or use arrow keys to move."><span id="resize" aria-label="Resize selection"></span></div></div></section>
+    </main>
+    <script src="proposal.js"></script>
+    <script>
+      window.addEventListener("message", function (event) {
+        if (event.source !== window.parent || !event.data || event.data.type !== "proposal-template-data") return;
+        if (window.proposal) window.proposal.setData(event.data.payload);
+      });
+      window.addEventListener("proposalchange", function (event) {
+        if (window.parent !== window) window.parent.postMessage({ type: "proposal-template-change", payload: event.detail }, "*");
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,533 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+
+.invoice-page {
+  position: relative;
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  margin: 20px auto;
+  padding: 24mm 21mm 18mm 24mm;
+  overflow: hidden;
+  color: #3f3f3f;
+  background: #fff;
+  font-family: 'Montserrat', Arial, sans-serif;
+}
+
+.invoice-page::before,
+.invoice-page::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 8.5mm;
+}
+
+.invoice-page::before {
+  top: 0;
+  height: 54mm;
+  background: #c7e1d9;
+}
+
+.invoice-page::after {
+  top: 54mm;
+  height: calc(100% - 54mm);
+  background: #006b35;
+}
+
+.invoice-header,
+.billing-row,
+.bottom-section {
+  display: flex;
+  justify-content: space-between;
+}
+
+.invoice-header { align-items: flex-start; }
+.company-block { width: 58%; }
+.company-logo { margin: 0 0 5mm; color: #000; font-size: 25pt; line-height: .9; font-weight: 700; letter-spacing: -1.2px; }
+.company-logo .green { color: #006b35; }
+.company-details { margin: 0; font-size: 10.2pt; line-height: 1.55; letter-spacing: .55px; }
+.company-tax { margin-top: 7mm; }
+.invoice-title { width: 34%; text-align: right; }
+.invoice-title h1 { margin: 2mm 0; color: #080808; font-size: 21pt; line-height: 1; font-weight: 700; letter-spacing: .7px; }
+.invoice-meta { font-size: 11pt; line-height: 1.45; letter-spacing: 1px; }
+.billing-row { gap: 12mm; margin-top: 22mm; padding-bottom: 2.5mm; border-bottom: 1.1px solid #555; }
+.billing-col { flex: 1; }
+.billing-col.right { text-align: right; }
+.single-party-row .billing-col { width: 100%; }
+.section-label { margin: 0 0 5mm; font-size: 12.5pt; line-height: 1; font-weight: 700; letter-spacing: .35px; }
+.customer-line, .period-line { margin: 0 0 3mm; font-size: 12pt; line-height: 1.35; letter-spacing: .65px; }
+.period-line { margin-bottom: 0; }
+.items-table { width: 100%; margin-top: 6mm; border-collapse: collapse; table-layout: fixed; }
+.items-table th { padding: 4mm 5mm; color: #fff; background: #006b35; font-size: 12.5pt; font-weight: 700; letter-spacing: 1.2px; }
+.items-table th:first-child { width: 68%; text-align: left; }
+.items-table th:last-child { width: 32%; text-align: right; }
+.items-table td { padding: 7mm 5mm; border-bottom: 1px solid #444; font-size: 11.5pt; letter-spacing: .5px; vertical-align: top; }
+.items-table td:last-child { text-align: right; white-space: nowrap; }
+.bottom-section { align-items: flex-start; gap: 10mm; margin-top: 28mm; }
+.payment-info { width: 53%; }
+.payment-info h2 { margin: 0 0 1mm; font-size: 12.5pt; line-height: 1.1; font-weight: 700; letter-spacing: .8px; }
+.payment-info p { margin: 0; font-size: 9.5pt; line-height: 1.55; }
+.payment-advice { margin-top: 7mm !important; }
+.total-box { width: 43%; min-height: 15mm; padding: 5mm 8mm; display: flex; align-items: center; justify-content: space-between; color: #111; background: #c7e1d9; font-size: 12pt; font-weight: 700; letter-spacing: .8px; }
+.total-only-section { justify-content: flex-end; }
+.footer-message { position: absolute; right: 21mm; bottom: 29mm; left: 24mm; margin: 0; color: #111; font-size: 9.7pt; line-height: 1.65; letter-spacing: .55px; text-align: center; }
+.system-note { position: absolute; right: 21mm; bottom: 12mm; left: 24mm; margin: 0; color: #111; font-size: 9.2pt; letter-spacing: .4px; text-align: center; }
+
+@page { size: A4; margin: 0; }
+
+@media print {
+  html,
+  body {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .os-shell,
+  .erp-main,
+  .module-content {
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  .os-header,
+  .os-sidebar,
+  .solexa-header,
+  .desktop-sidebar,
+  .mobile-header-bar,
+  .mobile-overlay,
+  .module-header,
+  .module-stats,
+  .invoice-register-heading,
+  .table-card,
+  .dialog-close,
+  .invoice-preview-actions {
+    display: none !important;
+  }
+
+  .dialog-backdrop {
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+  }
+
+  .dialog-card {
+    position: static !important;
+    width: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+
+  .invoice-detail-only {
+    display: block !important;
+    padding: 0 !important;
+  }
+
+  #printable-invoice {
+    position: relative !important;
+    display: block !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+@media screen {
+  .dialog-card:has(.invoice-detail-only) {
+    width: min(560px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+  }
+
+  .invoice-detail-only {
+    align-items: center;
+    justify-items: center;
+  }
+
+  .invoice-preview-frame {
+    width: 396px;
+    height: 561px;
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .invoice-preview-frame .invoice-page {
+    width: 210mm;
+    max-width: none;
+    min-height: 297mm;
+    margin: 0;
+    transform: scale(0.5);
+    transform-origin: top left;
+  }
+
+  #printable-invoice.pdf-exporting {
+    transform: none;
+  }
+}
+
+@media screen and (max-width: 800px) {
+  .invoice-page { width: 100%; min-height: auto; margin: 0; padding: 36px 28px 180px 38px; }
+  .invoice-header, .billing-row, .bottom-section { gap: 24px; }
+  .invoice-title { width: 42%; }
+  .invoice-meta { font-size: 10px; }
+  .company-logo { font-size: 24px; }
+  .company-details, .customer-line, .period-line, .items-table td { font-size: 10px; }
+  .items-table th { font-size: 10px; }
+}
+
+@media screen and (max-width: 560px) {
+  .dialog-card:has(.invoice-detail-only) {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .invoice-detail-only {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .invoice-preview-frame {
+    width: 317px;
+    height: 449px;
+  }
+
+  .invoice-preview-frame .invoice-page {
+    transform: scale(0.4);
+  }
+
+  .invoice-page {
+    padding: 28px 18px 150px 30px;
+  }
+
+  .invoice-header,
+  .billing-row,
+  .bottom-section {
+    gap: 14px;
+  }
+
+  .invoice-title {
+    width: 40%;
+  }
+
+  .company-block {
+    width: 56%;
+  }
+
+  .company-logo {
+    font-size: 19px;
+  }
+
+  .invoice-title h1 {
+    font-size: 17px;
+  }
+
+  .invoice-meta,
+  .company-details,
+  .customer-line,
+  .period-line,
+  .items-table td,
+  .payment-info p {
+    font-size: 8px;
+  }
+
+  .section-label,
+  .items-table th,
+  .payment-info h2,
+  .total-box {
+    font-size: 9px;
+  }
+
+  .items-table th,
+  .items-table td {
+    padding: 8px 6px;
+  }
+
+  .bottom-section {
+    margin-top: 22px;
+  }
+
+  .footer-message,
+  .system-note {
+    right: 18px;
+    left: 30px;
+    font-size: 8px;
+  }
+}
+
+/* Quotation layout matched to the supplied The Cubicle A4 quotation. */
+.quotation-page .billing-row {
+  margin-top: 22mm;
+}
+
+.quotation-page .items-table {
+  margin-top: 6mm;
+}
+
+.quotation-page .items-table tbody tr {
+  height: 15mm;
+}
+
+.quotation-page .items-table td {
+  height: 15mm;
+  padding: 5mm;
+}
+
+.quotation-summary {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 19mm;
+}
+
+.quotation-summary-box {
+  width: 43%;
+  min-height: 25mm;
+  padding: 4mm 8mm;
+  display: grid;
+  gap: 2mm;
+  color: #111;
+  background: #c7e1d9;
+  font-size: 12pt;
+  line-height: 1.2;
+  letter-spacing: .8px;
+}
+
+.quotation-summary-box > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5mm;
+}
+
+.quotation-summary-box strong {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.quotation-summary-box .quotation-total {
+  font-weight: 700;
+}
+
+.quotation-summary-box .quotation-total strong {
+  font-weight: 700;
+}
+
+.quotation-terms {
+  margin-top: 12mm;
+  color: #3f3f3f;
+}
+
+.quotation-terms h2 {
+  margin: 0 0 2mm;
+  font-size: 12.5pt;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: .8px;
+}
+
+.quotation-terms ul {
+  margin: 0;
+  padding-left: 5mm;
+  font-size: 9.7pt;
+  line-height: 1.55;
+  letter-spacing: .35px;
+}
+
+.quotation-terms li {
+  padding-left: 1mm;
+}
+
+html[data-theme="dark"] .quotation-create-button,
+.dark .quotation-create-button {
+  color: #000;
+}
+
+.dialog-card:has(.quotation-form) .dialog-actions {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.dialog-card:has(.quotation-form) .quotation-to-select,
+.dialog-card:has(.quotation-form) .quotation-to-select:hover,
+.dialog-card:has(.quotation-form) .quotation-to-select:focus {
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.dialog-card:has(.quotation-form) .modal-field-hint-empty {
+  display: none;
+}
+
+.dialog-card:has(.quotation-form) .dialog-actions .button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 16px;
+}
+
+.dialog-card:has(.quotation-form) .dialog-actions .button-ghost {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 52%, var(--line));
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.dialog-card:has(.quotation-form) .dialog-actions .button-ghost:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .button-primary,
+.dark .dialog-card:has(.quotation-form) .dialog-actions .button-primary {
+  color: #000;
+}
+
+.quotation-send-dialog {
+  min-width: min(420px, 100%);
+}
+
+.quotation-send-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quotation-send-option {
+  display: flex;
+  min-height: 92px;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  color: var(--ink);
+  background: var(--surface-soft-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.quotation-send-option:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.quotation-send-option svg {
+  flex: none;
+  color: var(--brand);
+}
+
+.quotation-send-option span {
+  display: grid;
+  gap: 5px;
+}
+
+.quotation-send-option strong {
+  font-size: 12px;
+}
+
+.quotation-send-option small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.quotation-send-actions {
+  display: block !important;
+}
+
+.quotation-send-actions .button {
+  width: 100%;
+}
+
+.quotation-send-actions .button-ghost {
+  color: var(--danger) !important;
+  border-color: color-mix(in srgb, var(--danger) 52%, var(--line)) !important;
+  background: color-mix(in srgb, var(--danger) 13%, transparent) !important;
+}
+
+.quotation-send-actions .button-ghost:hover {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 20%, transparent) !important;
+}
+
+.quotation-preview-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
+}
+
+.quotation-preview-actions .button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 16px;
+  white-space: nowrap;
+}
+
+.quotation-preview-actions .quotation-preview-cancel {
+  color: var(--danger) !important;
+  border-color: color-mix(in srgb, var(--danger) 52%, var(--line)) !important;
+  background: color-mix(in srgb, var(--danger) 13%, transparent) !important;
+}
+
+.quotation-preview-actions .quotation-preview-cancel:hover {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 20%, transparent) !important;
+}
+
+html[data-theme="dark"] .quotation-preview-actions .quotation-preview-print,
+html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
+.dark .quotation-preview-actions .quotation-preview-print,
+.dark .quotation-preview-actions .quotation-preview-send {
+  color: #000;
+}
+
+@media screen and (max-width: 560px) {
+  .quotation-send-options {
+    grid-template-columns: 1fr;
+  }
+
+  .quotation-preview-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dialog-card:has(.quotation-preview-actions) {
+  width: min(920px, calc(100vw - 32px));
+}
+
+.dialog-card:has(.quotation-preview-actions) .invoice-detail-only {
+  width: 100%;
+}
+
+.quotation-preview-actions {
+  width: min(100%, 720px);
+  margin-right: auto;
+  margin-left: auto;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+
+@media screen and (max-width: 560px) {
+  .quotation-preview-actions {
+    grid-template-columns: 1fr;
+  }
+}
