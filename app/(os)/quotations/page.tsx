@@ -19,16 +19,20 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { leadRows } from "@/lib/module-b-data";
 import DynamicInvoiceTemplate, { invoiceFromRecord } from "@/components/invoices/invoice-template";
+import { ChargeEditor, chargeAmount, chargesTotal, getEditableCharges } from "@/components/invoices/charge-editor";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
 import { numericField, numericString } from "@/lib/number-input";
 import { z } from "zod";
 
+const amountValue = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const quotationSchema = z.object({
   leadId: z.string().trim().min(1, "Choose a lead."),
   date: z.string().min(1, "Choose a quotation date."),
   itemDescription: z.string().trim().min(1, "Enter an item description."),
-  amount: z.string().regex(/^\d+(\.\d+)?$/, "Enter a valid numeric amount.").min(1, "Enter a total amount."),
+  amount: z.string().regex(/^\d+(\.\d+)?$/, "Enter a valid numeric amount.").min(1, "Enter a subtotal."),
+  taxEnabled: z.boolean().optional(),
+  taxRate: z.string().optional().refine((value) => !value || /^\d+(\.\d+)?$/.test(value), "Enter a valid tax rate.")
 });
 
 function getEligibleLeads(rows) {
@@ -59,9 +63,11 @@ function formatQuotationDate(value) {
 }
 
 function formatQuotationAmount(value) {
-  const amount = Number(String(value || "0").replace(/[^0-9.-]/g, "")) || 0;
+  const amount = amountValue(value);
   return `Rs. ${amount.toLocaleString("en-PK")}`;
 }
+
+const money = (value: number) => formatQuotationAmount(value);
 
 function getLocalDateTime() {
   const now = new Date();
@@ -118,10 +124,18 @@ function QuotationForm({ initialQuotation, eligibleLeads, onCancel, onSave }) {
   const leadOptions = initialQuotation && !eligibleLeads.some((lead) => lead.id === initialLeadId)
     ? [{ id: initialLeadId, name: initialQuotation.customerName, company: initialQuotation.account }, ...eligibleLeads]
     : eligibleLeads;
-  const formApi = useForm({ resolver: zodResolver(quotationSchema), defaultValues: { leadId: initialLeadId, date: initialQuotation?.date || "2026-10-05", itemDescription: initialQuotation?.itemDescription || "Workspace services", amount: numericString(initialQuotation?.amount, "0") }, mode: "onBlur" });
-  const { register, handleSubmit, formState, setValue, watch } = formApi;
+  const initialCharges = getEditableCharges(initialQuotation);
+  const formApi = useForm({ resolver: zodResolver(quotationSchema), defaultValues: { leadId: initialLeadId, date: initialQuotation?.date || "2026-10-05", itemDescription: initialCharges[0]?.description || "Workspace services", amount: numericString(chargesTotal(initialCharges), "0"), taxEnabled: Boolean(initialQuotation?.taxEnabled), taxRate: numericString(initialQuotation?.taxRate, "15") }, mode: "onBlur" });
+  const { register, handleSubmit, formState, setValue, setError, watch } = formApi;
+  const [charges, setCharges] = useState(initialCharges);
+  const updateCharges = (nextCharges) => { setCharges(nextCharges); setValue("amount", String(chargesTotal(nextCharges)), { shouldDirty: true }); setValue("itemDescription", nextCharges[0]?.description || "", { shouldDirty: true }); };
   const error = (field) => formState.errors[field]?.message;
-  return <div className="dialog-content quotation-form"><div className="card-heading"><div><h2>{initialQuotation ? "Edit quotation" : "Create quotation"}</h2></div></div><form className="inline-form-grid" onSubmit={handleSubmit(onSave)}><SelectField className="quotation-to-select" label="To" value={watch("leadId")} hint={error("leadId")} disabled={!leadOptions.length} onChange={(event) => setValue("leadId", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">{leadOptions.length ? "Select a lead" : "No eligible leads"}</option>{leadOptions.map((lead) => <option value={lead.id} key={lead.id}>{lead.company} - {lead.name}</option>)}</SelectField><label className="settings-label">Date<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><label className="settings-label">Item description<Input className={error("itemDescription") ? "has-error" : ""} {...register("itemDescription")} placeholder="Workspace services" />{error("itemDescription") && <span className="lead-form-error">{error("itemDescription")}</span>}</label><label className="settings-label">Total<Input className={error("amount") ? "has-error" : ""} {...numericField(register, "amount")} placeholder="0" />{error("amount") && <span className="lead-form-error">{error("amount")}</span>}</label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting || !leadOptions.length}><ReceiptText size={15} /> {initialQuotation ? "Save changes" : "Create quotation"}</Button></div></form></div>;
+  const subtotal = chargesTotal(charges);
+  const taxRate = amountValue(watch("taxRate"));
+  const taxAmount = watch("taxEnabled") ? Math.round(subtotal * taxRate) / 100 : 0;
+  const total = subtotal + taxAmount;
+  const save = (values) => { if (charges.some((charge) => !charge.description.trim())) { setError("itemDescription", { type: "manual", message: "Add a description for each charge." }); return; } const normalizedCharges = charges.map((charge) => ({ description: charge.description.trim(), amount: String(chargeAmount(charge.amount)) })); onSave({ ...values, subtotal: String(subtotal), taxAmount: String(taxAmount), taxRate: values.taxEnabled ? String(taxRate) : "0", amount: String(total), itemDescription: normalizedCharges[0].description, charges: normalizedCharges, items: normalizedCharges.map((charge) => ({ description: charge.description, price: charge.amount, quantity: 1 })) }); };
+  return <div className="dialog-content quotation-form"><div className="card-heading"><div><h2>{initialQuotation ? "Edit quotation" : "Create quotation"}</h2><p className="muted-copy">Keep tax optional and show the final price clearly.</p></div></div><form className="inline-form-grid" onSubmit={handleSubmit(save)}><SelectField className="quotation-to-select" label="To" value={watch("leadId")} hint={error("leadId")} disabled={!leadOptions.length} onChange={(event) => setValue("leadId", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">{leadOptions.length ? "Select a lead" : "No eligible leads"}</option>{leadOptions.map((lead) => <option value={lead.id} key={lead.id}>{lead.company} - {lead.name}</option>)}</SelectField><label className="settings-label">Date<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><input type="hidden" {...register("itemDescription")} /><input type="hidden" {...register("amount")} /><ChargeEditor charges={charges} onChange={updateCharges} />{error("itemDescription") && <span className="lead-form-error charge-editor-error">{error("itemDescription")}</span>}{error("amount") && <span className="lead-form-error charge-editor-error">{error("amount")}</span>}<label className="quotation-tax-toggle"><input type="checkbox" {...register("taxEnabled")} /><span>Include tax</span><small>Optional tax calculation</small></label><label className="settings-label">Tax rate (%)<Input className={error("taxRate") ? "has-error" : ""} disabled={!watch("taxEnabled")} {...numericField(register, "taxRate")} placeholder="15" />{error("taxRate") && <span className="lead-form-error">{error("taxRate")}</span>}</label><label className="settings-label">Total<Input value={money(total)} readOnly /></label><div className="quotation-live-summary"><span>Subtotal {money(subtotal)}</span>{watch("taxEnabled") ? <span>Tax {money(taxAmount)}</span> : <span>Tax not included</span>}<strong>Total {money(total)}</strong></div><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting || !leadOptions.length}><ReceiptText size={15} /> {initialQuotation ? "Save changes" : "Create quotation"}</Button></div></form></div>;
 }
 
 export default function QuotationsPage() {

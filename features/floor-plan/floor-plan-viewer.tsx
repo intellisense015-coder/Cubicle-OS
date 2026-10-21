@@ -21,7 +21,7 @@ export interface FloorPlanViewerProps {
   filtersOpen?: boolean;
   onFiltersOpenChange?: (open: boolean) => void;
 }
-const legend: MapStatus[] = ["available", "occupied", "due-soon", "grace", "overdue"];
+const legend: MapStatus[] = ["available", "occupied", "notice-period", "due-soon", "maintenance", "overdue"];
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 function areaBounds(area: FloorArea) {
@@ -38,7 +38,7 @@ function WorkspaceContextCard({ area, live, areaStatus, paymentLabel, pinned, st
     <div className="fp-details-heading"><div><div className="fp-eyebrow">Workspace details</div><strong>{live?.member?.contactName || live?.member?.name || area.name}</strong></div>{pinned ? <button type="button" className="fp-close" onClick={onDismiss} aria-label="Close workspace details">×</button> : null}</div>
     <div className={`fp-badge fp-status-${areaStatus}`}>{STATUS_LABELS[areaStatus]}</div>
     {live?.maintenance ? <div className="fp-maintenance-details"><span className={`fp-maintenance-badge fp-maintenance-${live.maintenance.status}`}>{MAINTENANCE_STATUS_LABELS[live.maintenance.status]}</span><dl><dt>Maintenance</dt><dd>{live.maintenance.category}</dd><dt>Reason</dt><dd>{live.maintenance.reason}</dd></dl></div> : null}
-    <dl><dt>Space</dt><dd>{area.name}</dd>{live?.member ? <><dt>Assigned to</dt><dd>{live.member.contactName || "Assigned member"}</dd><dt>Company</dt><dd>{live.member.name}</dd>{live.member.email ? <><dt>Email</dt><dd>{live.member.email}</dd></> : null}{live.member.monthlyRent ? <><dt>Monthly rent</dt><dd>{live.member.monthlyRent}</dd></> : null}{live.member.employees ? <><dt>Capacity</dt><dd>{live.member.employees} people</dd></> : null}</> : <><dt>Assignment</dt><dd>{areaStatus === "available" ? "Available for assignment" : "No member data available"}</dd></>}<dt>Payment</dt><dd>{paymentLabel}</dd></dl>
+    <dl><dt>Space</dt><dd>{area.name}</dd>{live?.member ? <><dt>Assigned to</dt><dd>{live.member.contactName || "Assigned member"}</dd><dt>Company</dt><dd>{live.member.name}</dd>{live.member.email ? <><dt>Email</dt><dd>{live.member.email}</dd></> : null}{live.member.monthlyRent ? <><dt>Monthly rent</dt><dd>{live.member.monthlyRent}</dd></> : null}{live.member.employees ? <><dt>Capacity</dt><dd>{live.member.employees} people</dd></> : null}</> : <><dt>Assignment</dt><dd>{areaStatus === "available" ? "Available for assignment" : "No member data available"}</dd></>}<dt>Membership</dt><dd>{live?.membershipStatus === "notice-period" ? `Notice period${live.expectedLeavingDate ? ` until ${live.expectedLeavingDate}` : ""}` : "Active"}</dd><dt>Payment</dt><dd>{paymentLabel}</dd></dl>
     <p className="fp-id">Area ID: {area.id}</p>
   </div>;
 }
@@ -69,7 +69,7 @@ export function FloorPlanViewer({ floor = floor4, data, loading = false, error, 
   const lookup = (area: FloorArea) => loading || error ? undefined : liveById.get(area.id);
   const status = (area: FloorArea) => getAreaStatus(area, lookup(area));
   const activeId = pinned ?? hovered;
-  const matches = (area: FloorArea) => filter === "all" || status(area) === filter;
+  const matches = (area: FloorArea) => filter === "all" || status(area) === filter || (filter === "due-soon" && status(area) === "grace");
   const matching = floor.areas.filter(matches);
   const selectedArea = pinned ? floor.areas.find(area => area.id === pinned) : undefined;
   const contextArea = selectedArea || (hovered ? floor.areas.find(area => area.id === hovered) : undefined);
@@ -77,7 +77,7 @@ export function FloorPlanViewer({ floor = floor4, data, loading = false, error, 
   const contextStatus = contextArea ? status(contextArea) : undefined;
   const contextPaymentLabel = contextLive?.paymentStatus === "paid" ? "Paid"
     : contextLive?.paymentStatus === "due-soon" ? "Due soon"
-      : contextLive?.paymentStatus === "grace" ? "Due"
+      : contextLive?.paymentStatus === "grace" ? "Grace period"
         : contextLive?.paymentStatus === "overdue" ? "Overdue" : "Not assigned";
   const vw = floor.width / zoom, vh = floor.height / zoom;
   const ox = clamp(origin.x, 0, floor.width - vw), oy = clamp(origin.y, 0, floor.height - vh);

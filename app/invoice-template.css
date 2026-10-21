@@ -531,3 +531,200 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
     grid-template-columns: 1fr;
   }
 }
+
+/* Shared clean document treatment for quotations and invoices. */
+.invoice-page .items-table th {
+  background: #0a714e;
+  border-bottom: 3px solid #b8dca9;
+}
+
+.invoice-page .items-table td {
+  border-bottom-color: #cbd9d2;
+}
+
+.quotation-summary-box,
+.invoice-summary-box {
+  border-radius: 2px;
+  box-shadow: 0 10px 24px rgba(10, 113, 78, .08);
+}
+
+.quotation-summary-box > div,
+.invoice-summary-box > div {
+  gap: 8mm;
+}
+
+.quotation-summary-box .quotation-total,
+.invoice-summary-box .invoice-summary-total {
+  margin: 1mm -3mm -1mm;
+  padding: 3mm;
+  border-top: 1px solid rgba(0, 107, 53, .35);
+  font-weight: 700;
+}
+
+.invoice-summary-box {
+  display: grid;
+  gap: 2mm;
+  min-height: 25mm;
+  padding: 4mm 8mm;
+  color: #111;
+  background: #c7e1d9;
+  font-size: 12pt;
+  line-height: 1.2;
+  letter-spacing: .8px;
+}
+
+.invoice-summary-box > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.invoice-summary-box > div > span:last-child {
+  white-space: nowrap;
+}
+
+.quotation-tax-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
+  min-height: 44px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.quotation-tax-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
+.quotation-tax-toggle small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.quotation-live-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: var(--surface-soft-2);
+  font-size: 11px;
+}
+
+.quotation-live-summary strong {
+  margin-left: auto;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+@media screen and (max-width: 560px) {
+  .quotation-live-summary strong {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+/* Editable charge lines shared by invoice and quotation forms. */
+.charge-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft-2);
+}
+
+.charge-editor-heading,
+.charge-editor-columns,
+.charge-editor-row,
+.charge-editor-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, .38fr) 34px;
+  align-items: center;
+  gap: 10px;
+}
+
+.charge-editor-heading {
+  grid-template-columns: 1fr auto;
+}
+
+.charge-editor-heading .muted-copy {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+
+.charge-editor-columns {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.charge-editor-row .input {
+  min-width: 0;
+}
+
+.charge-remove-button {
+  min-width: 34px;
+  padding: 0;
+  color: var(--danger);
+}
+
+.charge-editor-total {
+  grid-template-columns: 1fr auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.charge-editor-total strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.charge-editor-error {
+  grid-column: 1 / -1;
+}
+
+.invoice-period-card {
+  text-align: right;
+}
+
+.period-subline {
+  margin: -1mm 0 0;
+  color: #666;
+  font-size: 9.5pt;
+  letter-spacing: .5px;
+}
+
+.invoice-bottom-section {
+  margin-top: 28mm;
+}
+
+@media screen and (max-width: 560px) {
+  .charge-editor-heading,
+  .charge-editor-columns,
+  .charge-editor-row {
+    grid-template-columns: minmax(0, 1fr) minmax(100px, .48fr) 30px;
+  }
+
+  .charge-editor-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .charge-editor-heading .button {
+    width: 100%;
+  }
+}

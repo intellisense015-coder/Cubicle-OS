@@ -61,9 +61,9 @@ export default function LeadJourneyPage({ params }) {
     if (selected) setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey: normalizeLeadJourney(selected, rows.indexOf(selected)) });
   }, [routeParams.id]);
 
-  const saveFollowUp = ({ entry, outcome, nextFollowUpDate, nextFollowUpTime, nextFollowUp }) => {
+  const saveFollowUp = ({ entry, outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp }) => {
     if (!lead) return;
-    const updated = transitionLead(lead, { type: "follow-up-logged", outcome, nextFollowUpDate, nextFollowUpTime, nextFollowUp });
+    const updated = transitionLead(lead, { type: "follow-up-logged", outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp });
     updated.journey = [entry, ...(Array.isArray(lead.journey) ? lead.journey : [])];
     const stored = getDemoValue("leads");
     const rows: any[] = Array.isArray(stored) ? stored : [];

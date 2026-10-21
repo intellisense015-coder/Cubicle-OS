@@ -145,8 +145,29 @@ function formatDashboardAmount(value) {
   return `PKR ${dashboardAmount(value).toLocaleString("en-PK")}`;
 }
 
+function dashboardWorkspaceSeats(workspace) {
+  return Math.max(1, Number(workspace.capacity) || 0);
+}
+
+function dashboardWorkspaceGroup(workspace) {
+  return ["office", "cabin"].includes(workspace.kind) ? "private" : "shared";
+}
+
+function dashboardWorkspaceStatus(workspace) {
+  if (["maintenance", "reserved"].includes(workspace.status) || workspace.maintenanceStatus && workspace.maintenanceStatus !== "deactivated") return "maintenance";
+  if (workspace.paymentStatus === "Overdue") return "overdue";
+  if (workspace.paymentStatus === "Grace") return "grace";
+  if (workspace.paymentStatus === "Due soon") return "due-soon";
+  if (workspace.status === "occupied") return "occupied";
+  return "available";
+}
+
+function dashboardWorkspaceStatusLabel(status) {
+  return { occupied: "Occupied", available: "Available", notice: "Notice period", maintenance: "Under maintenance", overdue: "Overdue payments", "due-soon": "Payment due soon", grace: "Grace period" }[status] || "Available";
+}
+
 function displayDashboardPaymentStatus(status) {
-  return status === "Grace" ? "Overdue" : status || "Not assigned";
+  return status === "Grace" ? "Grace period" : status || "Not assigned";
 }
 
 function dashboardDateKey(date = new Date()) {
@@ -245,6 +266,40 @@ export default function DashboardPage() {
     .filter((workspace) => workspace.status === "occupied")
     .reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0), [workspaceRows]);
 
+  const dashboardMetrics = useMemo(() => {
+    const privateWorkspaces = workspaceRows.filter((workspace) => dashboardWorkspaceGroup(workspace) === "private");
+    const sharedWorkspaces = workspaceRows.filter((workspace) => dashboardWorkspaceGroup(workspace) === "shared");
+    const totalSeats = workspaceRows.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
+    const privateSeats = privateWorkspaces.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
+    const sharedSeats = sharedWorkspaces.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
+    const occupiedSeatsFor = (rows) => rows.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
+    const privateOccupied = occupiedSeatsFor(privateWorkspaces);
+    const sharedOccupied = occupiedSeatsFor(sharedWorkspaces);
+    const totalOccupied = privateOccupied + sharedOccupied;
+    const privateMrr = privateWorkspaces.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0);
+    const sharedMrr = sharedWorkspaces.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0);
+    const privateAveragePrice = privateOccupied ? privateMrr / privateOccupied : 0;
+    const sharedAveragePrice = sharedOccupied ? sharedMrr / sharedOccupied : 0;
+    const averagePrice = totalOccupied ? (privateMrr + sharedMrr) / totalOccupied : 0;
+    return {
+      totalSeats,
+      privateSeats,
+      sharedSeats,
+      privateOccupied,
+      sharedOccupied,
+      totalOccupied,
+      privateAvailable: Math.max(0, privateSeats - privateOccupied),
+      sharedAvailable: Math.max(0, sharedSeats - sharedOccupied),
+      privateMrr,
+      sharedMrr,
+      totalMrr: privateMrr + sharedMrr,
+      privateAveragePrice,
+      sharedAveragePrice,
+      averagePrice,
+      opportunityLoss: Math.round(Math.max(0, privateSeats - privateOccupied) * privateAveragePrice + Math.max(0, sharedSeats - sharedOccupied) * sharedAveragePrice),
+    };
+  }, [workspaceRows]);
+
   const paymentRows = useMemo(() => [...invoiceRows]
     .sort((a, b) => {
       const statusOrder = { Overdue: 0, Grace: 0, "Due soon": 1, Paid: 2 };
@@ -270,13 +325,18 @@ export default function DashboardPage() {
   return <PageShell><motion.div className="dashboard-content" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55 }}>
     <div className="dashboard-main-grid">
       <div className="dashboard-main-column">
-        <section className="stat-grid dashboard-kpi-grid">
-          <KpiCard icon={<Grid2X2 size={18} />} label="Space occupancy" value={`${occupancyPercentage}%`} detail={`${spaceOccupancy.occupied} of ${spaceOccupancy.total} spaces occupied`} leftOverlay rightOverlay overlayValues={{ left: `${occupancyPercentage}%`, right: `${availablePercentage}%` }} />
-          <KpiCard icon={<Receipt size={18} />} label="Payment due" value={formatDashboardAmount(paymentDueAmount)} detail={paymentDueAmount ? `${invoiceRows.filter((invoice) => invoice.paymentStatus !== "Paid").length} unpaid invoice${invoiceRows.filter((invoice) => invoice.paymentStatus !== "Paid").length === 1 ? "" : "s"}` : "No unpaid invoices"} />
-          <KpiCard icon={<CreditCard size={18} />} label="Recurring amount" value={formatDashboardAmount(recurringAmount)} detail={activeMemberCount ? `${activeMemberCount} active member${activeMemberCount === 1 ? "" : "s"}` : "No active member rent"} />
-          <KpiCard icon={<CalendarDays size={18} />} label="Visits today" value={visitRows.length} detail={visitRows.length ? `${visitRows.length} scheduled visit${visitRows.length === 1 ? "" : "s"}` : "No visits scheduled"} />
-          <KpiCard icon={<ListChecks size={18} />} label="Pending approvals" value={pendingApprovals} detail={pendingApprovals ? "Owner action required" : "Nothing requires action"} />
-      </section>
+        <section className="dashboard-workspace-card">
+          <div className="dashboard-section-heading"><div><span className="dashboard-eyebrow">Portfolio overview</span><h2>Workspace inventory</h2><p>Live capacity, status and recurring revenue across mapped workspaces.</p></div><Link className="dashboard-view-link" href="/workspaces">Manage workspaces <ArrowUpRight size={14} /></Link></div>
+          <div className="dashboard-workspace-table-wrap"><table className="dashboard-workspace-table"><thead><tr><th>Type</th><th>Seats</th><th>Status</th><th>MRR</th></tr></thead><tbody>{workspaceRows.map((workspace) => { const status = dashboardWorkspaceStatus(workspace); return <tr key={workspace.id}><td><strong>{workspace.label}</strong><small>{workspace.type}</small></td><td>{dashboardWorkspaceSeats(workspace)}</td><td><span className={`dashboard-status dashboard-status-${status}`}><i />{dashboardWorkspaceStatusLabel(status)}</span></td><td>{formatDashboardAmount(workspace.monthlyRent)}</td></tr>; })}</tbody></table>{!workspaceRows.length ? <div className="dashboard-table-empty">No mapped workspaces yet.</div> : null}</div>
+        </section>
+        <section className="dashboard-metric-grid">
+          <div className="dashboard-metric-panel"><div className="dashboard-section-heading"><div><span className="dashboard-eyebrow">Occupancy</span><h3>Overall occupancy</h3></div><strong>{dashboardMetrics.totalSeats ? Math.round((dashboardMetrics.totalOccupied / dashboardMetrics.totalSeats) * 100) : 0}%</strong></div><div className="dashboard-metric-row"><span>Shared seats occupancy</span><strong>{dashboardMetrics.sharedSeats ? Math.round((dashboardMetrics.sharedOccupied / dashboardMetrics.sharedSeats) * 100) : 0}%</strong></div><div className="dashboard-metric-row"><span>Private office occupancy</span><strong>{dashboardMetrics.privateSeats ? Math.round((dashboardMetrics.privateOccupied / dashboardMetrics.privateSeats) * 100) : 0}%</strong></div></div>
+          <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Capacity</span><h3>Seat summary</h3><div className="dashboard-metric-row"><span>Total seats</span><strong>{dashboardMetrics.totalSeats}</strong></div><div className="dashboard-metric-row"><span>Private office seats occupied</span><strong>{dashboardMetrics.privateOccupied}</strong></div><div className="dashboard-metric-row"><span>Shared seats occupied</span><strong>{dashboardMetrics.sharedOccupied}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Overall occupied seats</span><strong>{dashboardMetrics.totalOccupied}</strong></div></div>
+          <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Sales capacity</span><h3>Seats to sell</h3><div className="dashboard-metric-row"><span>Private office seats</span><strong>{dashboardMetrics.privateAvailable}</strong></div><div className="dashboard-metric-row"><span>Shared seats</span><strong>{dashboardMetrics.sharedAvailable}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total available seats</span><strong>{dashboardMetrics.privateAvailable + dashboardMetrics.sharedAvailable}</strong></div></div>
+          <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Pricing</span><h3>Average price</h3><div className="dashboard-metric-row"><span>Overall average price</span><strong>{formatDashboardAmount(dashboardMetrics.averagePrice)}</strong></div><div className="dashboard-metric-row"><span>Private office</span><strong>{formatDashboardAmount(dashboardMetrics.privateAveragePrice)}</strong></div><div className="dashboard-metric-row"><span>Shared seat</span><strong>{formatDashboardAmount(dashboardMetrics.sharedAveragePrice)}</strong></div></div>
+          <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Revenue</span><h3>Monthly recurring revenue</h3><div className="dashboard-metric-row"><span>Private office MRR</span><strong>{formatDashboardAmount(dashboardMetrics.privateMrr)}</strong></div><div className="dashboard-metric-row"><span>Shared seats MRR</span><strong>{formatDashboardAmount(dashboardMetrics.sharedMrr)}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total MRR</span><strong>{formatDashboardAmount(dashboardMetrics.totalMrr)}</strong></div></div>
+          <div className="dashboard-metric-panel dashboard-opportunity-panel"><span className="dashboard-eyebrow">Revenue opportunity</span><h3>Opportunity loss</h3><strong className="dashboard-opportunity-value">{formatDashboardAmount(dashboardMetrics.opportunityLoss)}</strong><p>Estimated monthly revenue from currently available capacity.</p></div>
+        </section>
 
       <section className="dashboard-table-card">
         <div className="card-heading"><div><h2>Payment watchlist</h2></div></div>

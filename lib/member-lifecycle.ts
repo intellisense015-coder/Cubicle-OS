@@ -1,4 +1,12 @@
 export type MembershipPeriodStatus = "Active" | "Completed";
+export type MembershipStatus = "Active" | "Notice period";
+export const MEMBERSHIP_STATUS_OPTIONS: MembershipStatus[] = ["Active", "Notice period"];
+
+export function normalizeMembershipStatus(value: unknown): MembershipStatus {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["notice period", "notice-period", "notice"].includes(normalized)) return "Notice period";
+  return "Active";
+}
 
 export function normalizePhone(value: unknown) {
   const digits = String(value || "").replace(/\D/g, "");

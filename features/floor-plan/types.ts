@@ -9,20 +9,24 @@ export type AreaShape =
 export type AreaKind = "office" | "seat" | "cabin" | "meeting" | "huddle" | "phone" | "amenity";
 export interface FloorArea { id: string; name: string; kind: AreaKind; capacity: number | null; shape: AreaShape }
 export interface FloorConfig { id: string; name: string; image: string; width: number; height: number; areas: FloorArea[] }
-export type MapStatus = "available" | "occupied" | "due-soon" | "grace" | "overdue" | "reserved" | "maintenance" | "unknown" | "shared";
+export type MapStatus = "available" | "occupied" | "notice-period" | "due-soon" | "grace" | "overdue" | "reserved" | "maintenance" | "unknown" | "shared";
 /** Return only fields the signed-in user has permission to see. */
 export interface AreaLiveData {
   areaId: string;
   occupancy: "available" | "occupied" | "reserved" | "maintenance";
   paymentStatus?: "paid" | "due-soon" | "grace" | "overdue" | "unknown";
+  membershipStatus?: "active" | "notice-period";
+  noticeStartDate?: string;
+  expectedLeavingDate?: string;
+  noticeNotes?: string;
   member?: { id: string; name: string; contactName?: string; email?: string; phone?: string; employees?: number; monthlyRent?: string };
   outstandingPkr?: number;
   dueDate?: string; // YYYY-MM-DD, already interpreted using your business timezone
   maintenance?: { category: string; status: MaintenanceStatus; reason: string };
 }
 export const STATUS_LABELS: Record<MapStatus, string> = {
-  available: "Available", occupied: "Occupied", "due-soon": "Due soon", grace: "Due",
-  overdue: "Overdue", reserved: "Reserved", maintenance: "Maintenance",
+  available: "Available / Free", occupied: "Occupied / Good standing", "notice-period": "Notice period", "due-soon": "Payment due soon", grace: "Payment grace period",
+  overdue: "Overdue payments", reserved: "Reserved", maintenance: "Under maintenance",
   unknown: "Status unavailable", shared: "Shared facility",
 };
 export function isRentable(area: FloorArea): boolean {
@@ -32,6 +36,7 @@ export function isRentable(area: FloorArea): boolean {
 export function getAreaStatus(area: FloorArea, live?: AreaLiveData): MapStatus {
   if (!live) return isRentable(area) ? "unknown" : "shared";
   if (live.maintenance && live.maintenance.status !== "deactivated") return "maintenance";
+  if (live.membershipStatus === "notice-period") return "notice-period";
   if (live.occupancy === "available") return "available";
   if (live.occupancy === "reserved") return "reserved";
   if (live.occupancy === "maintenance") return "maintenance";

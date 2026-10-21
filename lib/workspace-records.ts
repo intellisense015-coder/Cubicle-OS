@@ -2,6 +2,7 @@ import { floor4 } from "@/features/floor-plan/floor-4";
 import { isRentable, type AreaLiveData, type FloorArea, type FloorConfig } from "@/features/floor-plan/types";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { isMaintenanceVisible, maintenanceCategoryName, normalizeMaintenanceStatus, type MaintenanceStatus } from "@/lib/maintenance";
+import { normalizeMembershipStatus } from "@/lib/member-lifecycle";
 
 export const workspaceTypes = ["Private office", "Cabin", "Dedicated desk", "Shared desk", "Meeting room", "Shared room", "Phone booth", "Shared facility"];
 const EMPTY_WORKSPACE_DATA_VERSION = "empty-floor-plan-v2";
@@ -35,7 +36,8 @@ function statusFor(area: FloorArea, live?: AreaLiveData) {
 
 function paymentLabel(live?: AreaLiveData) {
   if (!live?.paymentStatus) return "Not assigned";
-  if (live.paymentStatus === "due-soon" || live.paymentStatus === "grace") return "Due soon";
+  if (live.paymentStatus === "grace") return "Grace period";
+  if (live.paymentStatus === "due-soon") return "Due soon";
   if (live.paymentStatus === "overdue") return "Overdue";
   if (live.paymentStatus === "paid") return "Paid";
   return "Not assigned";
@@ -59,6 +61,10 @@ function baseRecord(area: FloorArea) {
     billingStartDate: "",
     dueDay: 5,
     gracePeriodDays: 3,
+    membershipStatus: "Active",
+    noticeStartDate: "",
+    expectedLeavingDate: "",
+    noticeNotes: "",
     maintenanceCategoryId: "",
     maintenanceStatus: "deactivated" as MaintenanceStatus,
     maintenanceReason: "",
@@ -137,6 +143,10 @@ export function workspaceRecordsToAreaData(records): AreaLiveData[] {
     return {
       areaId: area.id,
       occupancy: maintenance ? "maintenance" : record.status === "reserved" || record.status === "maintenance" ? record.status : occupied ? "occupied" : "available",
+      membershipStatus: normalizeMembershipStatus(assignedMember?.membershipStatus || record.membershipStatus).toLowerCase().replace(" ", "-") as "active" | "notice-period",
+      noticeStartDate: assignedMember?.noticeStartDate || record.noticeStartDate || "",
+      expectedLeavingDate: assignedMember?.expectedLeavingDate || record.expectedLeavingDate || "",
+      noticeNotes: assignedMember?.noticeNotes || record.noticeNotes || "",
       paymentStatus: record.paymentStatus === "Overdue" ? "overdue" : record.paymentStatus === "Grace" ? "grace" : record.paymentStatus === "Due soon" ? "due-soon" : record.paymentStatus === "Paid" ? "paid" : "unknown",
       ...(occupied ? { member: { id: record.memberId || area.id, name: assignedMember?.company || record.company || "No company", contactName: assignedMember?.member || record.occupant || undefined, email: assignedMember?.email || undefined, employees: record.capacity || undefined, monthlyRent: assignedMember?.rent || record.monthlyRent || undefined } } : {}),
       ...(maintenance ? { maintenance } : {})

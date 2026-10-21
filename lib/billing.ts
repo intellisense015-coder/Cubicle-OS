@@ -15,6 +15,10 @@ export interface WorkspaceInvoice {
   itemDescription: string;
   issueDate: string;
   dueDate: string;
+  billingStartDate?: string;
+  joiningDate?: string;
+  dueDay?: number;
+  manualDateOverride?: boolean;
   graceUntil: string;
   paymentStatus: BillingStatus;
   emailStatus: string;
@@ -36,9 +40,15 @@ export function getValidMemberInvoices(invoices: readonly any[], members: readon
 
   return (Array.isArray(invoices) ? invoices : []).flatMap((invoice) => {
     if (!invoice || typeof invoice !== "object") return [];
-    if (invoice.memberId && memberIds.has(invoice.memberId)) return [invoice];
+    const resolvedMemberId = invoice.memberId && memberIds.has(invoice.memberId) ? invoice.memberId : memberByAccount.get(String(invoice.account || ""));
+    const member = memberList.find((item) => item.id === resolvedMemberId);
+    const billingStartDate = invoice.billingStartDate || member?.billingStartDate || member?.joined || "";
+    const repairedInvoice = resolvedMemberId && billingStartDate && invoice.dueDate && invoice.dueDate < billingStartDate
+      ? { ...invoice, memberId: resolvedMemberId, billingStartDate, dueDate: billingStartDate, dueDay: Number(String(billingStartDate).slice(-2)) || invoice.dueDay, manualDateOverride: false }
+      : (invoice.memberId === resolvedMemberId ? invoice : { ...invoice, memberId: resolvedMemberId });
+    if (invoice.memberId && memberIds.has(invoice.memberId)) return [repairedInvoice];
     const inferredMemberId = memberByAccount.get(String(invoice.account || ""));
-    return inferredMemberId ? [{ ...invoice, memberId: inferredMemberId }] : [];
+    return inferredMemberId ? [repairedInvoice] : [];
   });
 }
 
@@ -180,6 +190,9 @@ export function syncWorkspaceBilling(workspaces: readonly any[]) {
       const graceUntil = addDays(dueDate, Number(workspace.gracePeriodDays || BILLING_GRACE_PERIOD_DAYS));
       const existingIndex = invoices.findIndex((invoice) => invoice.workspaceId === workspace.id && invoice.period === period);
       const existing = existingIndex >= 0 ? invoices[existingIndex] : null;
+      const manualDateOverride = existing?.manualDateOverride === true;
+      const billingStartKey = existing?.billingStartDate || member?.billingStartDate || member?.joined || localDateKey(billingStartDate);
+      const savedDueDate = manualDateOverride && existing?.dueDate && existing.dueDate >= billingStartKey ? existing.dueDate : null;
       const memberName = member?.member || workspace.occupant || "Assigned member";
       const account = `${memberName} - ${member?.company || workspace.company || "No company"}`;
       const amount = workspace.monthlyRent || member?.rent || "PKR 0";
@@ -193,8 +206,12 @@ export function syncWorkspaceBilling(workspaces: readonly any[]) {
         unitPrice: amount,
         qty: "1",
         itemDescription: `${workspace.label || "Workspace"} monthly rent`,
-        issueDate: localDateKey(billingStartDate.getFullYear() === cursor.year && billingStartDate.getMonth() === cursor.month ? billingStartDate : new Date(cursor.year, cursor.month, 1, 12)),
-        dueDate: localDateKey(dueDate),
+        issueDate: manualDateOverride ? existing.issueDate : localDateKey(billingStartDate.getFullYear() === cursor.year && billingStartDate.getMonth() === cursor.month ? billingStartDate : new Date(cursor.year, cursor.month, 1, 12)),
+        dueDate: savedDueDate || localDateKey(dueDate),
+        billingStartDate: billingStartKey,
+        joiningDate: existing?.joiningDate || member?.joined || "",
+        dueDay: manualDateOverride ? Number(existing?.dueDay || dueDay) : dueDay,
+        manualDateOverride,
         graceUntil: localDateKey(graceUntil),
         paymentStatus: existing?.paymentStatus === "Paid" ? "Paid" : getBillingStatus({ paymentStatus: existing?.paymentStatus || "Due soon", dueDate: localDateKey(dueDate), graceUntil: localDateKey(graceUntil) }, today),
         emailStatus: existing?.emailStatus || "Not sent"

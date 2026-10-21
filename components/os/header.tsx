@@ -29,6 +29,7 @@ import {
   LucideIcon,
 } from "lucide-react";
 import { getSystemNotifications, type SystemNotification } from "@/lib/system-notifications";
+import { getDemoValue } from "@/lib/demo-session";
 
 // ==========================================
 // Types
@@ -44,6 +45,7 @@ export interface SearchResultItem {
   label: string;
   href: string;
   category?: string;
+  description?: string;
   icon?: LucideIcon;
 }
 
@@ -91,6 +93,30 @@ const DEFAULT_SEARCH_MODULES: SearchResultItem[] = [
   { label: "Profile & Security", href: "/profile", category: "Account", icon: UserRound },
 ];
 
+function buildGlobalSearchIndex(): SearchResultItem[] {
+  const records: SearchResultItem[] = [];
+  const addRecords = (key: string, category: string, href: string, icon: LucideIcon, labelFor: (item: any) => string, fields: (item: any) => string[]) => {
+    const saved = getDemoValue(key);
+    if (!Array.isArray(saved)) return;
+    saved.forEach((item, index) => {
+      const label = labelFor(item) || `${category} ${index + 1}`;
+      const description = fields(item).filter(Boolean).join(" · ");
+      records.push({ label, href: item.id && ["leads", "members"].includes(key) ? `${href}/${item.id}` : href, category, description, icon });
+    });
+  };
+  addRecords("leads", "Lead", "/leads", Users, (item) => item.name || item.email, (item) => [item.email, item.company, item.workspace, item.stage, item.lostReason]);
+  addRecords("members", "Member", "/members", Users, (item) => item.member || item.name || item.email, (item) => [item.email, item.company, item.space, item.membershipStatus, item.status, item.joined, item.billingStartDate, item.dueDay, item.team]);
+  addRecords("companies", "Company", "/companies", Building2, (item) => item.company || item.name || item.companyName, (item) => [item.email, item.phone, item.industry]);
+  addRecords("workspaces", "Workspace", "/workspaces", DoorOpen, (item) => item.label || item.name, (item) => [item.id, item.occupant, item.company, item.status, item.paymentStatus, item.zone, item.memberId, item.billingStartDate, item.dueDay]);
+  addRecords("invoices", "Invoice", "/invoices", ReceiptText, (item) => item.invoice || item.account, (item) => [item.account, item.period, item.paymentStatus, item.issueDate, item.dueDate, item.billingStartDate, item.joiningDate, item.dueDay]);
+  addRecords("quotations", "Quotation", "/quotations", FileText, (item) => item.quotation || item.title || item.account, (item) => [item.account, item.company, item.email, item.status, item.memberId]);
+  addRecords("proposals", "Proposal", "/proposals", FileText, (item) => item.proposalNumber || item.title || item.account, (item) => [item.account, item.company, item.email, item.status, item.memberId]);
+  addRecords("visits", "Visit", "/visits", CalendarDays, (item) => item.visitor || item.name || item.company, (item) => [item.email, item.company, item.status, item.visitDate]);
+  addRecords("employees", "Employee", "/employees", UserRound, (item) => item.name || item.email, (item) => [item.email, item.role, item.status]);
+  addRecords("approvals", "Approval", "/approvals", ShieldCheck, (item) => item.title || item.type, (item) => [item.type, item.requestedBy, item.status, item.risk]);
+  return [...DEFAULT_SEARCH_MODULES, ...records];
+}
+
 const QUICK_ACTIONS = [
   { label: "Add lead", description: "Capture a new workspace enquiry", href: "/leads", icon: PlusCircle },
   { label: "Add member", description: "Create a member or company record", href: "/members", icon: Users },
@@ -137,6 +163,7 @@ export function OsHeader({
   const [branchSearch, setBranchSearch] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
+  const [searchIndex, setSearchIndex] = useState<SearchResultItem[]>(DEFAULT_SEARCH_MODULES);
 
   const headerRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -152,6 +179,18 @@ export function OsHeader({
     return () => {
       window.removeEventListener("cubicle-demo-change", handleDemoChange as EventListener);
       window.removeEventListener("focus", refreshNotifications);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshSearchIndex = () => setSearchIndex(buildGlobalSearchIndex());
+    refreshSearchIndex();
+    const handleDemoChange = () => refreshSearchIndex();
+    window.addEventListener("cubicle-demo-change", handleDemoChange as EventListener);
+    window.addEventListener("focus", refreshSearchIndex);
+    return () => {
+      window.removeEventListener("cubicle-demo-change", handleDemoChange as EventListener);
+      window.removeEventListener("focus", refreshSearchIndex);
     };
   }, []);
 
@@ -221,8 +260,8 @@ export function OsHeader({
     onBranchChange?.(id);
   };
 
-  const filteredSearchResults = DEFAULT_SEARCH_MODULES.filter((item) =>
-    item.label.toLowerCase().includes(searchQuery.trim().toLowerCase())
+  const filteredSearchResults = searchIndex.filter((item) =>
+    `${item.label} ${item.category || ""} ${item.description || ""}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
   ).slice(0, 6);
 
   const filteredBranches = branches.filter((b) =>
@@ -281,13 +320,13 @@ export function OsHeader({
           {/* Search Results Dropdown */}
           {searchFocused && searchQuery.trim() && (
             <div className="search-dropdown-menu">
-              <div className="search-dropdown-header">Matching Modules</div>
+              <div className="search-dropdown-header">Matching workspace records</div>
               {filteredSearchResults.length > 0 ? (
                 filteredSearchResults.map((result) => {
                   const Icon = result.icon || Search;
                   return (
                     <button
-                      key={result.href}
+                      key={`${result.href}-${result.label}`}
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => handleSearchSelect(result.href)}
@@ -299,7 +338,7 @@ export function OsHeader({
                       <div className="search-item-info">
                         <span className="search-item-label">{result.label}</span>
                         {result.category && (
-                          <span className="search-item-category">{result.category}</span>
+                          <span className="search-item-category">{result.category}{result.description ? ` · ${result.description}` : ""}</span>
                         )}
                       </div>
                       <ChevronRight size={13} className="search-item-chevron" />
@@ -1461,6 +1500,49 @@ export function OsHeader({
             background: var(--paper);
             box-shadow: 0 1px 3px var(--card-shadow);
           }
+        }
+        @media (max-width: 1023px) {
+          .header-actions .theme-switch {
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+            flex-direction: row;
+            width: 88px !important;
+            height: 36px !important;
+            gap: 2px;
+            padding: 3px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--brand-soft);
+            color: var(--ink);
+          }
+          .header-actions .theme-switch .theme-option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 28px;
+            gap: 4px;
+            white-space: nowrap;
+            border-radius: 8px;
+            font-size: 9px;
+          }
+        }
+        @media (max-width: 640px) {
+          .solexa-header { min-height: 64px; padding: 8px 10px; gap: 6px; }
+          .header-left { gap: 7px; min-width: 0; }
+          .greeting-box { min-width: 0; max-width: 112px; }
+          .header-page-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .header-actions { gap: 4px; }
+          .header-actions .theme-switch { width: 42px !important; padding: 3px; }
+          .header-actions .theme-switch .theme-option { gap: 0; }
+          .header-actions .theme-switch .theme-option > span { display: none; }
+          .branch-switcher-wrapper { display: none; }
+          .quick-action-text { display: none; }
+          .quick-action-trigger-btn { width: 36px; padding: 0; }
+          .user-avatar-btn { width: 32px; height: 32px; }
         }
       `}</style>
     </>

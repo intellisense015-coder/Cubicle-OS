@@ -47,7 +47,7 @@ export function normalizeLeadStage(stage: unknown, lead: any = {}): LeadStage {
 
 export type LeadStageEvent =
   | { type: "follow-up-scheduled"; nextFollowUp: string }
-  | { type: "follow-up-logged"; outcome: string; nextFollowUp?: string; nextFollowUpDate?: string; nextFollowUpTime?: string }
+  | { type: "follow-up-logged"; outcome: string; lostReason?: string; nextFollowUp?: string; nextFollowUpDate?: string; nextFollowUpTime?: string }
   | { type: "visit-scheduled"; nextFollowUp: string }
   | { type: "visit-cancelled" }
   | { type: "visit-completed"; nextFollowUp?: string; nextFollowUpDate?: string; nextFollowUpTime?: string }
@@ -57,7 +57,7 @@ export type LeadStageEvent =
   | { type: "quotation-approved" }
   | { type: "agreement-shared" }
   | { type: "converted" }
-  | { type: "not-interested" };
+  | { type: "not-interested"; lostReason?: string };
 
 function nextFollowUpValue(date?: string, time?: string) {
   return date ? `${date}${time ? ` · ${time}` : ""}` : "Not scheduled";
@@ -93,7 +93,7 @@ export function transitionLead(lead: any, event: LeadStageEvent) {
       if (event.outcome === "Proposal Approved") return { ...base, stage: "Proposal Approved", nextFollowUp: "Not scheduled", pendingVisit: false };
       if (event.outcome === "Quotation Approved") return { ...base, stage: "Quotation Approved", nextFollowUp: "Not scheduled", pendingVisit: false };
       if (event.outcome === "Agreement shared") return { ...base, stage: "Agreement shared", nextFollowUp: "Not scheduled", pendingVisit: false };
-      if (event.outcome === "Not interested") return { ...base, stage: "Not interested", nextFollowUp: "Not scheduled", pendingVisit: false };
+      if (event.outcome === "Not interested") return { ...base, stage: "Not interested", lostReason: event.lostReason || base.lostReason || "", nextFollowUp: "Not scheduled", pendingVisit: false };
       return { ...base, stage: stableStage(base), nextFollowUp: "Not scheduled", pendingVisit: false };
     }
     case "visit-scheduled":
@@ -117,7 +117,7 @@ export function transitionLead(lead: any, event: LeadStageEvent) {
     case "converted":
       return { ...base, stage: "Converted", nextFollowUp: "Not scheduled" };
     case "not-interested":
-      return { ...base, stage: "Not interested", nextFollowUp: "Not scheduled" };
+      return { ...base, stage: "Not interested", lostReason: event.lostReason || base.lostReason || "", nextFollowUp: "Not scheduled" };
     default:
       return base;
   }

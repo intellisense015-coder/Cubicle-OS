@@ -103,3 +103,13 @@
 :is(html[data-theme="dark"], .dark) .fp-adjacent-card { border-color: #4b5a51; color: #f2f7f4; background: rgba(35, 35, 35, .96); box-shadow: 0 18px 48px rgba(0, 0, 0, .35); }
 :is(html[data-theme="dark"], .dark) .fp-adjacent-card dt { color: #a7a7ad; }
 :is(html[data-theme="dark"], .dark) .fp-adjacent-card dd { color: #f2f7f4; }
+
+/* Updated floor-plan status palette. */
+.fp-status-available { --area-color: #c56a0b; --area-fill: #f3c58a; }
+.fp-status-occupied { --area-color: #0a714e; --area-fill: #b8dca9; }
+.fp-status-paid { --area-color: #0a714e; --area-fill: #b8dca9; }
+.fp-status-notice-period { --area-color: #7851b5; --area-fill: #d6c4f0; }
+.fp-status-due-soon,
+.fp-status-grace { --area-color: #a77400; --area-fill: #f5cd5d; }
+.fp-status-overdue { --area-color: #c72f3b; --area-fill: #f49aa3; }
+.fp-status-maintenance { --area-color: #73777b; --area-fill: #d8dcde; }
