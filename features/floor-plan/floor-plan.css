@@ -112,4 +112,9 @@
 .fp-status-due-soon,
 .fp-status-grace { --area-color: #a77400; --area-fill: #f5cd5d; }
 .fp-status-overdue { --area-color: #c72f3b; --area-fill: #f49aa3; }
-.fp-status-maintenance { --area-color: #73777b; --area-fill: #d8dcde; }
+.fp-status-maintenance { /* Keep maintenance offices grey, separate from payment/assignment colors. */ --area-color: #73777b; --area-fill: #d8dcde; }
+  .fp-maintenance-open,
+  .fp-maintenance-in_progress { color: #a77400; background: #fff0c9; }
+  .fp-maintenance-resolved { color: #416bb0; background: #e3ecff; }
+  .fp-maintenance-cancelled { color: #687078; background: #e5ebe7; }
+  .fp-maintenance-action { display: inline-flex; align-items: center; justify-content: center; margin-top: 12px; width: 100%; background: var(--fp-green) !important; color: #fff !important; font-weight: 800; }

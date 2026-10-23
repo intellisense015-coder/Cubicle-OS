@@ -19,6 +19,13 @@ export interface WorkspaceInvoice {
   joiningDate?: string;
   dueDay?: number;
   manualDateOverride?: boolean;
+  subtotal?: string;
+  charges?: Array<{ description: string; amount: string }>;
+  items?: Array<{ description: string; price: string | number; quantity?: number }>;
+  taxEnabled?: boolean;
+  taxRate?: string;
+  taxAmount?: string;
+  taxLabel?: string;
   graceUntil: string;
   paymentStatus: BillingStatus;
   emailStatus: string;
@@ -202,10 +209,17 @@ export function syncWorkspaceBilling(workspaces: readonly any[]) {
         memberId: workspace.memberId,
         account,
         period: new Date(cursor.year, cursor.month, 1, 12).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
-        amount,
-        unitPrice: amount,
-        qty: "1",
-        itemDescription: `${workspace.label || "Workspace"} monthly rent`,
+        amount: manualDateOverride ? existing?.amount || amount : amount,
+        unitPrice: manualDateOverride ? existing?.unitPrice || existing?.subtotal || amount : amount,
+        qty: existing?.qty || "1",
+        itemDescription: manualDateOverride ? existing?.itemDescription || `${workspace.label || "Workspace"} monthly rent` : `${workspace.label || "Workspace"} monthly rent`,
+        ...(manualDateOverride && existing?.charges ? { charges: existing.charges } : {}),
+        ...(manualDateOverride && existing?.items ? { items: existing.items } : {}),
+        ...(existing?.subtotal !== undefined ? { subtotal: existing.subtotal } : {}),
+        ...(existing?.taxEnabled !== undefined ? { taxEnabled: existing.taxEnabled } : {}),
+        ...(existing?.taxRate !== undefined ? { taxRate: existing.taxRate } : {}),
+        ...(existing?.taxAmount !== undefined ? { taxAmount: existing.taxAmount } : {}),
+        ...(existing?.taxLabel !== undefined ? { taxLabel: existing.taxLabel } : {}),
         issueDate: manualDateOverride ? existing.issueDate : localDateKey(billingStartDate.getFullYear() === cursor.year && billingStartDate.getMonth() === cursor.month ? billingStartDate : new Date(cursor.year, cursor.month, 1, 12)),
         dueDate: savedDueDate || localDateKey(dueDate),
         billingStartDate: billingStartKey,

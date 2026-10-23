@@ -8856,3 +8856,113 @@ html[data-theme="dark"] .dialog-card:has(.visit-create-form) .visit-create-form 
   .dashboard-metric-grid { grid-template-columns: 1fr; }
   .dashboard-metric-panel { padding: 14px; }
 }
+
+/* Maintenance lifecycle workspace controls */
+.workspace-lifecycle-stats { max-width: 980px; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+.workspace-operational-status { gap: 5px; white-space: nowrap; }
+.status-tag.status-active { color: #0a714e; background: color-mix(in srgb, #0a714e 14%, transparent); }
+.status-tag.status-under-maintenance { color: #a77400; background: color-mix(in srgb, #f5cd5d 36%, transparent); }
+.status-tag.status-out-of-service { color: #c72f3b; background: color-mix(in srgb, #f49aa3 38%, transparent); }
+.workspace-action-stack { display: flex; align-items: flex-start; justify-content: flex-end; gap: 8px; flex-wrap: wrap; min-width: 170px; }
+.workspace-maintenance-action { font-weight: 800; }
+.workspace-maintenance-action-under-maintenance { color: #a77400; }
+.workspace-maintenance-action-out-of-service { color: #c72f3b; }
+.workspace-configure-action { color: var(--muted); }
+.workspace-page .maintenance-badge { border: 0; text-align: left; cursor: pointer; }
+.maintenance-record-open,
+.maintenance-record-in_progress { color: #a77400; background: #fff0c9; }
+.maintenance-record-resolved { color: #416bb0; background: #e3ecff; }
+.maintenance-record-cancelled { color: var(--muted); background: var(--surface-soft); }
+.maintenance-action-form,
+.maintenance-detail-card { width: min(720px, calc(100vw - 32px)); }
+.maintenance-workspace-summary,
+.maintenance-issue-summary { display: grid; gap: 5px; margin: 0 0 18px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--brand-soft) 48%, var(--paper)); }
+.maintenance-workspace-summary span,
+.maintenance-issue-summary > span,
+.maintenance-issue-heading span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.maintenance-workspace-summary strong,
+.maintenance-issue-heading strong { color: var(--ink); font-size: 15px; }
+.maintenance-workspace-summary small,
+.maintenance-issue-summary > p,
+.maintenance-issue-heading + p { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.maintenance-textarea-field { grid-column: 1 / -1; }
+.maintenance-textarea-field textarea { min-height: 104px; resize: vertical; }
+.maintenance-ready-check { display: flex; align-items: flex-start; gap: 9px; grid-column: 1 / -1; padding: 12px; border-radius: 12px; background: var(--surface-soft); color: var(--ink); cursor: pointer; }
+.maintenance-ready-check input { margin-top: 2px; accent-color: var(--brand); }
+.maintenance-ready-check span { display: grid; gap: 3px; }
+.maintenance-ready-check strong { font-size: 11px; }
+.maintenance-ready-check small { color: var(--muted); font-size: 9px; }
+.maintenance-detail-status { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 16px; border-radius: 999px; padding: 7px 10px; font-size: 10px; font-weight: 800; }
+.maintenance-detail-status-open,
+.maintenance-detail-status-in_progress { color: #a77400; background: #fff0c9; }
+.maintenance-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.maintenance-issue-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.maintenance-issue-heading > div { display: grid; gap: 5px; }
+.maintenance-severity,
+.maintenance-history-status { display: inline-flex; flex: none; align-items: center; border-radius: 999px; padding: 5px 8px; font-size: 9px; font-weight: 800; }
+.maintenance-severity-low { color: #0a714e; background: #d9f0df; }
+.maintenance-severity-medium { color: #a77400; background: #fff0c9; }
+.maintenance-severity-high,
+.maintenance-severity-critical { color: #c72f3b; background: #ffe0e2; }
+.maintenance-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 15px 0 0; }
+.maintenance-detail-grid div { display: grid; gap: 4px; min-width: 0; }
+.maintenance-detail-grid dt { color: var(--muted); font-size: 9px; }
+.maintenance-detail-grid dd { margin: 0; color: var(--ink); font-size: 10px; font-weight: 700; overflow-wrap: anywhere; }
+.maintenance-issue-summary > p { margin: 14px 0 0; }
+.maintenance-timeline,
+.maintenance-history-list { margin-top: 20px; }
+.maintenance-timeline h3,
+.maintenance-history-list h3 { margin: 0 0 12px; color: var(--ink); font-size: 12px; }
+.maintenance-timeline-row { position: relative; display: flex; gap: 11px; padding: 0 0 14px 3px; }
+.maintenance-timeline-row:not(:last-child)::before { position: absolute; left: 6px; top: 14px; bottom: 0; width: 1px; background: color-mix(in srgb, var(--brand) 30%, var(--line)); content: ""; }
+.maintenance-timeline-marker { z-index: 1; width: 8px; height: 8px; margin-top: 3px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+.maintenance-timeline-row div { display: grid; gap: 3px; }
+.maintenance-timeline-row strong { color: var(--ink); font-size: 10px; }
+.maintenance-timeline-row span,
+.maintenance-timeline-row small { color: var(--muted); font-size: 9px; }
+.maintenance-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.maintenance-history-row > div { display: grid; gap: 4px; }
+.maintenance-history-row strong { color: var(--ink); font-size: 10px; }
+.maintenance-history-row span { color: var(--muted); font-size: 9px; }
+.maintenance-detail-actions { justify-content: flex-end; }
+
+@media (max-width: 980px) {
+  .workspace-lifecycle-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .maintenance-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .workspace-lifecycle-stats { grid-template-columns: 1fr 1fr !important; }
+  .workspace-action-stack { justify-content: flex-start; min-width: 150px; }
+  .maintenance-detail-grid { grid-template-columns: 1fr 1fr; }
+  .maintenance-detail-actions { justify-content: flex-start; }
+}
+
+/* Maintenance dialogs need the wider workspace layout instead of the generic 560px dialog width. */
+.dialog-card:has(.maintenance-action-form),
+.dialog-card:has(.maintenance-detail-card) {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(90vh, 820px);
+  max-width: calc(100vw - 24px);
+  overflow-x: hidden;
+}
+
+.maintenance-action-form,
+.maintenance-detail-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.maintenance-action-form .inline-form-grid,
+.maintenance-detail-card .inline-form-grid {
+  min-width: 0;
+}
+
+@media (max-width: 560px) {
+  .dialog-card:has(.maintenance-action-form),
+  .dialog-card:has(.maintenance-detail-card) {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+}

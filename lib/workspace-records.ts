@@ -1,7 +1,7 @@
 import { floor4 } from "@/features/floor-plan/floor-4";
 import { isRentable, type AreaLiveData, type FloorArea, type FloorConfig } from "@/features/floor-plan/types";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { isMaintenanceVisible, maintenanceCategoryName, normalizeMaintenanceStatus, type MaintenanceStatus } from "@/lib/maintenance";
+import { getActiveMaintenanceRecord, isMaintenanceVisible, maintenanceCategoryName, migrateMaintenanceData, normalizeMaintenanceStatus, normalizeWorkspaceOperationalStatus, type MaintenanceStatus, type WorkspaceOperationalStatus } from "@/lib/maintenance";
 import { normalizeMembershipStatus } from "@/lib/member-lifecycle";
 
 export const workspaceTypes = ["Private office", "Cabin", "Dedicated desk", "Shared desk", "Meeting room", "Shared room", "Phone booth", "Shared facility"];
@@ -68,6 +68,8 @@ function baseRecord(area: FloorArea) {
     maintenanceCategoryId: "",
     maintenanceStatus: "deactivated" as MaintenanceStatus,
     maintenanceReason: "",
+    operationalStatus: "ACTIVE" as WorkspaceOperationalStatus,
+    activeMaintenanceId: "",
     paymentStatus: "Not assigned",
     status: "available",
     floor: floor4.name
@@ -99,7 +101,9 @@ export function getWorkspaceRecords() {
     saveDemoValue("workspaces", records);
     saveDemoValue(WORKSPACE_DATA_VERSION_KEY, EMPTY_WORKSPACE_DATA_VERSION);
   }
-  return records;
+  const migrated = migrateMaintenanceData(records);
+  if (migrated.changed) saveDemoValue("workspaces", migrated.workspaces);
+  return migrated.workspaces;
 }
 
 export function isAssignableWorkspace(workspace) {
@@ -135,14 +139,28 @@ export function workspaceRecordsToAreaData(records): AreaLiveData[] {
     const assignedMember = memberById.get(record.memberId);
     const occupied = record.status === "occupied";
     const maintenanceStatus = normalizeMaintenanceStatus(record.maintenanceStatus);
-    const maintenance = isMaintenanceVisible(maintenanceStatus) ? {
+    const activeMaintenance = getActiveMaintenanceRecord(String(record.areaId || record.id));
+    const maintenance = activeMaintenance ? {
+      category: activeMaintenance.category || maintenanceCategoryName(record.maintenanceCategoryId || record.maintenanceCategory),
+      status: activeMaintenance.status,
+      reason: activeMaintenance.description || String(record.maintenanceReason || "No reason provided"),
+      title: activeMaintenance.title,
+      severity: activeMaintenance.severity,
+      assignedToId: activeMaintenance.assignedToId,
+      reportedAt: activeMaintenance.reportedAt,
+    } : isMaintenanceVisible(maintenanceStatus) ? {
       category: maintenanceCategoryName(record.maintenanceCategoryId || record.maintenanceCategory),
-      status: maintenanceStatus,
+      status: "OPEN" as const,
       reason: String(record.maintenanceReason || "No reason provided"),
+      title: String(record.maintenanceReason || "Maintenance issue"),
+      severity: "MEDIUM" as const,
+      reportedAt: "",
     } : undefined;
+    const operationalStatus = normalizeWorkspaceOperationalStatus(record.operationalStatus, record.maintenanceStatus);
     return {
       areaId: area.id,
-      occupancy: maintenance ? "maintenance" : record.status === "reserved" || record.status === "maintenance" ? record.status : occupied ? "occupied" : "available",
+      occupancy: operationalStatus === "OUT_OF_SERVICE" ? "maintenance" : maintenance ? "maintenance" : record.status === "reserved" || record.status === "maintenance" ? record.status : occupied ? "occupied" : "available",
+      operationalStatus,
       membershipStatus: normalizeMembershipStatus(assignedMember?.membershipStatus || record.membershipStatus).toLowerCase().replace(" ", "-") as "active" | "notice-period",
       noticeStartDate: assignedMember?.noticeStartDate || record.noticeStartDate || "",
       expectedLeavingDate: assignedMember?.expectedLeavingDate || record.expectedLeavingDate || "",

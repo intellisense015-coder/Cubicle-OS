@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { LeadFollowUpForm } from "@/components/os/lead-journey";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
+import { fetchSupabaseLead, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
 import { normalizeLeadJourney } from "@/lib/lead-journey";
 import { isTerminalLeadStage, normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
 import { leadRows } from "@/lib/module-b-data";
@@ -55,10 +57,29 @@ export default function LeadJourneyPage({ params }) {
   const [showFollowUp, setShowFollowUp] = useState(false);
 
   useEffect(() => {
-    const stored = getDemoValue("leads");
-    const rows: any[] = Array.isArray(stored) ? stored : [];
-    const selected = rows.find((item) => item.id === routeParams.id);
-    if (selected) setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey: normalizeLeadJourney(selected, rows.indexOf(selected)) });
+    let cancelled = false;
+    const loadLead = async () => {
+      const stored = getDemoValue("leads");
+      const rows: any[] = Array.isArray(stored) ? stored : [];
+      const selected = rows.find((item) => item.id === routeParams.id);
+      if (selected) {
+        setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey: normalizeLeadJourney(selected, rows.indexOf(selected)) });
+        return;
+      }
+
+      if (!isSupabaseLeadsEnabled()) return;
+      try {
+        const remote = await fetchSupabaseLead(routeParams.id);
+        if (!remote || cancelled) return;
+        const mapped = mapSupabaseLeadToOsLead(remote);
+        saveDemoValue("leads", [mapped], { notify: false });
+        setLead({ ...mapped, stage: normalizeLeadStage(mapped.stage, mapped), journey: [] });
+      } catch {
+        // The page keeps its existing skeleton for a missing or inaccessible lead.
+      }
+    };
+    loadLead();
+    return () => { cancelled = true; };
   }, [routeParams.id]);
 
   const saveFollowUp = ({ entry, outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp }) => {

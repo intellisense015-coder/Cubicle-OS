@@ -1,4 +1,4 @@
-import type { MaintenanceStatus } from "@/lib/maintenance";
+import type { MaintenanceRecordStatus, MaintenanceSeverity, MaintenanceStatus, WorkspaceOperationalStatus } from "@/lib/maintenance";
 
 /** All geometry is measured in original floor-image pixels. */
 export type Point = [number, number];
@@ -22,7 +22,8 @@ export interface AreaLiveData {
   member?: { id: string; name: string; contactName?: string; email?: string; phone?: string; employees?: number; monthlyRent?: string };
   outstandingPkr?: number;
   dueDate?: string; // YYYY-MM-DD, already interpreted using your business timezone
-  maintenance?: { category: string; status: MaintenanceStatus; reason: string };
+  operationalStatus?: WorkspaceOperationalStatus;
+  maintenance?: { category: string; status: MaintenanceRecordStatus | MaintenanceStatus; reason: string; title?: string; severity?: MaintenanceSeverity; assignedToId?: string; reportedAt?: string };
 }
 export const STATUS_LABELS: Record<MapStatus, string> = {
   available: "Available / Free", occupied: "Occupied / Good standing", "notice-period": "Notice period", "due-soon": "Payment due soon", grace: "Payment grace period",
@@ -35,7 +36,12 @@ export function isRentable(area: FloorArea): boolean {
 /** Missing API records must never imply an office is vacant. */
 export function getAreaStatus(area: FloorArea, live?: AreaLiveData): MapStatus {
   if (!live) return isRentable(area) ? "unknown" : "shared";
-  if (live.maintenance && live.maintenance.status !== "deactivated") return "maintenance";
+  // The floor plan uses one neutral grey maintenance treatment for every
+  // maintenance state. Payment urgency remains the only red map treatment.
+  if (live.operationalStatus === "OUT_OF_SERVICE") return "maintenance";
+  if (live.operationalStatus === "UNDER_MAINTENANCE") return "maintenance";
+  const maintenanceStatus = String(live.maintenance?.status || "").toUpperCase();
+  if (["OPEN", "IN_PROGRESS", "ACTIVE", "LOCKED", "BLOCKED"].includes(maintenanceStatus)) return "maintenance";
   if (live.membershipStatus === "notice-period") return "notice-period";
   if (live.occupancy === "available") return "available";
   if (live.occupancy === "reserved") return "reserved";

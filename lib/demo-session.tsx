@@ -2,9 +2,10 @@
 const SESSION_PREFIX = "cubicle-demo-";
 const EMPTY_WORKSPACE_MARKER = "empty-workspace-v1";
 
-export function saveDemoValue(key, value) {
+export function saveDemoValue(key, value, options: { notify?: boolean } = {}) {
   if (typeof window === "undefined") return;
   window.sessionStorage.setItem(`${SESSION_PREFIX}${key}`, JSON.stringify(value));
+  if (options.notify === false) return;
   // sessionStorage does not emit a storage event in the same document. The
   // custom event keeps open modules in sync after a lead/quotation update.
   window.dispatchEvent(new CustomEvent("cubicle-demo-change", { detail: { key } }));

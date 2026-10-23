@@ -57,8 +57,8 @@ export function invoiceFromRecord(invoice) {
     subtotal,
     taxEnabled: Boolean(invoice.taxEnabled),
     taxRate: chargeAmount(invoice.taxRate),
-    taxAmount: chargeAmount(invoice.taxAmount),
-    taxLabel: invoice.taxLabel || "WHT TAX",
+    taxAmount: invoice.taxAmount !== undefined ? chargeAmount(invoice.taxAmount) : Math.max(0, subtotal - total),
+    taxLabel: invoice.taxLabel || "WHT Tax",
     discountAmount: chargeAmount(invoice.discountAmount),
   };
 }
@@ -77,19 +77,20 @@ export default function InvoiceTemplate({ invoice, documentTitle = "INVOICE" }) 
   const isQuotation = documentTitle === "QUOTATION";
   const subtotal = invoice.subtotal ?? invoice.items.reduce((sum, item) => sum + item.price * (item.quantity || 1), 0);
   const taxAmount = invoice.taxEnabled ? (invoice.taxAmount ?? Math.max(0, total - subtotal)) : 0;
-  const taxLabel = invoice.taxLabel || (isQuotation ? "TAX" : "WHT TAX");
+  const taxLabelValue = String(invoice.taxLabel || "WHT Tax");
+  const taxLabel = taxLabelValue.trim().toUpperCase() === "WHT TAX" ? "WHT Tax" : taxLabelValue;
   return <main className={`invoice-page ${isQuotation ? "quotation-page" : ""}`} id="printable-invoice">
     <header className="invoice-header">
-      <section className="company-block"><div className="company-logo"><span className="green">THE</span> CUBICLE</div><p className="company-details">{invoice.company.address}<br />{invoice.company.phone}<br />{invoice.company.email}</p>{invoice.company.ntn && !isQuotation ? <p className="company-details company-tax">NTN {invoice.company.ntn}</p> : null}</section>
+      <section className="company-block"><div className="company-logo"><img src="/the-cubicle-invoice-logo.png" alt="The Cubicle" /></div><p className="company-details">{invoice.company.address}<br />{invoice.company.phone}<br />{invoice.company.email}</p>{invoice.company.ntn ? <p className="company-details company-tax">NTN {invoice.company.ntn}</p> : null}</section>
       <section className="invoice-title"><h1>{documentTitle}</h1><div className="invoice-meta">NO. {invoice.invoiceNumber}</div><div className="invoice-meta">DATE {invoice.date}</div></section>
     </header>
     <section className="billing-row single-party-row"><div className="billing-col"><h2 className="section-label">{isQuotation ? "QUOTED TO" : "INVOICED TO"}</h2><p className="customer-line">{invoice.customer.name}</p>{invoice.customer.contact ? <p className="customer-line">{invoice.customer.contact}</p> : null}{!isQuotation && invoice.joiningDate ? <p className="period-subline">Joined {invoice.joiningDate}</p> : null}</div><div className="billing-col invoice-period-card"><h2 className="section-label">{isQuotation ? "VALID THROUGH" : "INVOICE PERIOD"}</h2><p className="customer-line">{isQuotation ? invoice.validThrough || "7 days from issue" : invoice.period || invoice.date}</p>{!isQuotation && invoice.billingStartDate ? <p className="period-subline">Billing start {invoice.billingStartDate}</p> : null}{!isQuotation && invoice.dueDate ? <p className="period-subline">Due {invoice.dueDate}</p> : null}</div></section>
     <table className="items-table"><thead><tr><th>Description</th><th>Price</th></tr></thead><tbody>{invoice.items.map((item, index) => <tr key={`${item.description}-${index}`}><td>{item.quantity && item.quantity > 1 ? `${item.quantity} ` : ""}{item.description}</td><td>PKR {money(item.price * (item.quantity || 1))}</td></tr>)}</tbody></table>
     {isQuotation ? <>
-      <section className="quotation-summary"><div className="quotation-summary-box"><div><span>SUB TOTAL</span><strong>PKR {money(subtotal)}</strong></div>{invoice.taxEnabled ? <div><span>{taxLabel} {invoice.taxRate ? `(${invoice.taxRate}%)` : ""}</span><strong>PKR {money(taxAmount)}</strong></div> : null}<div className="quotation-total"><span>TOTAL</span><strong>PKR {money(total)}</strong></div></div></section>
+      <section className="quotation-summary"><div className="quotation-summary-box"><div><span>Sub Total</span><strong>PKR {money(subtotal)}</strong></div>{invoice.taxEnabled ? <div><span>{taxLabel} {invoice.taxRate ? `(${invoice.taxRate}%)` : ""}</span><strong>PKR {money(taxAmount)}</strong></div> : null}<div className="quotation-total"><span>Net Total</span><strong>PKR {money(total)}</strong></div></div></section>
       <section className="quotation-terms"><h2>TERMS &amp; CONDITION</h2><ul>{terms.map((term) => <li key={term}>{term}</li>)}</ul></section>
     </> : <>
-      <section className="bottom-section invoice-bottom-section"><section className="payment-info"><h2>PAYMENT INFORMATION</h2><p>Account Title: {invoice.payment?.accountTitle || "THECUBICLE"}</p><p>Account No: {invoice.payment?.accountNumber || "07380200021208"}</p><p>{invoice.payment?.bank || "Askari Bank: Garden Town Branch Lahore"}</p>{invoice.payment?.advice ? <p className="payment-advice">{invoice.payment.advice}</p> : null}</section><div className="total-box invoice-summary-box"><div><span>SUB TOTAL</span><span>PKR {money(subtotal)}</span></div><div><span>{taxLabel}{invoice.taxRate ? ` (${invoice.taxRate}%)` : ""}</span><span>PKR {money(taxAmount)}</span></div><div className="invoice-summary-total"><span>NET TOTAL</span><span>PKR {money(total)}</span></div></div></section>
+      <section className="bottom-section invoice-bottom-section"><section className="payment-info"><h2>PAYMENT INFORMATION</h2><p>Account Title: {invoice.payment?.accountTitle || "THECUBICLE"}</p><p>Account No: {invoice.payment?.accountNumber || "07380200021208"}</p><p>{invoice.payment?.bank || "Askari Bank: Garden Town Branch Lahore"}</p>{invoice.payment?.advice ? <p className="payment-advice">{invoice.payment.advice}</p> : null}</section><div className="total-box invoice-summary-box"><div><span>Sub Total</span><span>PKR {money(subtotal)}</span></div><div><span>{taxLabel}{invoice.taxRate ? ` (${invoice.taxRate}%)` : ""}</span><span>PKR {money(taxAmount)}</span></div><div className="invoice-summary-total"><span>Net Total</span><span>PKR {money(total)}</span></div></div></section>
       <p className="footer-message">{invoice.footer || "Thank you for your business."}</p><p className="system-note">{invoice.systemNote || "This is a system generated invoice and does not require a signature."}</p>
     </>}
   </main>;

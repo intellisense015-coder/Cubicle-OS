@@ -42,7 +42,10 @@
 
 .invoice-header { align-items: flex-start; }
 .company-block { width: 58%; }
-.company-logo { margin: 0 0 5mm; color: #000; font-size: 25pt; line-height: .9; font-weight: 700; letter-spacing: -1.2px; }
+.company-logo { position: relative; width: 74mm; height: 15mm; margin: 0 0 5mm; overflow: hidden; }
+/* The supplied logo PNG includes white canvas above and below the mark. Crop that canvas
+   deliberately so the visible logo starts on the same header line as INVOICE/QUOTATION. */
+.company-logo img { position: absolute; top: -13.1mm; left: -10.5%; display: block; width: 100%; height: auto; max-width: none; }
 .company-logo .green { color: #006b35; }
 .company-details { margin: 0; font-size: 10.2pt; line-height: 1.55; letter-spacing: .55px; }
 .company-tax { margin-top: 7mm; }
@@ -60,7 +63,7 @@
 .items-table th { padding: 4mm 5mm; color: #fff; background: #006b35; font-size: 12.5pt; font-weight: 700; letter-spacing: 1.2px; }
 .items-table th:first-child { width: 68%; text-align: left; }
 .items-table th:last-child { width: 32%; text-align: right; }
-.items-table td { padding: 7mm 5mm; border-bottom: 1px solid #444; font-size: 11.5pt; letter-spacing: .5px; vertical-align: top; }
+.items-table td { padding: 4mm 5mm; border-bottom: 1px solid #444; font-size: 11.5pt; line-height: 1.35; letter-spacing: .5px; vertical-align: top; }
 .items-table td:last-child { text-align: right; white-space: nowrap; }
 .bottom-section { align-items: flex-start; gap: 10mm; margin-top: 28mm; }
 .payment-info { width: 53%; }
@@ -184,7 +187,7 @@
   .invoice-header, .billing-row, .bottom-section { gap: 24px; }
   .invoice-title { width: 42%; }
   .invoice-meta { font-size: 10px; }
-  .company-logo { font-size: 24px; }
+  .company-logo { width: 74mm; }
   .company-details, .customer-line, .period-line, .items-table td { font-size: 10px; }
   .items-table th { font-size: 10px; }
 }
@@ -228,7 +231,7 @@
   }
 
   .company-logo {
-    font-size: 19px;
+    width: 74mm;
   }
 
   .invoice-title h1 {
@@ -278,12 +281,12 @@
 }
 
 .quotation-page .items-table tbody tr {
-  height: 15mm;
+  height: auto;
 }
 
 .quotation-page .items-table td {
-  height: 15mm;
-  padding: 5mm;
+  height: auto;
+  padding: 4mm 5mm;
 }
 
 .quotation-summary {
@@ -313,7 +316,7 @@
 }
 
 .quotation-summary-box strong {
-  font-weight: 500;
+  font-weight: 400;
   white-space: nowrap;
 }
 
@@ -362,6 +365,27 @@ html[data-theme="dark"] .quotation-create-button,
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
   gap: 12px;
+}
+
+.dialog-card:has(.invoice-form),
+.dialog-card:has(.quotation-form) {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(90vh, 820px);
+}
+
+.dialog-card:has(.invoice-form) .dialog-actions {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.dialog-card:has(.invoice-form) .dialog-actions .button {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 16px;
 }
 
 .dialog-card:has(.quotation-form) .quotation-to-select,
@@ -502,6 +526,12 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 }
 
 @media screen and (max-width: 560px) {
+  .dialog-card:has(.invoice-form),
+  .dialog-card:has(.quotation-form) {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
   .quotation-send-options {
     grid-template-columns: 1fr;
   }
@@ -581,6 +611,56 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 
 .invoice-summary-box > div > span:last-child {
   white-space: nowrap;
+}
+
+/* Keep the totals compact and aligned like the supplied document reference. */
+.quotation-summary-box,
+.invoice-summary-box {
+  box-sizing: border-box;
+  min-height: 23mm;
+  padding: 4mm 6mm;
+  gap: 2mm;
+  font-size: 10.5pt;
+  line-height: 1.2;
+  letter-spacing: .55px;
+}
+
+.invoice-summary-box {
+  flex: 0 0 43%;
+  font-weight: 400;
+}
+
+.quotation-summary-box > div,
+.invoice-summary-box > div {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) max-content;
+  align-items: baseline;
+  gap: 3.5mm;
+  min-width: 0;
+}
+
+.quotation-summary-box > div > span:first-child,
+.invoice-summary-box > div > span:first-child,
+.quotation-summary-box > div > strong:first-child,
+.invoice-summary-box > div > strong:first-child {
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.quotation-summary-box > div > span:last-child,
+.invoice-summary-box > div > span:last-child,
+.quotation-summary-box > div > strong:last-child,
+.invoice-summary-box > div > strong:last-child {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.quotation-summary-box .quotation-total,
+.invoice-summary-box .invoice-summary-total {
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+  font-weight: 700;
 }
 
 .quotation-tax-toggle {

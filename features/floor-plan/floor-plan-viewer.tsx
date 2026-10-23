@@ -7,7 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { floor4 } from "./floor-4";
 import { getAreaStatus, isRentable, STATUS_LABELS, type AreaLiveData, type FloorArea, type FloorConfig, type MapStatus } from "./types";
 import { useToast } from "@/components/ui/toast-provider";
-import { MAINTENANCE_STATUS_LABELS } from "@/lib/maintenance";
+import { MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, MAINTENANCE_STATUS_LABELS } from "@/lib/maintenance";
 
 export interface FloorPlanViewerProps {
   floor?: FloorConfig;
@@ -20,6 +20,7 @@ export interface FloorPlanViewerProps {
   onAssignArea?: (areaId: string) => void;
   filtersOpen?: boolean;
   onFiltersOpenChange?: (open: boolean) => void;
+  onMaintenanceAction?: (workspaceId: string) => void;
 }
 const legend: MapStatus[] = ["available", "occupied", "notice-period", "due-soon", "maintenance", "overdue"];
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -33,12 +34,18 @@ function areaBounds(area: FloorArea) {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
-function WorkspaceContextCard({ area, live, areaStatus, paymentLabel, pinned, style, onDismiss }: { area: FloorArea; live?: AreaLiveData; areaStatus: MapStatus; paymentLabel: string; pinned: boolean; style: CSSProperties; onDismiss: () => void }) {
+function maintenanceStatusLabel(status: string) {
+  return MAINTENANCE_RECORD_STATUS_LABELS[status as keyof typeof MAINTENANCE_RECORD_STATUS_LABELS] || MAINTENANCE_STATUS_LABELS[status as keyof typeof MAINTENANCE_STATUS_LABELS] || status;
+}
+
+function WorkspaceContextCard({ area, live, areaStatus, paymentLabel, pinned, style, onDismiss, onMaintenanceAction }: { area: FloorArea; live?: AreaLiveData; areaStatus: MapStatus; paymentLabel: string; pinned: boolean; style: CSSProperties; onDismiss: () => void; onMaintenanceAction?: (workspaceId: string) => void }) {
+  const maintenanceActionLabel = live?.maintenance && areaStatus === "maintenance" ? "View Maintenance" : live?.operationalStatus === "ACTIVE" ? "Report Issue" : "";
   return <div className={`fp-adjacent-card${pinned ? " fp-adjacent-card-pinned" : ""}`} role={pinned ? "dialog" : "status"} style={style}>
     <div className="fp-details-heading"><div><div className="fp-eyebrow">Workspace details</div><strong>{live?.member?.contactName || live?.member?.name || area.name}</strong></div>{pinned ? <button type="button" className="fp-close" onClick={onDismiss} aria-label="Close workspace details">×</button> : null}</div>
     <div className={`fp-badge fp-status-${areaStatus}`}>{STATUS_LABELS[areaStatus]}</div>
-    {live?.maintenance ? <div className="fp-maintenance-details"><span className={`fp-maintenance-badge fp-maintenance-${live.maintenance.status}`}>{MAINTENANCE_STATUS_LABELS[live.maintenance.status]}</span><dl><dt>Maintenance</dt><dd>{live.maintenance.category}</dd><dt>Reason</dt><dd>{live.maintenance.reason}</dd></dl></div> : null}
+    {live?.maintenance ? <div className="fp-maintenance-details"><span className={`fp-maintenance-badge fp-maintenance-${String(live.maintenance.status).toLowerCase()}`}>{maintenanceStatusLabel(String(live.maintenance.status))}</span><dl><dt>Issue</dt><dd>{live.maintenance.title || live.maintenance.reason}</dd><dt>Category</dt><dd>{live.maintenance.category}</dd>{live.maintenance.severity ? <><dt>Severity</dt><dd>{MAINTENANCE_SEVERITY_LABELS[live.maintenance.severity]}</dd></> : null}{live.maintenance.assignedToId ? <><dt>Assigned to</dt><dd>{live.maintenance.assignedToId}</dd></> : null}{live.maintenance.reportedAt ? <><dt>Reported</dt><dd>{new Date(live.maintenance.reportedAt).toLocaleDateString("en-GB")}</dd></> : null}<dt>Details</dt><dd>{live.maintenance.reason}</dd></dl></div> : null}
     <dl><dt>Space</dt><dd>{area.name}</dd>{live?.member ? <><dt>Assigned to</dt><dd>{live.member.contactName || "Assigned member"}</dd><dt>Company</dt><dd>{live.member.name}</dd>{live.member.email ? <><dt>Email</dt><dd>{live.member.email}</dd></> : null}{live.member.monthlyRent ? <><dt>Monthly rent</dt><dd>{live.member.monthlyRent}</dd></> : null}{live.member.employees ? <><dt>Capacity</dt><dd>{live.member.employees} people</dd></> : null}</> : <><dt>Assignment</dt><dd>{areaStatus === "available" ? "Available for assignment" : "No member data available"}</dd></>}<dt>Membership</dt><dd>{live?.membershipStatus === "notice-period" ? `Notice period${live.expectedLeavingDate ? ` until ${live.expectedLeavingDate}` : ""}` : "Active"}</dd><dt>Payment</dt><dd>{paymentLabel}</dd></dl>
+    {pinned && maintenanceActionLabel && onMaintenanceAction ? <button type="button" className="fp-maintenance-action" onClick={() => onMaintenanceAction(area.id)}>{maintenanceActionLabel}</button> : null}
     <p className="fp-id">Area ID: {area.id}</p>
   </div>;
 }
@@ -52,7 +59,7 @@ function AreaGeometry({ area }: { area: FloorArea }) {
 
 /** Reuse this viewer for any developer-configured floor. No drawing/upload editor. */
 export function FloorPlanViewer({ floor = floor4, data, loading = false, error, demo = false,
-  onViewMember, onViewInvoices, onAssignArea, filtersOpen = false, onFiltersOpenChange }: FloorPlanViewerProps) {
+  onViewMember, onViewInvoices, onAssignArea, filtersOpen = false, onFiltersOpenChange, onMaintenanceAction }: FloorPlanViewerProps) {
   const { showToast } = useToast();
   const uid = useId();
   const [hovered, setHovered] = useState<string | null>(null);
@@ -155,7 +162,7 @@ export function FloorPlanViewer({ floor = floor4, data, loading = false, error, 
             </g>;
           })}
         </svg>
-        {contextArea && contextStatus ? <WorkspaceContextCard area={contextArea} live={contextLive} areaStatus={contextStatus} paymentLabel={contextPaymentLabel} pinned={Boolean(pinned)} style={{ left: `${contextLeft}%`, top: `${contextTop}%` }} onDismiss={dismiss} /> : null}
+        {contextArea && contextStatus ? <WorkspaceContextCard area={contextArea} live={contextLive} areaStatus={contextStatus} paymentLabel={contextPaymentLabel} pinned={Boolean(pinned)} style={{ left: `${contextLeft}%`, top: `${contextTop}%` }} onDismiss={dismiss} onMaintenanceAction={onMaintenanceAction} /> : null}
       </div>
     </div>
   </section>;

@@ -2,6 +2,7 @@
 
 import { DoorOpen, Filter, Grid2X2, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FloorPlanViewer } from "@/features/floor-plan/floor-plan-viewer";
 import { floor4 } from "@/features/floor-plan/floor-4";
@@ -11,13 +12,14 @@ import { getDemoValue } from "@/lib/demo-session";
 import { applyWorkspaceRecordsToFloor, getWorkspaceRecords, mergeWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
 
 export default function FloorPlanPage() {
+  const router = useRouter();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
 
   useEffect(() => {
     setWorkspaces(getWorkspaceRecords());
     const handleDemoChange = (event) => {
-      if (event.detail?.key === "workspaces") {
+      if (["workspaces", "maintenance", "maintenanceRecords", "maintenanceEvents", "members"].includes(event.detail?.key || "")) {
         const saved = getDemoValue("workspaces");
         setWorkspaces(mergeWorkspaceRecords(Array.isArray(saved) ? saved : []));
       }
@@ -55,7 +57,7 @@ export default function FloorPlanPage() {
           <KpiCard icon={<UserRound size={18} />} label="Payment due" value={paymentDue} detail="Needs attention" />
         </section>
 
-        <FloorPlanViewer floor={floor} data={data} demo filtersOpen={filtersOpen} onFiltersOpenChange={setFiltersOpen} />
+          <FloorPlanViewer floor={floor} data={data} demo filtersOpen={filtersOpen} onFiltersOpenChange={setFiltersOpen} onMaintenanceAction={(workspaceId) => router.push(`/workspaces?workspaceId=${encodeURIComponent(workspaceId)}`)} />
       </div>
     </PageShell>
   );
