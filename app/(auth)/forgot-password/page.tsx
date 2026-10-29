@@ -9,25 +9,42 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
 import { saveDemoValue } from "@/lib/demo-session";
+import { getSupabaseBrowserClient, hasSupabaseConfig } from "@/lib/supabase/client";
 
 // TITLE: FORGOT PASSWORD PAGE
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState("");
 
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     if (!email.trim() || !email.includes("@")) return;
+    setError("");
+    setIsSending(true);
     saveDemoValue("recoveryEmail", email.trim());
-    setSubmitted(true);
+
+    try {
+      if (hasSupabaseConfig()) {
+        const redirectTo = `${window.location.origin}/reset-password`;
+        const { error: resetError } = await getSupabaseBrowserClient().auth.resetPasswordForEmail(email.trim(), { redirectTo });
+        if (resetError) throw resetError;
+      }
+      setSubmitted(true);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to start password recovery.");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
     <AuthShell
       title="Reset your password."
-      description="We’ll prepare a secure reset link for your invited workspace account."
+      description="We’ll send a secure reset link to the email address on your workspace account."
       asideTitle="Keep moving."
-      asideCopy="This demo records the recovery request in session storage. Supabase email recovery will replace it when the backend is connected."
+      asideCopy="The reset link expires and can only be used to set a new password for the account that requested it."
     >
       <motion.form
         onSubmit={submit}
@@ -39,9 +56,10 @@ export default function ForgotPasswordPage() {
         <FormField label="Email address">
           <Input value={email} onChange={(event) => { setEmail(event.target.value); saveDemoValue("recoveryEmailDraft", event.target.value); }} type="email" placeholder="you@thecubicle.pk" autoComplete="email" leftIcon={<Mail size={17} />} required />
         </FormField>
-        {submitted ? <p className="success-message">Demo reset link prepared for {email}.</p> : null}
-        <Button type="submit" size="lg" className="w-full">
-          {submitted ? "Send again" : "Prepare reset link"} <ArrowRight size={17} />
+        {submitted ? <p className="success-message">If an account exists for that address, a reset link has been sent. Check your inbox and spam folder.</p> : null}
+        {error ? <p className="field-error">{error}</p> : null}
+        <Button type="submit" size="lg" className="w-full" disabled={isSending}>
+          {isSending ? "Sending…" : submitted ? "Send again" : "Send reset link"} <ArrowRight size={17} />
         </Button>
         <Link href="/login" className="back-link"><ArrowLeft size={15} /> Return to sign in</Link>
       </motion.form>

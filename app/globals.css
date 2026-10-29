@@ -110,22 +110,33 @@ body {
 .toast-viewport {
   position: fixed;
   z-index: 2000;
-  top: 24px;
-  right: 24px;
+  top: 20px;
+  right: 20px;
   display: grid;
-  width: min(430px, calc(100vw - 32px));
+  width: min(390px, calc(100vw - 32px));
   gap: 12px;
   pointer-events: none;
 }
 
 .app-toast {
   --toast-accent: var(--info);
+  position: relative;
+  overflow: hidden;
   pointer-events: auto;
   border: 1px solid color-mix(in srgb, var(--toast-accent) 24%, transparent);
-  border-radius: 18px;
-  padding: 8px 8px 9px;
-  background: color-mix(in srgb, var(--toast-accent) 13%, var(--paper));
-  box-shadow: 0 18px 42px color-mix(in srgb, var(--toast-accent) 18%, var(--card-shadow));
+  border-radius: 17px;
+  padding: 0;
+  background: var(--paper);
+  box-shadow: 0 16px 36px color-mix(in srgb, var(--toast-accent) 16%, var(--card-shadow));
+  animation: toast-enter 220ms ease-out both;
+}
+
+.app-toast::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  content: "";
+  background: var(--toast-accent);
 }
 
 .app-toast-error {
@@ -147,21 +158,20 @@ body {
 .app-toast-inner {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 9px;
+  gap: 11px;
   align-items: start;
-  min-height: 56px;
-  padding: 11px 10px;
-  border: 1px solid color-mix(in srgb, var(--toast-accent) 12%, var(--line));
-  border-radius: 12px;
-  background: var(--paper);
+  min-height: 74px;
+  padding: 14px 13px 12px 17px;
 }
 
 .app-toast-icon {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   color: var(--toast-accent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--toast-accent) 12%, var(--paper));
 }
 
 .app-toast-copy {
@@ -171,16 +181,16 @@ body {
 .app-toast-copy strong {
   display: block;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.25;
 }
 
 .app-toast-copy p {
-  max-width: 220px;
-  margin: 4px 0 0;
+  max-width: 270px;
+  margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .app-toast-actions {
@@ -217,22 +227,49 @@ body {
 
 .toast-close {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   place-items: center;
   border-radius: 50%;
 }
 
-.toast-countdown {
-  margin: 7px 0 0;
+.toast-timing {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px 10px 17px;
   color: var(--muted);
-  font-size: 10px;
-  text-align: center;
+  font-size: 9px;
 }
 
-.toast-countdown strong {
-  color: var(--toast-accent);
+.toast-progress {
+  display: block;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--toast-accent) 13%, var(--line));
+}
+
+.toast-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--toast-accent);
+  transition: width 1s linear;
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, -8px, 0) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 @media (max-width: 560px) {
@@ -243,7 +280,7 @@ body {
   }
 
   .app-toast-inner {
-    grid-template-columns: 22px minmax(0, 1fr);
+    grid-template-columns: 34px minmax(0, 1fr);
   }
 
   .app-toast-actions {
@@ -2567,6 +2604,65 @@ a:focus-visible {
 
 .employee-editor-form .permission-checklist > strong {
   grid-column: 1 / -1;
+}
+
+.employee-role-permissions {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.employee-role-permissions-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.employee-role-permissions-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.employee-role-permissions-heading small,
+.employee-role-permissions .permission-check small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.employee-role-permissions .permission-check {
+  align-items: flex-start;
+}
+
+.employee-role-permissions .permission-check span {
+  display: grid;
+  gap: 2px;
+}
+
+.employee-role-permissions .permission-check strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.employee-mfa-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface-soft));
+}
+
+.employee-mfa-actions small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .employee-editor-actions {
@@ -8661,16 +8757,21 @@ html[data-theme="dark"] .dialog-card:has(.visit-create-form) .visit-create-form 
 @media (max-width: 640px) { .dialog-card:has(.template-message-field) { width: calc(100vw - 32px); max-height: calc(100vh - 32px); } .dialog-card:has(.template-message-field) .template-message-field .textarea-input { min-height: 240px; } }
 .proposal-pdf-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; padding: 14px 18px 18px; background: color-mix(in srgb, #ffffff 86%, transparent); }
 .proposal-pdf-actions .button { min-height: 36px; border-radius: 11px; }
-.proposal-send-dialog { width: min(560px, calc(100vw - 32px)); }
-.proposal-send-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.proposal-send-option { display: flex; align-items: flex-start; gap: 11px; min-height: 92px; padding: 15px; border: 1px solid var(--line); border-radius: 15px; color: var(--ink); background: var(--surface-soft); text-align: left; cursor: pointer; transition: border-color 180ms ease, background 180ms ease, transform 180ms ease; }
+.proposal-send-dialog { width: min(640px, calc(100vw - 32px)); max-width: 100%; max-height: calc(100vh - 32px); box-sizing: border-box; overflow-y: auto; }
+.proposal-send-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-width: 0; }
+.proposal-send-option { display: flex; align-items: flex-start; gap: 11px; min-width: 0; min-height: 92px; width: 100%; box-sizing: border-box; padding: 15px; border: 1px solid var(--line); border-radius: 15px; color: var(--ink); background: var(--surface-soft); text-align: left; cursor: pointer; transition: border-color 180ms ease, background 180ms ease, transform 180ms ease; }
 .proposal-send-option:hover { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); background: var(--brand-soft); transform: translateY(-1px); }
 .proposal-send-option svg { flex: none; color: var(--brand); }
-.proposal-send-option span { display: grid; gap: 5px; }
+.proposal-send-option span { display: grid; min-width: 0; gap: 5px; }
 .proposal-send-option strong { font-size: 12px; }
-.proposal-send-option small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.proposal-send-option small { color: var(--muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .proposal-send-actions { margin-top: 2px; }
-@media (max-width: 560px) { .proposal-send-options { grid-template-columns: 1fr; } }
+.proposal-send-progress { display: grid; justify-items: center; gap: 10px; padding: 28px 18px 24px; text-align: center; border: 1px solid var(--line); border-radius: 15px; background: var(--surface-soft); }
+.proposal-send-progress strong { font-size: 15px; }
+.proposal-send-progress p { max-width: 360px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.proposal-send-spinner { width: 28px; height: 28px; border: 3px solid color-mix(in srgb, var(--brand) 20%, transparent); border-top-color: var(--brand); border-radius: 50%; animation: proposal-send-spin .8s linear infinite; }
+@keyframes proposal-send-spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) { .proposal-send-options { grid-template-columns: 1fr; } }
 
 /* Shared drill-down headers: a clear breadcrumb, strong title and calm metadata. */
 .detail-page-header {

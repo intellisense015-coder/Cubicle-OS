@@ -15,12 +15,14 @@ import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { SelectField } from "@/components/ui/primitives";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { getWorkspaceRecords, isAssignableWorkspace } from "@/lib/workspace-records";
+import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords } from "@/lib/workspace-records";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
 import { closeCurrentMembership, createMembershipPeriod, findMemberIdentityMatch, isActiveMember, memberCompanyKey, MEMBERSHIP_STATUS_OPTIONS, normalizeMembershipStatus, normalizePhone, reactivateMember, syncCompanyStatuses } from "@/lib/member-lifecycle";
 import { numericField, numericString } from "@/lib/number-input";
-import { useIsAdmin } from "@/lib/access-control";
+import { useHasPermission } from "@/lib/access-control";
+import { createSupabaseMember, fetchSupabaseMembers, mapSupabaseMemberToOsMember, updateSupabaseMember } from "@/lib/supabase/members";
+import { assignSupabaseMemberToWorkspace, fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace } from "@/lib/supabase/workspaces";
 import { z } from "zod";
 
 const memberSchema = z.object({
@@ -73,7 +75,7 @@ function MemberForm({ leads, members, spaces, onCancel, onSave, initialMember = 
 
 function createMemberColumns(onView, onEdit, onToggleStatus, canEdit) {
   const columnHelper = createColumnHelper<any>();
-  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong><span>{row.original.team || "No team recorded"}</span></div> }), columnHelper.accessor("space", { header: "Assigned space" }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("status", { header: "Account status", cell: ({ getValue }) => <span className={`status-tag ${isActiveMember({ status: getValue() }) ? "status-active" : "status-inactive"}`}>{isActiveMember({ status: getValue() }) ? "Activated" : "Deactivated"}</span> }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: canEdit ? "Action" : "Access", cell: ({ row }) => canEdit ? <div className="member-primary-actions"><button className="member-action-edit" type="button" onClick={() => onEdit(row.original)}><Pencil size={15} /> Edit</button><button className="member-action-toggle" type="button" onClick={() => onToggleStatus(row.original)}>{isActiveMember(row.original) ? "Deactivate" : "Activate"}</button><button className="member-action-ledger" type="button" onClick={() => onView(row.original)}>View ledger</button></div> : <span className="read-only-label">Read only</span> })];
+  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong><span>{row.original.team || "No team recorded"}</span></div> }), columnHelper.accessor("space", { header: "Assigned space" }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("status", { header: "Account status", cell: ({ getValue }) => <span className={`status-tag ${isActiveMember({ status: getValue() }) ? "status-active" : "status-inactive"}`}>{isActiveMember({ status: getValue() }) ? "Active" : "Suspended"}</span> }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: canEdit ? "Action" : "Access", cell: ({ row }) => canEdit ? <div className="member-primary-actions"><button className="member-action-edit" type="button" onClick={() => onEdit(row.original)}><Pencil size={15} /> Edit</button><button className="member-action-toggle" type="button" onClick={() => onToggleStatus(row.original)}>{isActiveMember(row.original) ? "Suspend" : "Reactivate"}</button><button className="member-action-ledger" type="button" onClick={() => onView(row.original)}>View ledger</button></div> : <span className="read-only-label">Read only</span> })];
 }
 
 function updateExistingMember(previous, values) {
@@ -85,7 +87,7 @@ function updateExistingMember(previous, values) {
 export default function MembersPage() {
   const router = useRouter();
   const { showToast } = useToast();
-  const canEdit = useIsAdmin();
+  const canEdit = useHasPermission("members.write");
   const [members, setMembers] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
@@ -93,15 +95,44 @@ export default function MembersPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<any>(null);
   const [monthFilter, setMonthFilter] = useState("");
-  const [memberView, setMemberView] = useState("active");
+  const [memberView, setMemberView] = useState<"active" | "suspended">("active");
 
   useEffect(() => {
-    const refresh = () => { const savedMembers = getDemoValue("members"); const savedLeads = getDemoValue("leads"); const savedCompanies = getDemoValue("companies"); setMembers(Array.isArray(savedMembers) ? savedMembers : []); setLeads(Array.isArray(savedLeads) ? savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) })) : []); setCompanies(Array.isArray(savedCompanies) ? savedCompanies : []); setSpaces(getWorkspaceRecords()); };
-    refresh();
-    const handleChange = (event) => { if (["members", "companies", "workspaces"].includes(event.detail?.key || "")) refresh(); };
+    let cancelled = false;
+    const refresh = async () => {
+      const savedLeads = getDemoValue("leads");
+      const savedCompanies = getDemoValue("companies");
+      setLeads(Array.isArray(savedLeads) ? savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) })) : []);
+      setCompanies(Array.isArray(savedCompanies) ? savedCompanies : []);
+      setSpaces(getWorkspaceRecords());
+
+      try {
+        const [rows, workspaceRows] = await Promise.all([fetchSupabaseMembers(), fetchSupabaseWorkspaces()]);
+        const loadedSpaces = mergeWorkspaceRecords(workspaceRows.map(mapSupabaseWorkspaceToOsWorkspace));
+        const loadedMembers = rows.map(mapSupabaseMemberToOsMember).map((member) => {
+          const assignedSpace = loadedSpaces.find((space) => space.memberId === member.id && isAssignableWorkspace(space) && space.status === "occupied");
+          return assignedSpace
+            ? { ...member, spaceId: assignedSpace.id, space: assignedSpace.label }
+            : { ...member, spaceId: "", space: "Unassigned" };
+        });
+        if (!cancelled) {
+          setMembers(loadedMembers);
+          setSpaces(loadedSpaces);
+          saveDemoValue("members", loadedMembers, { notify: false });
+          saveDemoValue("workspaces", loadedSpaces, { notify: false });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setMembers([]);
+          showToast({ variant: "error", title: "Members could not be loaded", message: error?.message || "Supabase did not return the member records." });
+        }
+      }
+    };
+    void refresh();
+    const handleChange = (event) => { if (["members", "companies", "workspaces"].includes(event.detail?.key || "")) void refresh(); };
     window.addEventListener("cubicle-demo-change", handleChange);
-    return () => window.removeEventListener("cubicle-demo-change", handleChange);
-  }, []);
+    return () => { cancelled = true; window.removeEventListener("cubicle-demo-change", handleChange); };
+  }, [showToast]);
 
   const persistMembers = (nextMembers) => { setMembers(nextMembers); saveDemoValue("members", nextMembers); };
   const persistCompanies = (nextCompanies) => { setCompanies(nextCompanies); saveDemoValue("companies", nextCompanies); };
@@ -114,48 +145,74 @@ export default function MembersPage() {
     return { ...space, occupant: member.member, company: member.company || "Unassigned", memberId: member.id, membershipPeriodId: member.currentMembershipId || "", membershipStatus, noticeStartDate: member.noticeStartDate || "", expectedLeavingDate: member.expectedLeavingDate || "", noticeNotes: member.noticeNotes || "", status: isActiveMember(member) ? "occupied" : "available", monthlyRent: member.rent, billingStartDate: member.billingStartDate || member.joined, dueDay: member.dueDay || 5, gracePeriodDays: 3 };
   });
 
-  const saveMember = (values) => {
+  const saveMember = async (values) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can edit member records." }); return; }
     const identityMatch = findMemberIdentityMatch(values, members, editingMember?.id);
     if (identityMatch && identityMatch.id !== values.reactivateMemberId) { showToast({ variant: "error", title: "Duplicate member contact", message: `That phone number or email belongs to ${identityMatch.member}. Select that member under Reactivate existing member.` }); return; }
-    const existing = values.reactivateMemberId ? members.find((item) => item.id === values.reactivateMemberId) : null;
-    const previous = editingMember ? members.find((item) => item.id === editingMember.id) : null;
-    let savedMember;
-    if (existing) savedMember = reactivateMember(existing, values);
-    else if (previous) savedMember = updateExistingMember(previous, values);
-    else { const period = createMembershipPeriod(values); savedMember = { ...values, status: "Active", firstJoined: values.joined, currentMembershipId: period.id, membershipPeriods: [period], contactHistory: { phones: values.phone ? [{ value: values.phone, normalized: normalizePhone(values.phone) }] : [] } }; }
-    const matchingCompany = companies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
-    let nextCompanies = matchingCompany ? companies : savedMember.company && savedMember.company !== "Unassigned" ? [{ id: `company-${Date.now()}`, name: savedMember.company, status: "Active" }, ...companies] : companies;
-    const linkedCompany = nextCompanies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
-    savedMember = { ...savedMember, companyId: linkedCompany?.id || "" };
-    const nextMembers = previous ? members.map((item) => item.id === previous.id ? savedMember : item) : existing ? members.map((item) => item.id === existing.id ? savedMember : item) : [savedMember, ...members];
-    nextCompanies = syncCompanyStatuses(nextCompanies, nextMembers);
-    const nextSpaces = updateSpacesForMember(spaces, savedMember, previous || existing);
-    persistMembers(nextMembers); persistCompanies(nextCompanies); setSpaces(nextSpaces); saveDemoValue("workspaces", nextSpaces);
-    if (savedMember.leadId && !previous && !existing) { const nextLeads = leads.map((lead) => lead.id === savedMember.leadId ? transitionLead(lead, { type: "converted" }) : lead); setLeads(nextLeads); saveDemoValue("leads", nextLeads); }
-    closeForm(); showToast({ variant: "success", title: existing ? "Member reactivated" : previous ? "Member updated" : "Member added", message: existing ? `${savedMember.member} returned with the same member record and a new membership period.` : `${savedMember.member} was saved successfully.` });
+    try {
+      const existing = values.reactivateMemberId ? members.find((item) => item.id === values.reactivateMemberId) : null;
+      const previous = editingMember ? members.find((item) => item.id === editingMember.id) : null;
+      let savedMember;
+      if (existing) savedMember = reactivateMember(existing, values);
+      else if (previous) savedMember = updateExistingMember(previous, values);
+      else { const period = createMembershipPeriod(values); savedMember = { ...values, status: "Active", firstJoined: values.joined, currentMembershipId: period.id, membershipPeriods: [period], contactHistory: { phones: values.phone ? [{ value: values.phone, normalized: normalizePhone(values.phone) }] : [] } }; }
+
+      const requestedWorkspaceId = savedMember.spaceId || null;
+      const memberWithoutWorkspace = { ...savedMember, spaceId: "", space: "Unassigned" };
+      const row = previous || existing
+        ? await updateSupabaseMember(savedMember.id, memberWithoutWorkspace)
+        : await createSupabaseMember(memberWithoutWorkspace);
+      await assignSupabaseMemberToWorkspace(row.id, requestedWorkspaceId);
+      savedMember = { ...savedMember, ...mapSupabaseMemberToOsMember(row), id: row.id, spaceId: requestedWorkspaceId || "", space: requestedWorkspaceId ? savedMember.space || requestedWorkspaceId : "Unassigned" };
+
+      const matchingCompany = companies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
+      let nextCompanies = matchingCompany ? companies : savedMember.company && savedMember.company !== "Unassigned" ? [{ id: `company-${Date.now()}`, name: savedMember.company, status: "Active" }, ...companies] : companies;
+      const linkedCompany = nextCompanies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
+      savedMember = { ...savedMember, companyId: linkedCompany?.id || "" };
+      const nextMembers = previous ? members.map((item) => item.id === previous.id ? savedMember : item) : existing ? members.map((item) => item.id === existing.id ? savedMember : item) : [savedMember, ...members];
+      nextCompanies = syncCompanyStatuses(nextCompanies, nextMembers);
+      const nextSpaces = updateSpacesForMember(spaces, savedMember, previous || existing);
+      persistMembers(nextMembers); persistCompanies(nextCompanies); setSpaces(nextSpaces); saveDemoValue("workspaces", nextSpaces);
+      if (savedMember.leadId && !previous && !existing) { const nextLeads = leads.map((lead) => lead.id === savedMember.leadId ? transitionLead(lead, { type: "converted" }) : lead); setLeads(nextLeads); saveDemoValue("leads", nextLeads); }
+      closeForm(); showToast({ variant: "success", title: existing ? "Member reactivated" : previous ? "Member updated" : "Member added", message: `${savedMember.member}'s details and workspace assignment are up to date.` });
+    } catch (error) {
+      showToast({ variant: "error", title: "Member was not saved", message: error?.message || "Supabase could not save this member." });
+    }
   };
 
-  const toggleMemberStatus = (member) => {
+  const toggleMemberStatus = async (member) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can change member status." }); return; }
-    if (isActiveMember(member)) {
-      const closed = closeCurrentMembership(member);
-      const nextMembers = members.map((item) => item.id === member.id ? { ...closed, status: "Inactive" } : item);
-      const nextSpaces = spaces.map((space) => space.memberId === member.id ? { ...space, status: "available" } : space);
+    try {
+      if (isActiveMember(member)) {
+        const closed = closeCurrentMembership(member);
+        const nextMember = { ...closed, status: "Inactive" };
+        const row = await updateSupabaseMember(member.id, { ...nextMember, spaceId: "", space: "Unassigned" });
+        await assignSupabaseMemberToWorkspace(row.id, null);
+        const persistedMember = { ...nextMember, ...mapSupabaseMemberToOsMember(row), id: row.id, spaceId: "", space: "Unassigned" };
+        const nextMembers = members.map((item) => item.id === member.id ? persistedMember : item);
+        const nextSpaces = spaces.map((space) => space.memberId === member.id ? { ...space, status: "available" } : space);
+        persistMembers(nextMembers); setSpaces(nextSpaces); saveDemoValue("workspaces", nextSpaces); persistCompanies(syncCompanyStatuses(companies, nextMembers));
+        showToast({ variant: "success", title: "Member deactivated", message: `${member.member} is inactive and the workspace is available again.` }); return;
+      }
+      const restorableSpace = spaces.find((space) => space.memberId === member.id && (space.status === "available" || space.memberId === member.id));
+      const reactivated = reactivateMember(member, { ...member, billingStartDate: new Date().toISOString().slice(0, 10), spaceId: restorableSpace?.id || "", space: restorableSpace?.label || "Unassigned" });
+      const requestedWorkspaceId = reactivated.spaceId || null;
+      const row = await updateSupabaseMember(member.id, { ...reactivated, spaceId: "", space: "Unassigned" });
+      await assignSupabaseMemberToWorkspace(row.id, requestedWorkspaceId);
+      const persistedMember = { ...reactivated, ...mapSupabaseMemberToOsMember(row), id: row.id, spaceId: requestedWorkspaceId || "", space: requestedWorkspaceId ? reactivated.space || requestedWorkspaceId : "Unassigned" };
+      const nextMembers = members.map((item) => item.id === member.id ? persistedMember : item);
+      const nextSpaces = updateSpacesForMember(spaces, persistedMember);
       persistMembers(nextMembers); setSpaces(nextSpaces); saveDemoValue("workspaces", nextSpaces); persistCompanies(syncCompanyStatuses(companies, nextMembers));
-      showToast({ variant: "success", title: "Member deactivated", message: `${member.member} was deactivated and their membership period was closed.` }); return;
+      showToast({ variant: "success", title: "Member reactivated", message: `${member.member} is active again and the workspace assignment was restored.` });
+    } catch (error) {
+      showToast({ variant: "error", title: "Member status was not changed", message: error?.message || "Supabase could not update this member." });
     }
-    const restorableSpace = spaces.find((space) => space.memberId === member.id && (space.status === "available" || space.memberId === member.id));
-    const reactivated = reactivateMember(member, { ...member, billingStartDate: new Date().toISOString().slice(0, 10), spaceId: restorableSpace?.id || "", space: restorableSpace?.label || "Unassigned" });
-    const nextMembers = members.map((item) => item.id === member.id ? reactivated : item);
-    const nextSpaces = updateSpacesForMember(spaces, reactivated);
-    persistMembers(nextMembers); setSpaces(nextSpaces); saveDemoValue("workspaces", nextSpaces); persistCompanies(syncCompanyStatuses(companies, nextMembers));
-    showToast({ variant: "success", title: "Member reactivated", message: restorableSpace ? `${member.member} is active again and their previous space was restored.` : `${member.member} is active again. Assign a new available space.` });
   };
 
   const filteredMembers = useMemo(() => members.filter((member) => (memberView === "active" ? isActiveMember(member) : !isActiveMember(member)) && (!monthFilter || String(member.joined || "").startsWith(monthFilter))), [members, memberView, monthFilter]);
   const activeCount = members.filter(isActiveMember).length;
+  const suspendedCount = members.length - activeCount;
   const deposits = members.reduce((total, member) => total + (Number(String(member.deposit || "0").replace(/[^0-9.-]/g, "")) || 0), 0);
 
-  return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Members</h1><p className="muted-copy">One permanent member record can contain multiple stays and teams.</p></div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canEdit ? <Button onClick={() => { setEditingMember(null); setFormOpen(true); }}><CirclePlus size={16} /> Add member</Button> : <span className="read-only-label">Admin editing only</span>}</div></div><section className="stat-grid module-stats"><KpiCard icon={<UserRound size={18} />} label="Active members" value={activeCount} detail="Current active records" /><KpiCard icon={<CreditCard size={18} />} label="Security deposits" value={`PKR ${deposits.toLocaleString("en-PK")}`} detail="Recorded member deposits" /></section><div className="section-heading"><div><h2>{memberView === "active" ? "Active members" : "Deactivated members"}</h2><p className="muted-copy">Returning members can be reactivated without creating duplicate records.</p></div><div className="directory-view-toggle" role="group" aria-label="Member status filter"><button className={memberView === "active" ? "is-selected" : ""} type="button" onClick={() => setMemberView("active")}>Activated ({activeCount})</button><button className={memberView === "deactivated" ? "is-selected" : ""} type="button" onClick={() => setMemberView("deactivated")}>Deactivated ({members.length - activeCount})</button></div></div><DataTable columns={createMemberColumns((member) => router.push(`/members/${member.id}`), (member) => { setEditingMember(member); setFormOpen(true); }, toggleMemberStatus, canEdit)} data={filteredMembers} onRowClick={(member) => router.push(`/members/${member.id}`)} emptyMessage={memberView === "active" ? "No activated members yet." : "No deactivated members."} /><Dialog open={formOpen} onClose={closeForm} ariaLabel={editingMember ? "Edit member" : "Add member"}><MemberForm key={editingMember?.id || "new-member"} leads={leads} members={members} spaces={spaces} initialMember={editingMember} onCancel={closeForm} onSave={saveMember} /></Dialog></motion.div></PageShell>;
+  return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Members</h1><p className="muted-copy">One permanent member record can contain multiple stays and teams.</p></div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canEdit ? <Button onClick={() => { setEditingMember(null); setFormOpen(true); }}><CirclePlus size={16} /> Add member</Button> : <span className="read-only-label">Admin editing only</span>}</div></div><section className="stat-grid module-stats"><KpiCard icon={<UserRound size={18} />} label="Active members" value={activeCount} detail="Current active records" /><KpiCard icon={<CreditCard size={18} />} label="Security deposits" value={`PKR ${deposits.toLocaleString("en-PK")}`} detail="Recorded member deposits" /></section><div className="section-heading"><div><h2>{memberView === "active" ? "Active members" : "Suspended members"}</h2><p className="muted-copy">Use the toggle to show only active or suspended member accounts.</p></div><div className="directory-view-toggle" role="group" aria-label="Member status filter"><button className={memberView === "active" ? "is-selected" : ""} type="button" onClick={() => setMemberView("active")}>Active ({activeCount})</button><button className={memberView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setMemberView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable columns={createMemberColumns((member) => router.push(`/members/${member.id}`), (member) => { setEditingMember(member); setFormOpen(true); }, toggleMemberStatus, canEdit)} data={filteredMembers} onRowClick={(member) => router.push(`/members/${member.id}`)} emptyMessage={memberView === "active" ? "No active members yet." : "No suspended members."} /><Dialog open={formOpen} onClose={closeForm} ariaLabel={editingMember ? "Edit member" : "Add member"}><MemberForm key={editingMember?.id || "new-member"} leads={leads} members={members} spaces={spaces} initialMember={editingMember} onCancel={closeForm} onSave={saveMember} /></Dialog></motion.div></PageShell>;
 }

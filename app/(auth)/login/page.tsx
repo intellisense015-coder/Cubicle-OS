@@ -13,30 +13,55 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
 import { saveDemoValue } from "@/lib/demo-session";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // TITLE: SIGN IN VALIDATION
 const signInSchema = z.object({
   email: z.string().trim().email("Enter a valid email address."),
-  password: z.string().min(6, "Use at least 6 characters for the demo password.")
+  password: z.string().min(6, "Use at least 6 characters.")
 });
+
+type SignInValues = z.infer<typeof signInSchema>;
 
 // TITLE: SIGN IN PAGE
 export default function SignInPage() {
   const router = useRouter();
   const [isSigningIn, setIsSigningIn] = useState(false);
-  const form = useForm({
+  const form = useForm<SignInValues>({
     resolver: zodResolver(signInSchema),
     defaultValues: { email: "", password: "" },
     mode: "onBlur"
   });
 
-  const onSubmit = (values) => {
+  const onSubmit = async (values: SignInValues) => {
     setIsSigningIn(true);
-    saveDemoValue("email", values.email);
-    saveDemoValue("password", values.password);
-    saveDemoValue("mfaVerified", false);
-    saveDemoValue("pinVerified", false);
-    router.push("/mfa");
+    form.clearErrors("root");
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: values.email.trim(),
+        password: values.password,
+      });
+
+      if (error) {
+        form.setError("root", { type: "server", message: error.message });
+        return;
+      }
+
+      // Keep only the non-sensitive email for existing UI copy. Never store
+      // the password in sessionStorage; Supabase owns the authenticated session.
+      saveDemoValue("email", values.email.trim());
+      saveDemoValue("mfaVerified", false);
+      router.push("/mfa");
+    } catch (error) {
+      form.setError("root", {
+        type: "server",
+        message: error instanceof Error ? error.message : "Unable to sign in.",
+      });
+    } finally {
+      setIsSigningIn(false);
+    }
   };
 
   // TITLE: DRAFT SESSION VALUES
@@ -84,6 +109,7 @@ export default function SignInPage() {
         <div className="form-meta">
           <Link href="/forgot-password" className="text-link">Forgot password?</Link>
         </div>
+        {form.formState.errors.root?.message ? <p className="field-error">{form.formState.errors.root.message}</p> : null}
         <Button type="submit" size="lg" className="w-full" disabled={isSigningIn}>
           {isSigningIn ? <><LoaderCircle size={13} className="sign-in-spinner" /> Signing in...</> : "Sign in"}
         </Button>

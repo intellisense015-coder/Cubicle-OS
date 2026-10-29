@@ -98,11 +98,11 @@ export function getWorkspaceRecords() {
       status: "available"
     }));
   if (shouldInitialize) {
-    saveDemoValue("workspaces", records);
-    saveDemoValue(WORKSPACE_DATA_VERSION_KEY, EMPTY_WORKSPACE_DATA_VERSION);
+    saveDemoValue("workspaces", records, { notify: false });
+    saveDemoValue(WORKSPACE_DATA_VERSION_KEY, EMPTY_WORKSPACE_DATA_VERSION, { notify: false });
   }
   const migrated = migrateMaintenanceData(records);
-  if (migrated.changed) saveDemoValue("workspaces", migrated.workspaces);
+  if (migrated.changed) saveDemoValue("workspaces", migrated.workspaces, { notify: false });
   return migrated.workspaces;
 }
 
@@ -130,14 +130,17 @@ export function applyWorkspaceRecordsToFloor(records): FloorConfig {
   };
 }
 
-export function workspaceRecordsToAreaData(records): AreaLiveData[] {
+export function workspaceRecordsToAreaData(records, membersOverride?: readonly any[]): AreaLiveData[] {
   const byAreaId = new Map((Array.isArray(records) ? records : []).map((record) => [record.areaId || record.id, record]));
-  const memberById = new Map<any, any>((getDemoValue("members") || []).map((member: any) => [member.id, member]));
+  const sourceMembers = Array.isArray(membersOverride) ? membersOverride : (getDemoValue("members") || []);
+  const memberById = new Map<any, any>(sourceMembers.map((member: any) => [member.id, member]));
   const mappedFloor = applyWorkspaceRecordsToFloor(records);
   return mappedFloor.areas.filter(isRentable).map((area) => {
     const record = byAreaId.get(area.id) || baseRecord(area);
     const assignedMember = memberById.get(record.memberId);
-    const occupied = record.status === "occupied";
+    // A workspace without a member_id is not a valid member assignment.
+    // Ignore stale occupant/status text left by older assignment flows.
+    const occupied = record.status === "occupied" && Boolean(record.memberId);
     const maintenanceStatus = normalizeMaintenanceStatus(record.maintenanceStatus);
     const activeMaintenance = getActiveMaintenanceRecord(String(record.areaId || record.id));
     const maintenance = activeMaintenance ? {

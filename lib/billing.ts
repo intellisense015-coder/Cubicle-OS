@@ -16,7 +16,6 @@ export interface WorkspaceInvoice {
   issueDate: string;
   dueDate: string;
   billingStartDate?: string;
-  joiningDate?: string;
   dueDay?: number;
   manualDateOverride?: boolean;
   subtotal?: string;
@@ -26,6 +25,12 @@ export interface WorkspaceInvoice {
   taxRate?: string;
   taxAmount?: string;
   taxLabel?: string;
+  whtEnabled?: boolean;
+  whtRate?: string;
+  whtAmount?: string;
+  salesTaxEnabled?: boolean;
+  salesTaxRate?: string;
+  salesTaxAmount?: string;
   graceUntil: string;
   paymentStatus: BillingStatus;
   emailStatus: string;
@@ -220,10 +225,15 @@ export function syncWorkspaceBilling(workspaces: readonly any[]) {
         ...(existing?.taxRate !== undefined ? { taxRate: existing.taxRate } : {}),
         ...(existing?.taxAmount !== undefined ? { taxAmount: existing.taxAmount } : {}),
         ...(existing?.taxLabel !== undefined ? { taxLabel: existing.taxLabel } : {}),
+        ...(existing?.whtEnabled !== undefined ? { whtEnabled: existing.whtEnabled } : existing?.taxEnabled !== undefined ? { whtEnabled: existing.taxEnabled } : {}),
+        ...(existing?.whtRate !== undefined ? { whtRate: existing.whtRate } : existing?.taxRate !== undefined ? { whtRate: existing.taxRate } : {}),
+        ...(existing?.whtAmount !== undefined ? { whtAmount: existing.whtAmount } : existing?.taxAmount !== undefined ? { whtAmount: existing.taxAmount } : {}),
+        ...(existing?.salesTaxEnabled !== undefined ? { salesTaxEnabled: existing.salesTaxEnabled } : {}),
+        ...(existing?.salesTaxRate !== undefined ? { salesTaxRate: existing.salesTaxRate } : {}),
+        ...(existing?.salesTaxAmount !== undefined ? { salesTaxAmount: existing.salesTaxAmount } : {}),
         issueDate: manualDateOverride ? existing.issueDate : localDateKey(billingStartDate.getFullYear() === cursor.year && billingStartDate.getMonth() === cursor.month ? billingStartDate : new Date(cursor.year, cursor.month, 1, 12)),
         dueDate: savedDueDate || localDateKey(dueDate),
         billingStartDate: billingStartKey,
-        joiningDate: existing?.joiningDate || member?.joined || "",
         dueDay: manualDateOverride ? Number(existing?.dueDay || dueDay) : dueDay,
         manualDateOverride,
         graceUntil: localDateKey(graceUntil),

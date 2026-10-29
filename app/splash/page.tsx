@@ -4,16 +4,27 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { Logo } from "@/components/ui/logo";
-import { getDemoSession } from "@/lib/demo-session";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // TITLE: SPLASH SCREEN
 export default function SplashPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const session = getDemoSession();
-      router.replace(session.pinVerified ? "/dashboard" : "/login");
+    const timer = window.setTimeout(async () => {
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData.session) {
+          router.replace("/login");
+          return;
+        }
+
+        const { data: assuranceData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        router.replace(assuranceData?.currentLevel === "aal2" ? "/dashboard" : "/mfa");
+      } catch {
+        router.replace("/login");
+      }
     }, 2200);
 
     return () => window.clearTimeout(timer);

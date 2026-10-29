@@ -22,7 +22,7 @@ function PreloadedFloorPlan() {
 
 // TITLE: SETUP STEP CONTENT
 function SetupStepContent({ step, companyName, setCompanyName }) {
-  if (step.number === 1) return <div className="setup-fields"><label className="settings-label">Company name</label><Input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="The Cubicle" leftIcon={<Building2 size={17} />} /><label className="settings-label">Business email</label><Input placeholder="hello@thecubicle.local" type="email" leftIcon={<Mail size={17} />} /></div>;
+  if (step.number === 1) return <div className="setup-fields"><label className="settings-label">Company name</label><Input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="The Cubicle" leftIcon={<Building2 size={17} />} /><label className="settings-label">Business email</label><Input placeholder="info@thecubicle.pk" type="email" leftIcon={<Mail size={17} />} /></div>;
   if (step.number === 2) return <div className="setup-option-grid"><button type="button" className="setup-choice selected"><LayoutGrid size={18} /><strong>1 floor</strong><span>12 desks · 4 offices</span></button><button type="button" className="setup-choice"><LayoutGrid size={18} /><strong>Multiple floors</strong><span>Configure each floor separately</span></button></div>;
   if (step.number === 3) return <PreloadedFloorPlan />;
   if (step.number === 5 || step.number === 6) return <div className="dropzone"><FileText size={24} /><strong>{step.number === 5 ? "Upload templates" : "Import existing records"}</strong><span>Demo mode accepts the step without uploading a file.</span><button type="button" className="filter-button">Choose file</button></div>;

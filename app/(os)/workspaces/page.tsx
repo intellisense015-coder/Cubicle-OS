@@ -14,11 +14,14 @@ import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/primitives";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { getWorkspaceRecords, isAssignableWorkspace, workspaceTypes } from "@/lib/workspace-records";
+import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords, workspaceTypes } from "@/lib/workspace-records";
+import { createSupabaseWorkspaces, fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace, updateSupabaseWorkspace } from "@/lib/supabase/workspaces";
+import { fetchSupabaseMaintenanceCategories, mapSupabaseMaintenanceCategoryToOsCategory } from "@/lib/supabase/maintenance-categories";
+import { createSupabaseMaintenanceEvent, createSupabaseMaintenanceRecord, fetchSupabaseMaintenanceEvents, fetchSupabaseMaintenanceRecords, mapSupabaseMaintenanceEventToOsEvent, mapSupabaseMaintenanceRecordToOsRecord, updateSupabaseMaintenanceRecord } from "@/lib/supabase/maintenance";
 import { useToast } from "@/components/ui/toast-provider";
-import { getMaintenanceCategories, getActiveMaintenanceRecord, getMaintenanceHistory, getMaintenanceTimeline, MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, OPERATIONAL_STATUS_LABELS, reportMaintenance, resolveMaintenance, startMaintenance, cancelMaintenance, type MaintenanceCategory, type MaintenanceRecord, type MaintenanceSeverity, type WorkspaceOperationalStatus } from "@/lib/maintenance";
+import { getMaintenanceCategories, getActiveMaintenanceRecord, getMaintenanceHistory, getMaintenanceTimeline, getMaintenanceEvents, getMaintenanceRecords, MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, OPERATIONAL_STATUS_LABELS, reportMaintenance, resolveMaintenance, startMaintenance, cancelMaintenance, type MaintenanceCategory, type MaintenanceRecord, type MaintenanceSeverity, type WorkspaceOperationalStatus } from "@/lib/maintenance";
 import { numericField, numericString } from "@/lib/number-input";
-import { useIsAdmin, useMaintenancePermissions } from "@/lib/access-control";
+import { useHasPermission, useMaintenancePermissions } from "@/lib/access-control";
 
 const workspaceConfigSchema = z.object({
   label: z.string().trim().min(1, "Enter a workspace name.").max(80, "Workspace names must be 80 characters or fewer."),
@@ -124,7 +127,7 @@ function MaintenanceDetail({ workspace, activeMaintenance, history, timeline, pe
 export default function WorkspacesPage() {
   const { showToast } = useToast();
   const searchParams = useSearchParams();
-  const canEdit = useIsAdmin();
+  const canEdit = useHasPermission("workspaces.write");
   const permissions = useMaintenancePermissions();
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
@@ -137,21 +140,52 @@ export default function WorkspacesPage() {
   const [filters, setFilters] = useState({ status: "", type: "" });
   const [maintenanceCategories, setMaintenanceCategories] = useState<MaintenanceCategory[]>(() => getMaintenanceCategories());
 
-  const refresh = () => {
-    setWorkspaces(getWorkspaceRecords());
-    const savedRecords = getDemoValue("maintenanceRecords");
-    setMaintenanceRecords(Array.isArray(savedRecords) ? savedRecords : []);
-    setMaintenanceCategories(getMaintenanceCategories());
+  const refresh = async () => {
+    const localRecords = getWorkspaceRecords();
+    try {
+      const rows = await fetchSupabaseWorkspaces();
+      const existingIds = new Set(rows.map((row) => row.id));
+      const missingRecords = localRecords.filter((record) => !existingIds.has(String(record.areaId || record.id)));
+      const seededRows = await createSupabaseWorkspaces(missingRecords);
+      const remoteRecords = [...rows, ...seededRows].map(mapSupabaseWorkspaceToOsWorkspace);
+      const nextWorkspaces = mergeWorkspaceRecords(remoteRecords);
+      setWorkspaces(nextWorkspaces);
+      saveDemoValue("workspaces", nextWorkspaces, { notify: false });
+    } catch (error) {
+      setWorkspaces([]);
+      showToast({ variant: "error", title: "Workspaces could not be loaded", message: error?.message || "Supabase did not return the workspace records." });
+    }
+    try {
+      const categoryRows = await fetchSupabaseMaintenanceCategories();
+      const remoteCategories = categoryRows.map(mapSupabaseMaintenanceCategoryToOsCategory);
+      setMaintenanceCategories(remoteCategories);
+      saveDemoValue("maintenanceCategories", remoteCategories, { notify: false });
+    } catch (error) {
+      setMaintenanceCategories(getMaintenanceCategories());
+      showToast({ variant: "error", title: "Maintenance categories could not be loaded", message: error?.message || "Supabase did not return the maintenance categories." });
+    }
+    try {
+      const [recordRows, eventRows] = await Promise.all([fetchSupabaseMaintenanceRecords(), fetchSupabaseMaintenanceEvents()]);
+      const remoteRecords = recordRows.map(mapSupabaseMaintenanceRecordToOsRecord);
+      const remoteEvents = eventRows.map(mapSupabaseMaintenanceEventToOsEvent);
+      setMaintenanceRecords(remoteRecords);
+      saveDemoValue("maintenanceRecords", remoteRecords, { notify: false });
+      saveDemoValue("maintenanceEvents", remoteEvents, { notify: false });
+    } catch (error) {
+      const savedRecords = getDemoValue("maintenanceRecords");
+      setMaintenanceRecords(Array.isArray(savedRecords) ? savedRecords : []);
+      showToast({ variant: "error", title: "Maintenance records could not be loaded", message: error?.message || "Supabase did not return maintenance records." });
+    }
   };
 
   useEffect(() => {
-    refresh();
+    void refresh();
     const handleDemoChange = (event) => {
-      if (["maintenance", "maintenanceRecords", "maintenanceEvents", "workspaces", "maintenanceCategories", "members", "employees"].includes(event.detail?.key || "")) refresh();
+      if (["maintenance", "maintenanceRecords", "maintenanceEvents", "workspaces", "maintenanceCategories", "members", "employees"].includes(event.detail?.key || "")) void refresh();
     };
     window.addEventListener("cubicle-demo-change", handleDemoChange);
     return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     const workspaceId = searchParams.get("workspaceId");
@@ -173,26 +207,44 @@ export default function WorkspacesPage() {
     return nextWorkspace;
   };
 
-  const updateWorkspace = (workspace) => {
+  const updateWorkspace = async (workspace) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can configure workspace details." }); return; }
     const previous = workspaces.find((item) => item.areaId === workspace.areaId);
     if (workspaces.some((item) => item.areaId !== workspace.areaId && item.label.trim().toLowerCase() === workspace.label.trim().toLowerCase())) {
       showToast({ variant: "error", title: "Workspace was not saved", message: "Workspace names must be unique. Choose a different name." });
       return;
     }
-    const next = workspaces.map((item) => item.areaId === workspace.areaId ? workspace : item);
-    setWorkspaces(next);
-    saveDemoValue("workspaces", next);
-    const savedMembers = getDemoValue("members");
-    if (Array.isArray(savedMembers)) saveDemoValue("members", savedMembers.map((member) => member.spaceId === workspace.areaId || member.space === previous?.label ? { ...member, spaceId: workspace.areaId, space: workspace.label } : member));
-    setConfiguring(null);
-    showToast({ variant: "success", title: "Workspace configuration updated", message: `${workspace.label} was saved successfully.` });
+    try {
+      const row = await updateSupabaseWorkspace(workspace.areaId, workspace);
+      const persistedWorkspace = { ...workspace, ...mapSupabaseWorkspaceToOsWorkspace(row), id: row.id, areaId: row.id };
+      const next = workspaces.map((item) => item.areaId === workspace.areaId ? persistedWorkspace : item);
+      setWorkspaces(next);
+      saveDemoValue("workspaces", next);
+      const savedMembers = getDemoValue("members");
+      if (Array.isArray(savedMembers)) saveDemoValue("members", savedMembers.map((member) => member.spaceId === workspace.areaId || member.space === previous?.label ? { ...member, spaceId: workspace.areaId, space: workspace.label } : member));
+      setConfiguring(null);
+      showToast({ variant: "success", title: "Workspace configuration updated", message: `${workspace.label} was saved to Supabase.` });
+    } catch (error) {
+      showToast({ variant: "error", title: "Workspace was not saved", message: error?.message || "Supabase could not save this workspace." });
+    }
   };
 
   const submitReport = async (values) => {
     if (!reportingWorkspace) return;
     try {
       const result = reportMaintenance(reportingWorkspace.areaId || reportingWorkspace.id, values);
+      const remoteRecord = await createSupabaseMaintenanceRecord(result.maintenance);
+      const remoteEvent = await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
+      await updateSupabaseWorkspace(reportingWorkspace.areaId || reportingWorkspace.id, { ...result.workspace, activeMaintenanceId: remoteRecord.id });
+      const persistedRecord = mapSupabaseMaintenanceRecordToOsRecord(remoteRecord);
+      const persistedEvent = mapSupabaseMaintenanceEventToOsEvent(remoteEvent);
+      const localRecords = getMaintenanceRecords().map((record) => record.id === result.maintenance.id ? persistedRecord : record);
+      const localEvents = [persistedEvent, ...getMaintenanceEvents().filter((event) => event.id !== result.event.id)];
+      const localWorkspaces = getWorkspaceRecords().map((workspace) => workspace.areaId === reportingWorkspace.areaId ? { ...workspace, ...result.workspace, activeMaintenanceId: remoteRecord.id } : workspace);
+      saveDemoValue("maintenanceRecords", localRecords, { notify: false });
+      saveDemoValue("maintenanceEvents", localEvents, { notify: false });
+      saveDemoValue("workspaces", localWorkspaces, { notify: false });
+      setMaintenanceRecords(localRecords);
       setReportingWorkspace(null);
       const updated = refreshAndSelect(reportingWorkspace.areaId || reportingWorkspace.id);
       if (result.existing) {
@@ -207,11 +259,15 @@ export default function WorkspacesPage() {
     }
   };
 
-  const beginMaintenance = () => {
+  const beginMaintenance = async () => {
     const record = selectedWorkspace && activeRecordFor(selectedWorkspace);
     if (!record) return;
     try {
-      startMaintenance(record.id);
+      const result = startMaintenance(record.id);
+      if (result.event) {
+        const remoteRecord = await updateSupabaseMaintenanceRecord(result.maintenance.id, result.maintenance);
+        await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
+      }
       refreshAndSelect(selectedWorkspace.areaId || selectedWorkspace.id);
       showToast({ variant: "success", title: "Maintenance started", message: `${selectedWorkspace.label} is now in progress.` });
     } catch (error) { showToast({ variant: "error", title: "Maintenance could not start", message: error?.message || "Unable to start this issue." }); }
@@ -220,7 +276,10 @@ export default function WorkspacesPage() {
   const submitResolution = async (values) => {
     if (!resolvingMaintenance || !selectedWorkspace) return;
     try {
-      resolveMaintenance(resolvingMaintenance.id, values);
+      const result = resolveMaintenance(resolvingMaintenance.id, values);
+      const remoteRecord = await updateSupabaseMaintenanceRecord(result.maintenance.id, result.maintenance);
+      if (result.event) await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
+      if (result.workspace) await updateSupabaseWorkspace(result.workspace.areaId || result.workspace.id, result.workspace);
       const workspaceName = selectedWorkspace.label;
       setResolvingMaintenance(null);
       refreshAndSelect(selectedWorkspace.areaId || selectedWorkspace.id);
@@ -234,7 +293,10 @@ export default function WorkspacesPage() {
   const submitCancellation = async (values) => {
     if (!cancellingMaintenance || !selectedWorkspace) return;
     try {
-      cancelMaintenance(cancellingMaintenance.id, values.cancellationReason);
+      const result = cancelMaintenance(cancellingMaintenance.id, values.cancellationReason);
+      const remoteRecord = await updateSupabaseMaintenanceRecord(result.maintenance.id, result.maintenance);
+      if (result.event) await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
+      if (result.workspace) await updateSupabaseWorkspace(result.workspace.areaId || result.workspace.id, result.workspace);
       const workspaceName = selectedWorkspace.label;
       setCancellingMaintenance(null);
       refreshAndSelect(selectedWorkspace.areaId || selectedWorkspace.id);

@@ -13,11 +13,14 @@ import { PageShell } from "@/components/ui/page-shell";
 import { TimePicker } from "@/components/ui/time-picker";
 import { LeadJourneyForm } from "@/components/os/lead-journey";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { visitRows } from "@/lib/module-e-data";
 import { employeeRows } from "@/lib/module-d-data";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
+import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
+import { fetchSupabaseLeads, mapSupabaseLeadToOsLead, updateSupabaseLead } from "@/lib/supabase/leads";
+import { createSupabaseVisit, fetchSupabaseVisits, mapSupabaseVisitToOsVisit, updateSupabaseVisitStatus } from "@/lib/supabase/visits";
+import { useHasPermission } from "@/lib/access-control";
 import { z } from "zod";
 
 function getVisitTimeMinutes(value) {
@@ -71,6 +74,10 @@ function isLeadAlreadyScheduled(lead, visits) {
 
 function normalizeVisitLookup(value) {
   return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
 function isSameScheduledSlot(first, second) {
@@ -136,20 +143,25 @@ function VisitForm({ employees, leads, initialLeadId = "", onCancel, onSave }) {
   const selectLead = (lead) => { setValue("leadId", lead.id, { shouldDirty: true }); setValue("visitor", `${lead.name} - ${lead.company || "No company"}`, { shouldDirty: true }); setValue("company", lead.company || "", { shouldDirty: true }); setValue("host", lead.assignedTo || "Only me", { shouldDirty: true }); };
   const handleDateChange = (event) => { const date = event.target.value; const time = watch("time"); setValue("date", date, { shouldDirty: true }); if (date === today && time < currentTime) setValue("time", currentTime, { shouldDirty: true }); };
   const handleTimeChange = (event) => setValue("time", event.target.value, { shouldDirty: true });
-  const handleSave = (form) => { const visit = { ...form, id: `visit-${Date.now()}`, status: "Scheduled" }; const saveError = onSave(visit); if (saveError) setError("time", { message: saveError }); };
+  const handleSave = async (form) => { const visit = { ...form, id: `visit-${Date.now()}`, status: "Scheduled" }; const saveError = await onSave(visit); if (saveError) setError("time", { message: saveError }); };
   const error = formState.errors.leadId?.message || formState.errors.date?.message || formState.errors.time?.message || formState.errors.host?.message || formState.errors.purpose?.message;
   return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><LeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} locked={Boolean(initialLeadId)} /><label className="settings-label">Date<Input type="date" min={today} value={watch("date")} onChange={handleDateChange} /></label><label className="settings-label">Time<TimePicker value={watch("time")} min={watch("date") === today ? currentTime : undefined} onChange={handleTimeChange} /></label><EmployeeSelect value={watch("host")} options={assignOptions} onChange={(value) => setValue("host", value, { shouldDirty: true })} /></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
 }
 
 // TITLE: VISIT STATUS ACTIONS
-function VisitActions({ visit, onStatusChange, onClose }) {
+function VisitActions({ visit, onStatusChange, onClose, canEdit = true }) {
+  const permissionCanEdit = useHasPermission("visits.write");
+  const effectiveCanEdit = canEdit && permissionCanEdit;
   if (visit.status !== "Scheduled") return null;
+  if (!effectiveCanEdit) return <div className="dialog-actions"><span className="read-only-label">View only</span></div>;
   return <div className="dialog-actions"><Button onClick={() => onStatusChange("Completed")}><CheckCircle2 size={15} /> Complete</Button><Button variant="ghost" onClick={() => onStatusChange("No-show")}>No-show</Button><Button variant="ghost" onClick={() => onStatusChange("Cancelled")}>Cancel visit</Button></div>;
 }
 
 // TITLE: VISITS PAGE
 export default function VisitsPage() {
   const { showToast } = useToast();
+  const canWrite = useHasPermission("visits.write");
+  const canWriteLeads = useHasPermission("leads.write");
   const [visits, setVisits] = useState([]);
   const [leads, setLeads] = useState([]);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
@@ -164,19 +176,31 @@ export default function VisitsPage() {
   }, []);
 
   useEffect(() => {
-    const saved = getDemoValue("visits");
-    if (Array.isArray(saved)) setVisits(saved);
+    const savedVisits = getDemoValue("visits");
+    const localVisits = Array.isArray(savedVisits) ? savedVisits : [];
     const savedLeads = getDemoValue("leads");
-    if (Array.isArray(savedLeads)) {
-      const normalizedLeads = savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
-      setLeads(normalizedLeads);
-      const pendingLeadId = getDemoValue("pendingVisitLeadId");
-      if (typeof pendingLeadId === "string" && normalizedLeads.some((lead) => lead.id === pendingLeadId)) {
-        setPendingVisitLeadId(pendingLeadId);
-        setShowForm(true);
-      }
+    const localLeads = Array.isArray(savedLeads) ? savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) })) : [];
+    setVisits(localVisits);
+    setLeads(localLeads);
+
+    const pendingLeadId = getDemoValue("pendingVisitLeadId");
+    if (typeof pendingLeadId === "string" && localLeads.some((lead) => lead.id === pendingLeadId)) {
+      setPendingVisitLeadId(pendingLeadId);
+      setShowForm(true);
     }
-  }, []);
+
+    if (!isSupabaseLeadsEnabled()) return;
+    void Promise.all([fetchSupabaseVisits(), fetchSupabaseLeads()]).then(([visitRows, leadRows]) => {
+      const remoteVisits = visitRows.map(mapSupabaseVisitToOsVisit);
+      const remoteLeads = leadRows.map(mapSupabaseLeadToOsLead).map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
+      setVisits(remoteVisits.length ? remoteVisits : localVisits);
+      setLeads(remoteLeads.length ? remoteLeads : localLeads);
+      if (remoteVisits.length) saveDemoValue("visits", remoteVisits, { notify: false });
+      if (remoteLeads.length) saveDemoValue("leads", remoteLeads, { notify: false });
+    }).catch((error) => {
+      showToast({ variant: "error", title: "Visits could not be loaded", message: error?.message || "Supabase did not return the visit records." });
+    });
+  }, [showToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60 * 1000);
@@ -186,23 +210,92 @@ export default function VisitsPage() {
   // TITLE: SAVE VISITS
   const persist = (nextVisits) => { setVisits(nextVisits); saveDemoValue("visits", nextVisits); };
   const closeVisitForm = () => { setShowForm(false); setPendingVisitLeadId(""); saveDemoValue("pendingVisitLeadId", null); };
-  const scheduleVisit = (visit) => {
+  const scheduleVisit = async (visit) => {
+    if (!canWrite) { const message = "Your account can view visits but cannot schedule them."; showToast({ variant: "error", title: "View-only access", message }); return message; }
     const selectedLead = leads.find((lead) => lead.id === visit.leadId);
     if (selectedLead && normalizeLeadStage(selectedLead.stage, selectedLead) === "Follow-up due" && !(selectedLead.pendingVisit && selectedLead.id === pendingVisitLeadId)) { const message = "Log the existing follow-up before scheduling another visit."; showToast({ variant: "error", title: "Visit was not scheduled", message }); return message; }
     if (isPastVisitTime(visit)) { const message = "Choose a current or future time."; showToast({ variant: "error", title: "Visit was not scheduled", message }); return message; }
     if (visits.some((existingVisit) => isSameScheduledSlot(existingVisit, visit))) { const message = `${visit.host} is already booked at that time.`; showToast({ variant: "error", title: "Time is not available", message }); return message; }
-    persist([visit, ...visits]);
+    let savedVisit = visit;
+    try {
+      if (isSupabaseLeadsEnabled()) {
+        if (!selectedLead || !isUuid(visit.leadId)) {
+          const message = "Select a lead loaded from Supabase before scheduling a visit.";
+          showToast({ variant: "error", title: "Visit was not scheduled", message });
+          return message;
+        }
+        const row = await createSupabaseVisit(visit);
+        savedVisit = mapSupabaseVisitToOsVisit(row);
+      }
+    } catch (error) {
+      const message = error?.code === "23505" ? `${visit.host} is already booked at that time.` : error?.message || "Supabase could not save this visit.";
+      showToast({ variant: "error", title: "Visit was not scheduled", message });
+      return message;
+    }
+
+    persist([savedVisit, ...visits]);
     if (visit.leadId) {
       const stored = getDemoValue("leads");
       const rows = Array.isArray(stored) ? stored : leads;
       const nextLeads = rows.map((lead) => lead.id === visit.leadId ? transitionLead(lead, { type: "visit-scheduled", nextFollowUp: `${visit.date} · ${visit.time}` }) : { ...lead, stage: normalizeLeadStage(lead.stage, lead) });
-      saveDemoValue("leads", nextLeads);
-      setLeads(nextLeads);
+      if (isSupabaseLeadsEnabled() && isUuid(visit.leadId) && canWriteLeads) {
+        try {
+          const updatedRow = await updateSupabaseLead(visit.leadId, { visitDate: visit.date, visitTime: visit.time });
+          const updatedLead = { ...mapSupabaseLeadToOsLead(updatedRow), ...nextLeads.find((lead) => lead.id === visit.leadId), id: updatedRow.id, backend: "supabase", stage: "Visit scheduled", visitDate: visit.date, visitTime: visit.time };
+          const persistedLeads = nextLeads.map((lead) => lead.id === visit.leadId ? updatedLead : lead);
+          saveDemoValue("leads", persistedLeads);
+          setLeads(persistedLeads);
+        } catch (error) {
+          saveDemoValue("leads", nextLeads);
+          setLeads(nextLeads);
+          showToast({ variant: "error", title: "Visit scheduled with a lead warning", message: error?.message || "The visit was saved, but the lead visit date could not be updated." });
+        }
+      } else {
+        saveDemoValue("leads", nextLeads);
+        setLeads(nextLeads);
+      }
     }
     closeVisitForm();
     showToast({ variant: "success", title: "Visit scheduled", message: `${visit.visitor} was added to the visit schedule.` });
   };
-  const updateStatus = (id, status) => { const next = visits.map((visit) => visit.id === id ? { ...visit, status } : visit); const changedVisit = visits.find((visit) => visit.id === id); persist(next); if (changedVisit && ["Cancelled", "No-show"].includes(status)) { const lead = findVisitLead(changedVisit); if (lead) { const stored = getDemoValue("leads"); const rows = Array.isArray(stored) ? stored : leads; const nextLeads = rows.map((row) => row.id === lead.id ? transitionLead(row, { type: "visit-cancelled" }) : row); saveDemoValue("leads", nextLeads); setLeads(nextLeads); } } setSelected((current) => current ? { ...current, status } : null); showToast({ variant: status === "Completed" ? "success" : status === "Cancelled" ? "info" : "success", title: status === "Completed" ? "Visit completed" : status === "Cancelled" ? "Visit cancelled" : "Visit updated", message: changedVisit ? `${changedVisit.visitor} was updated successfully.` : "The visit was updated successfully." }); };
+  const updateStatus = async (id, status) => {
+    if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot change visit status." }); return; }
+    const changedVisit = visits.find((visit) => visit.id === id);
+    if (!changedVisit) return;
+    try {
+      if (isSupabaseLeadsEnabled() && isUuid(id)) await updateSupabaseVisitStatus(id, status);
+    } catch (error) {
+      showToast({ variant: "error", title: "Visit was not updated", message: error?.message || "Supabase could not update this visit." });
+      return;
+    }
+    const next = visits.map((visit) => visit.id === id ? { ...visit, status } : visit);
+    persist(next);
+    if (["Cancelled", "No-show"].includes(status)) {
+      const lead = findVisitLead(changedVisit);
+      if (lead) {
+        const stored = getDemoValue("leads");
+        const rows = Array.isArray(stored) ? stored : leads;
+        const nextLeads = rows.map((row) => row.id === lead.id ? transitionLead(row, { type: "visit-cancelled" }) : row);
+        if (isSupabaseLeadsEnabled() && isUuid(lead.id) && canWriteLeads) {
+          try {
+            const updatedRow = await updateSupabaseLead(lead.id, { visitDate: null, visitTime: null });
+            const persistedLeads = nextLeads.map((row) => row.id === lead.id ? { ...mapSupabaseLeadToOsLead(updatedRow), ...row, id: updatedRow.id, backend: "supabase", visitDate: "", visitTime: "", nextFollowUp: "Not scheduled" } : row);
+            saveDemoValue("leads", persistedLeads);
+            setLeads(persistedLeads);
+          } catch (error) {
+            saveDemoValue("leads", nextLeads);
+            setLeads(nextLeads);
+            showToast({ variant: "error", title: "Visit updated with a lead warning", message: error?.message || "The visit changed, but the lead could not be updated." });
+          }
+        } else {
+          saveDemoValue("leads", nextLeads);
+          setLeads(nextLeads);
+        }
+      }
+    }
+    setSelected((current) => current ? { ...current, status } : null);
+    showToast({ variant: status === "Completed" ? "success" : status === "Cancelled" ? "info" : "success", title: status === "Completed" ? "Visit completed" : status === "Cancelled" ? "Visit cancelled" : "Visit updated", message: `${changedVisit.visitor} was updated successfully.` });
+  };
   const findVisitLead = (visit) => {
     const stored = getDemoValue("leads");
     const rows = Array.isArray(stored) ? [...leads, ...stored] : leads;
@@ -214,8 +307,8 @@ export default function VisitsPage() {
       || uniqueRows.find((lead) => visitor === normalizeVisitLookup(lead.name) || visitor.startsWith(`${normalizeVisitLookup(lead.name)} -`) || visitor.startsWith(`${normalizeVisitLookup(lead.name)} `));
   };
   const completeVisit = (visit) => { const lead = findVisitLead(visit); if (!lead) { showToast({ variant: "error", title: "Visit was not completed", message: "This visit is missing its lead details." }); return; } setSelected(null); setJourneyVisit(visit); setJourneyLead(lead); };
-  const saveVisitJourney = (entry) => {
-    if (!journeyLead || !journeyVisit) return;
+  const saveVisitJourney = async (entry) => {
+    if (!journeyLead || !journeyVisit || !canWrite) return;
     const visitEntry = {
       ...entry,
       entryType: "visit",
@@ -231,6 +324,15 @@ export default function VisitsPage() {
       journey: [visitEntry, ...(Array.isArray(journeyLead.journey) ? journeyLead.journey : [])],
       nextFollowUp: entry.nextFollowUpDate ? `${entry.nextFollowUpDate}${entry.nextFollowUpTime ? ` · ${entry.nextFollowUpTime}` : ""}` : "Not scheduled"
     };
+    try {
+      if (isSupabaseLeadsEnabled()) {
+        if (isUuid(journeyVisit.id)) await updateSupabaseVisitStatus(journeyVisit.id, "Completed");
+        if (canWriteLeads && isUuid(journeyLead.id)) await updateSupabaseLead(journeyLead.id, { visited: true });
+      }
+    } catch (error) {
+      showToast({ variant: "error", title: "Visit was not completed", message: error?.message || "Supabase could not complete this visit." });
+      return;
+    }
     const stored = getDemoValue("leads");
     const rows = Array.isArray(stored) ? stored : leads;
     const nextLeads = rows.map((lead) => lead.id === updated.id ? updated : lead);

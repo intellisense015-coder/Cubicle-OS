@@ -23,8 +23,7 @@ export function getDemoSession() {
   return {
     email: getDemoValue("email") || "",
     password: getDemoValue("password") || "",
-    mfaVerified: getDemoValue("mfaVerified") === true,
-    pinVerified: getDemoValue("pinVerified") === true
+    mfaVerified: getDemoValue("mfaVerified") === true
   };
 }
 
@@ -37,7 +36,7 @@ export function clearDemoSession() {
 // TITLE: DEMO WORKSPACE RESET
 export function resetDemoWorkspace() {
   if (typeof window === "undefined") return;
-  const protectedKeys = new Set(["email", "password", "mfaVerified", "pinVerified", "theme"]);
+  const protectedKeys = new Set(["email", "password", "mfaVerified", "theme"]);
   Object.keys(window.sessionStorage).filter((key) => key.startsWith(SESSION_PREFIX) && !protectedKeys.has(key.replace(SESSION_PREFIX, ""))).forEach((key) => window.sessionStorage.removeItem(key));
 }
 

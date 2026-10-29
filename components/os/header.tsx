@@ -108,7 +108,7 @@ function buildGlobalSearchIndex(): SearchResultItem[] {
   addRecords("members", "Member", "/members", Users, (item) => item.member || item.name || item.email, (item) => [item.email, item.company, item.space, item.membershipStatus, item.status, item.joined, item.billingStartDate, item.dueDay, item.team]);
   addRecords("companies", "Company", "/companies", Building2, (item) => item.company || item.name || item.companyName, (item) => [item.email, item.phone, item.industry]);
   addRecords("workspaces", "Workspace", "/workspaces", DoorOpen, (item) => item.label || item.name, (item) => [item.id, item.occupant, item.company, item.status, item.paymentStatus, item.zone, item.memberId, item.billingStartDate, item.dueDay]);
-  addRecords("invoices", "Invoice", "/invoices", ReceiptText, (item) => item.invoice || item.account, (item) => [item.account, item.period, item.paymentStatus, item.issueDate, item.dueDate, item.billingStartDate, item.joiningDate, item.dueDay]);
+  addRecords("invoices", "Invoice", "/invoices", ReceiptText, (item) => item.invoice || item.account, (item) => [item.account, item.period, item.paymentStatus, item.issueDate, item.dueDate, item.billingStartDate, item.dueDay]);
   addRecords("quotations", "Quotation", "/quotations", FileText, (item) => item.quotation || item.title || item.account, (item) => [item.account, item.company, item.email, item.status, item.memberId]);
   addRecords("proposals", "Proposal", "/proposals", FileText, (item) => item.proposalNumber || item.title || item.account, (item) => [item.account, item.company, item.email, item.status, item.memberId]);
   addRecords("visits", "Visit", "/visits", CalendarDays, (item) => item.visitor || item.name || item.company, (item) => [item.email, item.company, item.status, item.visitDate]);
@@ -137,8 +137,8 @@ function getGreeting() {
 // ==========================================
 
 export function OsHeader({
-  userName = "Sohaib Asgher",
-  userRole = "Administrator",
+  userName = "Workspace user",
+  userRole = "User",
   pageTitle = "Accounts",
   branches = DEFAULT_BRANCHES,
   selectedBranchId = "",
@@ -556,7 +556,7 @@ export function OsHeader({
                   <button
                     type="button"
                     onClick={() => {
-                      onNavigate?.("/dashboard/users");
+                      onNavigate?.("/employees");
                       setOpenDropdown(null);
                     }}
                     className="profile-menu-item"
@@ -568,7 +568,7 @@ export function OsHeader({
                   <button
                     type="button"
                     onClick={() => {
-                      onNavigate?.("/dashboard/settings");
+                      onNavigate?.("/settings");
                       setOpenDropdown(null);
                     }}
                     className="profile-menu-item"

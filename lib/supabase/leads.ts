@@ -17,6 +17,28 @@ export type SupabaseLeadRow = {
 
 const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option";
 
+const workspaceOptionByLabel: Record<string, string> = {
+  "private office": "private-office",
+  "dedicated desk": "dedicated-desk",
+  "enterprise solutions": "enterprise-solutions",
+  "meeting room": "meeting-room",
+  "event space": "event-space",
+};
+
+const workspaceLabelByOption: Record<string, string> = {
+  "private-office": "Private office",
+  "dedicated-desk": "Dedicated desk",
+  "enterprise-solutions": "Enterprise solutions",
+  "meeting-room": "Meeting room",
+  "event-space": "Event space",
+};
+
+function normalizeWorkspaceOption(value: string | undefined) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return workspaceOptionByLabel[normalized.toLowerCase()] || (Object.values(workspaceOptionByLabel).includes(normalized) ? normalized : null);
+}
+
 function timeValue(value: string | null) {
   return value ? String(value).slice(0, 5) : "";
 }
@@ -41,7 +63,7 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     nextFollowUp: visitDate ? `${visitDate}${visitTime ? ` · ${visitTime}` : ""}` : "Not scheduled",
     assignedTo: "Unassigned",
     lostReason: "",
-    workspace: row.workspace_option || "",
+    workspace: workspaceLabelByOption[row.workspace_option || ""] || row.workspace_option || "",
     visitDate,
     visitTime,
     message: row.message || "",
@@ -98,7 +120,7 @@ export async function createSupabaseLead(input: {
       email: input.email.trim().toLowerCase(),
       team_size: teamSize,
       shift: input.shift.trim() || "Flexible",
-      workspace_option: input.workspace || null,
+      workspace_option: normalizeWorkspaceOption(input.workspace),
     })
     .select(leadColumns)
     .single();
@@ -107,13 +129,16 @@ export async function createSupabaseLead(input: {
   return data as SupabaseLeadRow;
 }
 
-export async function updateSupabaseLead(id: string, input: { workspace?: string; visited?: boolean }) {
+export async function updateSupabaseLead(id: string, input: { workspace?: string; visited?: boolean; visitDate?: string | null; visitTime?: string | null }) {
+  const update: Record<string, unknown> = {};
+  if (input.workspace !== undefined) update.workspace_option = normalizeWorkspaceOption(input.workspace);
+  if (input.visited !== undefined) update.visited = Boolean(input.visited);
+  if (input.visitDate !== undefined) update.visit_date = input.visitDate || null;
+  if (input.visitTime !== undefined) update.visit_time = input.visitTime || null;
+
   const { data, error } = await getSupabaseBrowserClient()
     .from("leads")
-    .update({
-      workspace_option: input.workspace || null,
-      visited: Boolean(input.visited),
-    })
+    .update(update)
     .eq("id", id)
     .select(leadColumns)
     .single();

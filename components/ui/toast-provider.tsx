@@ -91,7 +91,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(toast.id)}><X size={15} /></button>
           </div>
         </div>
-        {toast.duration > 0 ? <p className="toast-countdown">This message will automatically close in <strong>{toast.remaining} sec</strong></p> : null}
+        {toast.duration > 0 ? <div className="toast-timing" aria-label={`Notification closes in ${toast.remaining} seconds`}><span>Closes in {toast.remaining}s</span><span className="toast-progress" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, (toast.remaining / toast.duration) * 100))}%` }} /></span></div> : null}
       </article>)}
     </div>
   </ToastContext.Provider>;

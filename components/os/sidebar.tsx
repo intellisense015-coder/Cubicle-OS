@@ -49,7 +49,7 @@ const DEFAULT_NAV_GROUPS: NavGroupItem[] = [
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
 
-export function OsSidebar({ currentPath, onNavigate, onSignOut, mobileOpen = false, onMobileOpenChange, onCollapsedChange, userName = "Minaal Rizwan", userRole = "Workspace admin", appName = "The Cubicle OS" }: ResponsiveSidebarProps) {
+export function OsSidebar({ currentPath, onNavigate, onSignOut, mobileOpen = false, onMobileOpenChange, onCollapsedChange, userName = "Workspace user", userRole = "User", appName = "The Cubicle OS" }: ResponsiveSidebarProps) {
   const pathname = usePathname() || currentPath || "/dashboard";
   const router = useRouter();
   const [activePath, setActivePath] = useState(pathname);

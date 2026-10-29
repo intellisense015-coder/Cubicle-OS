@@ -10,27 +10,51 @@ import { KpiCard } from "@/components/ui/kpi-card";
 import { PageShell } from "@/components/ui/page-shell";
 import { getDemoValue } from "@/lib/demo-session";
 import { applyWorkspaceRecordsToFloor, getWorkspaceRecords, mergeWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
+import { useToast } from "@/components/ui/toast-provider";
+import { fetchSupabaseMembers, mapSupabaseMemberToOsMember } from "@/lib/supabase/members";
+import { fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace } from "@/lib/supabase/workspaces";
 
 export default function FloorPlanPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
+  const [members, setMembers] = useState([]);
 
   useEffect(() => {
-    setWorkspaces(getWorkspaceRecords());
+    let cancelled = false;
+    const loadBackendData = async () => {
+      try {
+        const [workspaceRows, memberRows] = await Promise.all([fetchSupabaseWorkspaces(), fetchSupabaseMembers()]);
+        if (!cancelled) {
+          setWorkspaces(mergeWorkspaceRecords(workspaceRows.map(mapSupabaseWorkspaceToOsWorkspace)));
+          setMembers(memberRows.map(mapSupabaseMemberToOsMember));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setWorkspaces([]);
+          setMembers([]);
+          showToast({ variant: "error", title: "Floor plan could not be loaded", message: error?.message || "Supabase did not return the floor-plan data." });
+        }
+      }
+    };
+    void loadBackendData();
     const handleDemoChange = (event) => {
-      if (["workspaces", "maintenance", "maintenanceRecords", "maintenanceEvents", "members"].includes(event.detail?.key || "")) {
+      if (["workspaces", "members"].includes(event.detail?.key || "")) {
+        void loadBackendData();
+      }
+      if (["maintenance", "maintenanceRecords", "maintenanceEvents"].includes(event.detail?.key || "")) {
         const saved = getDemoValue("workspaces");
         setWorkspaces(mergeWorkspaceRecords(Array.isArray(saved) ? saved : []));
       }
       if (event.detail?.key === "maintenanceCategories") setWorkspaces((current) => [...current]);
     };
     window.addEventListener("cubicle-demo-change", handleDemoChange);
-    return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
-  }, []);
+    return () => { cancelled = true; window.removeEventListener("cubicle-demo-change", handleDemoChange); };
+  }, [showToast]);
 
   const floor = useMemo(() => applyWorkspaceRecordsToFloor(workspaces), [workspaces]);
-  const data = useMemo(() => workspaceRecordsToAreaData(workspaces), [workspaces]);
+  const data = useMemo(() => workspaceRecordsToAreaData(workspaces, members), [workspaces, members]);
   const rentableAreas = floor.areas.filter((area) => area.kind === "office" || area.kind === "seat" || area.kind === "cabin");
   const occupied = data.filter((row) => row.occupancy === "occupied").length;
   const available = data.filter((row) => row.occupancy === "available").length;

@@ -9,13 +9,19 @@ import { PageShell } from "@/components/ui/page-shell";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { DataTable } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoSession, getDemoValue } from "@/lib/demo-session";
+import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { getWorkspaceRecords, isAssignableWorkspace } from "@/lib/workspace-records";
 import { syncWorkspaceBilling } from "@/lib/billing";
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { normalizeLeadStage } from "@/lib/lead-stages";
 import { getActiveMemberInvoices } from "@/lib/billing";
+import { useToast } from "@/components/ui/toast-provider";
+import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
+import { fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
+import { fetchSupabaseVisits, mapSupabaseVisitToOsVisit } from "@/lib/supabase/visits";
+import { fetchSupabaseInvoices } from "@/lib/supabase/invoices";
+import { fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace } from "@/lib/supabase/workspaces";
 
 function formatDashboardFollowUp(value) {
   if (!value || value === "Not scheduled") return value || "Not scheduled";
@@ -176,7 +182,8 @@ function dashboardDateKey(date = new Date()) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [session, setSession] = useState(null);
+  const { showToast } = useToast();
+  const [session, setSession] = useState(false);
   const [followUpRows, setFollowUpRows] = useState<any[]>([]);
   const [visitRows, setVisitRows] = useState<any[]>([]);
   const [workspaceRows, setWorkspaceRows] = useState<any[]>([]);
@@ -186,12 +193,7 @@ export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   useEffect(() => {
-    const current = getDemoSession();
-    if (!current.pinVerified) {
-      router.replace("/login");
-      return;
-    }
-    setSession(current);
+    setSession(true);
 
     const loadDashboardData = () => {
       const workspaces = syncWorkspaceBilling(getWorkspaceRecords()).workspaces.filter(isAssignableWorkspace);
@@ -224,6 +226,36 @@ export default function DashboardPage() {
       } else {
         setVisitRows([]);
       }
+
+      if (isSupabaseLeadsEnabled()) {
+        void Promise.all([fetchSupabaseLeads(), fetchSupabaseVisits(), fetchSupabaseInvoices()]).then(([leadRows, visitRowsFromSupabase, remoteInvoices]) => {
+          const remoteLeads = leadRows.map(mapSupabaseLeadToOsLead).map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
+          const remoteVisits = visitRowsFromSupabase.map(mapSupabaseVisitToOsVisit);
+          const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
+          setFollowUpRows(remoteLeads.filter((lead) => lead.stage === "Follow-up due" && isFollowUpDueToday(lead.nextFollowUp)));
+          setVisitRows(remoteVisits.filter((visit) => visit.status === "Scheduled" && isDateToday(visit.date)));
+          setInvoiceRows(remoteInvoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
+          if (remoteLeads.length) saveDemoValue("leads", remoteLeads, { notify: false });
+          if (visitRowsFromSupabase.length) saveDemoValue("visits", remoteVisits, { notify: false });
+          if (remoteInvoices.length) saveDemoValue("invoices", remoteInvoices, { notify: false });
+        }).catch((error) => {
+          showToast({ variant: "error", title: "Dashboard data could not be refreshed", message: error?.message || "Supabase did not return the latest leads and visits." });
+        });
+
+        void fetchSupabaseWorkspaces().then((remoteWorkspaceRows) => {
+          const remoteWorkspaces = remoteWorkspaceRows
+            .map(mapSupabaseWorkspaceToOsWorkspace)
+            .filter(isAssignableWorkspace);
+          setWorkspaceRows(remoteWorkspaces);
+          setSpaceOccupancy({
+            occupied: remoteWorkspaces.filter((workspace) => workspace.status === "occupied").length,
+            total: remoteWorkspaces.length,
+          });
+          if (remoteWorkspaces.length) saveDemoValue("workspaces", remoteWorkspaces, { notify: false });
+        }).catch((error) => {
+          showToast({ variant: "error", title: "Workspace data could not be refreshed", message: error?.message || "Supabase did not return the workspace records." });
+        });
+      }
     };
 
     loadDashboardData();
@@ -237,7 +269,7 @@ export default function DashboardPage() {
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
     };
-  }, [router]);
+  }, [router, showToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60 * 1000);
@@ -395,6 +427,26 @@ export default function DashboardPage() {
 
       .dashboard-follow-up-list {
         margin-top: 10px;
+      }
+
+      .dashboard-workspace-card {
+        align-self: start;
+        height: max-content;
+        min-height: 0;
+        overflow: visible;
+      }
+
+      .dashboard-workspace-table-wrap {
+        max-height: 232px;
+        overflow-x: auto;
+        overflow-y: auto;
+        scrollbar-width: thin;
+      }
+
+      .dashboard-workspace-table th,
+      .dashboard-workspace-table td {
+        height: 42px;
+        box-sizing: border-box;
       }
 
       .dashboard-follow-up-item {

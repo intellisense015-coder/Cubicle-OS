@@ -297,8 +297,8 @@ export function migrateMaintenanceData(workspaces: readonly any[]) {
   }
 
   if (changed) {
-    saveDemoValue(MAINTENANCE_RECORDS_KEY, records);
-    saveDemoValue(MAINTENANCE_EVENTS_KEY, events);
+    saveDemoValue(MAINTENANCE_RECORDS_KEY, records, { notify: false });
+    saveDemoValue(MAINTENANCE_EVENTS_KEY, events, { notify: false });
   }
 
   return { workspaces: nextWorkspaces, records, events, changed };
@@ -310,9 +310,9 @@ function readWorkspaces() {
 }
 
 function persistMaintenanceState(workspaces: any[], records: MaintenanceRecord[], events: MaintenanceEvent[]) {
-  saveDemoValue("workspaces", workspaces);
-  saveDemoValue("maintenanceRecords", records);
-  saveDemoValue("maintenanceEvents", events);
+  saveDemoValue("workspaces", workspaces, { notify: false });
+  saveDemoValue("maintenanceRecords", records, { notify: false });
+  saveDemoValue("maintenanceEvents", events, { notify: false });
   dispatchMaintenanceChange();
 }
 
@@ -326,6 +326,23 @@ function createEvent(record: MaintenanceRecord, values: Pick<MaintenanceEvent, "
   } satisfies MaintenanceEvent;
 }
 
+function summarizeWorkspaceMaintenance(workspace: any, records: MaintenanceRecord[]) {
+  const workspaceId = String(workspace.areaId || workspace.id);
+  const activeRecords = records.filter((record) => record.workspaceId === workspaceId && isActiveMaintenanceRecord(record));
+  const hasCriticalIssue = activeRecords.some((record) => ["HIGH", "CRITICAL"].includes(record.severity));
+  const currentIssue = activeRecords[0];
+  const restoredStatus = activeRecords.length ? workspace.status : workspace.status === "maintenance" ? "available" : workspace.status;
+
+  return {
+    ...workspace,
+    status: restoredStatus,
+    operationalStatus: activeRecords.length ? hasCriticalIssue ? "OUT_OF_SERVICE" : "UNDER_MAINTENANCE" : "ACTIVE",
+    activeMaintenanceId: currentIssue?.id || "",
+    maintenanceCategoryId: currentIssue?.category || "",
+    maintenanceReason: currentIssue?.title || "",
+  } satisfies Partial<WorkspaceOperationalStatus> & Record<string, any>;
+}
+
 export function reportMaintenance(workspaceId: string, input: { category: string; severity: MaintenanceSeverity; title: string; description: string; reportedById?: string; assignedToId?: string }) {
   const migrated = migrateMaintenanceData(readWorkspaces());
   const workspaces = migrated.workspaces;
@@ -335,12 +352,6 @@ export function reportMaintenance(workspaceId: string, input: { category: string
   if (index < 0) throw new Error("Workspace could not be found.");
 
   const workspace = workspaces[index];
-  const existing = getActiveMaintenanceRecord(String(workspace.areaId || workspace.id), records);
-  if (existing) return { workspace, maintenance: existing, event: null, existing: true };
-  if (normalizeWorkspaceOperationalStatus(workspace.operationalStatus, workspace.maintenanceStatus) !== "ACTIVE") {
-    throw new Error("Only active workspaces can receive a new maintenance report.");
-  }
-
   const timestamp = nowIso();
   const severity = normalizeSeverity(input.severity);
   const maintenance: MaintenanceRecord = {
@@ -357,17 +368,13 @@ export function reportMaintenance(workspaceId: string, input: { category: string
     createdAt: timestamp,
     updatedAt: timestamp,
   };
-  const operationalStatus: WorkspaceOperationalStatus = severity === "HIGH" || severity === "CRITICAL" ? "OUT_OF_SERVICE" : "UNDER_MAINTENANCE";
   const event = createEvent(maintenance, { fromStatus: "ACTIVE", toStatus: "OPEN", action: "Issue reported", notes: input.title });
-  const nextWorkspace = {
+  const nextRecords = [maintenance, ...records];
+  const nextWorkspace = summarizeWorkspaceMaintenance({
     ...workspace,
-    operationalStatus,
-    activeMaintenanceId: maintenance.id,
-    maintenanceCategoryId: workspace.maintenanceCategoryId || maintenance.category,
-    maintenanceReason: maintenance.title,
-  };
+  }, nextRecords);
   workspaces[index] = nextWorkspace;
-  persistMaintenanceState(workspaces, [maintenance, ...records], [event, ...events]);
+  persistMaintenanceState(workspaces, nextRecords, [event, ...events]);
   return { workspace: nextWorkspace, maintenance, event, existing: false };
 }
 
@@ -378,13 +385,13 @@ export function startMaintenance(maintenanceId: string) {
   const index = records.findIndex((record) => record.id === maintenanceId);
   if (index < 0) throw new Error("Maintenance record could not be found.");
   const current = records[index];
-  if (current.status !== "OPEN") return { maintenance: current, workspace: migrated.workspaces.find((item) => item.activeMaintenanceId === current.id) || null, event: null };
+  if (current.status !== "OPEN") return { maintenance: current, workspace: migrated.workspaces.find((item) => String(item.areaId || item.id) === current.workspaceId) || null, event: null };
   const timestamp = nowIso();
   const maintenance = { ...current, status: "IN_PROGRESS" as const, startedAt: current.startedAt || timestamp, updatedAt: timestamp };
   const event = createEvent(maintenance, { fromStatus: "OPEN", toStatus: "IN_PROGRESS", action: "Maintenance started" });
   records[index] = maintenance;
   persistMaintenanceState(migrated.workspaces, records, [event, ...events]);
-  return { maintenance, workspace: migrated.workspaces.find((item) => item.activeMaintenanceId === current.id) || null, event };
+  return { maintenance, workspace: migrated.workspaces.find((item) => String(item.areaId || item.id) === current.workspaceId) || null, event };
 }
 
 export function resolveMaintenance(maintenanceId: string, input: { resolutionSummary: string; partsUsed?: string; resolutionNotes?: string; verifiedReadyForUse: boolean; resolvedById?: string }) {
@@ -398,7 +405,7 @@ export function resolveMaintenance(maintenanceId: string, input: { resolutionSum
   if (index < 0) throw new Error("Maintenance record could not be found.");
   const current = records[index];
   if (!isActiveMaintenanceRecord(current)) throw new Error("Only an open or in-progress issue can be resolved.");
-  const workspaceIndex = migrated.workspaces.findIndex((workspace) => String(workspace.activeMaintenanceId) === String(current.id));
+  const workspaceIndex = migrated.workspaces.findIndex((workspace) => String(workspace.areaId || workspace.id) === current.workspaceId);
   if (workspaceIndex < 0) throw new Error("The affected workspace could not be found.");
 
   const timestamp = nowIso();
@@ -413,12 +420,9 @@ export function resolveMaintenance(maintenanceId: string, input: { resolutionSum
     verifiedReadyForUse: true,
     updatedAt: timestamp,
   };
-  const restoredStatus = migrated.workspaces[workspaceIndex].status === "maintenance"
-    ? "available"
-    : migrated.workspaces[workspaceIndex].status;
-  const workspace = { ...migrated.workspaces[workspaceIndex], status: restoredStatus, operationalStatus: "ACTIVE" as const, activeMaintenanceId: "", maintenanceStatus: "deactivated", maintenanceReason: "" };
   const event = createEvent(maintenance, { fromStatus: current.status, toStatus: "RESOLVED", action: "Workspace restored", notes: maintenance.resolutionSummary });
   records[index] = maintenance;
+  const workspace = summarizeWorkspaceMaintenance(migrated.workspaces[workspaceIndex], records);
   migrated.workspaces[workspaceIndex] = workspace;
   persistMaintenanceState(migrated.workspaces, records, [event, ...events]);
   return { maintenance, workspace, event };
@@ -435,13 +439,10 @@ export function cancelMaintenance(maintenanceId: string, cancellationReason: str
   if (!isActiveMaintenanceRecord(current)) return { maintenance: current, workspace: migrated.workspaces.find((item) => item.activeMaintenanceId === current.id) || null, event: null };
   const timestamp = nowIso();
   const maintenance = { ...current, status: "CANCELLED" as const, cancellationReason: String(cancellationReason).trim(), updatedAt: timestamp };
-  const workspaceIndex = migrated.workspaces.findIndex((workspace) => String(workspace.activeMaintenanceId) === String(current.id));
-  const restoredStatus = workspaceIndex >= 0 && migrated.workspaces[workspaceIndex].status === "maintenance"
-    ? "available"
-    : workspaceIndex >= 0 ? migrated.workspaces[workspaceIndex].status : undefined;
-  const workspace = workspaceIndex >= 0 ? { ...migrated.workspaces[workspaceIndex], status: restoredStatus, operationalStatus: "ACTIVE" as const, activeMaintenanceId: "", maintenanceStatus: "deactivated", maintenanceReason: "" } : null;
+  const workspaceIndex = migrated.workspaces.findIndex((workspace) => String(workspace.areaId || workspace.id) === current.workspaceId);
   const event = createEvent(maintenance, { fromStatus: current.status, toStatus: "CANCELLED", action: "Maintenance report withdrawn", notes: maintenance.cancellationReason });
   records[index] = maintenance;
+  const workspace = workspaceIndex >= 0 ? summarizeWorkspaceMaintenance(migrated.workspaces[workspaceIndex], records) : null;
   if (workspaceIndex >= 0 && workspace) migrated.workspaces[workspaceIndex] = workspace;
   persistMaintenanceState(migrated.workspaces, records, [event, ...events]);
   return { maintenance, workspace, event };
