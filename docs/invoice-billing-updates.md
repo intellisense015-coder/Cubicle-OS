@@ -44,5 +44,6 @@ The scheduled reminder flow uses the existing `invoice_email_queue` table:
 - `GET /api/invoices/email-queue/process` claims queued jobs, generates a server-side PDF, sends the invoice template through Resend, and records the provider message ID.
 - Queue entries are unique per invoice and delivery kind, retry up to five times with backoff, and become failed after the final attempt.
 - Jobs left in `processing` for more than 15 minutes are eligible for recovery on the next processor run.
+- The queue status constraint must allow `queued`, `processing`, `sent`, `failed`, and `cancelled`; apply the queue status migration before running the worker.
 
 Both routes require the server-only `CRON_SECRET` value in the Authorization bearer token or `x-cron-secret` header. Connect the two routes to the deployment host's scheduler after selecting the production host. A daily reminder run and a more frequent queue processor are recommended.
