@@ -307,6 +307,90 @@ export async function createSupabaseInvoice(invoice: any) {
   };
 }
 
+export async function updateSupabaseInvoice(invoiceId: string, invoice: any) {
+  const issueDate = dateKey(invoice.issueDate) || new Date().toISOString().slice(0, 10);
+  const periodStart = `${issueDate.slice(0, 7)}-01`;
+  const subtotal = parseAmount(invoice.subtotal || invoice.amount);
+  const totals = calculateInvoiceTotals({
+    subtotal,
+    salesTaxEnabled: Boolean(invoice.salesTaxEnabled),
+    salesTaxRate: invoice.salesTaxRate,
+    whtEnabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled),
+    whtRate: invoice.whtRate ?? invoice.taxRate,
+  });
+  const updatePayload = {
+    member_id: invoice.memberId,
+    workspace_id: invoice.workspaceId || null,
+    account_name: invoice.account,
+    period_start: periodStart,
+    period_end: lastDayOfMonth(periodStart),
+    issue_date: issueDate,
+    due_date: dateKey(invoice.dueDate) || issueDate,
+    billing_start_date: dateKey(invoice.billingStartDate) || null,
+    due_day: Number(invoice.dueDay) || 5,
+    subtotal: totals.subtotal,
+    tax_enabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled) && totals.whtAmount > 0,
+    tax_rate: totals.whtRate,
+    tax_amount: totals.whtAmount,
+    sales_tax_enabled: Boolean(invoice.salesTaxEnabled) && totals.salesTaxAmount > 0,
+    sales_tax_rate: totals.salesTaxRate,
+    sales_tax_amount: totals.salesTaxAmount,
+    total_amount: totals.total,
+    payment_status: String(invoice.paymentStatus || "Due soon").toLowerCase().replaceAll(" ", "_"),
+    grace_until: dateKey(invoice.graceUntil) || null,
+    manual_date_override: invoice.manualDateOverride === true,
+  };
+  const client = getSupabaseBrowserClient();
+  let { data, error } = await client
+    .from("invoices")
+    .update(updatePayload)
+    .eq("id", invoiceId)
+    .select(invoiceColumns)
+    .single();
+
+  if (error && isMissingSalesTaxColumn(error)) {
+    const { sales_tax_enabled: _salesTaxEnabled, sales_tax_rate: _salesTaxRate, sales_tax_amount: _salesTaxAmount, ...legacyPayload } = updatePayload;
+    const legacyResult = await client
+      .from("invoices")
+      .update(legacyPayload)
+      .eq("id", invoiceId)
+      .select(legacyInvoiceColumns)
+      .single();
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
+  if (error) throw error;
+
+  const rawItems = Array.isArray(invoice.charges) && invoice.charges.length
+    ? invoice.charges
+    : Array.isArray(invoice.items) && invoice.items.length
+      ? invoice.items
+      : [{ description: invoice.itemDescription || "Workspace monthly rent", amount: invoice.subtotal || invoice.amount }];
+  const { error: deleteItemsError } = await client.from("invoice_items").delete().eq("invoice_id", invoiceId);
+  if (deleteItemsError) throw deleteItemsError;
+  const { data: itemData, error: itemError } = await client
+    .from("invoice_items")
+    .insert(rawItems.map((item: any, index: number) => ({
+      invoice_id: invoiceId,
+      description: String(item.description || "Charge").trim(),
+      quantity: Number(item.quantity) || 1,
+      unit_price: amount(item.amount ?? item.price),
+      sort_order: index,
+    })))
+    .select(itemColumns);
+  if (itemError) throw itemError;
+
+  const row = data as unknown as SupabaseInvoiceRow;
+  return {
+    ...mapSupabaseInvoiceToOsInvoice(row, (itemData || []) as unknown as SupabaseInvoiceItemRow[]),
+    salesTaxEnabled: Boolean(invoice.salesTaxEnabled) && totals.salesTaxAmount > 0,
+    salesTaxRate: String(totals.salesTaxRate),
+    salesTaxAmount: String(totals.salesTaxAmount),
+    amount: `PKR ${totals.total.toLocaleString("en-PK")}`,
+  };
+}
+
 export async function recordSupabaseInvoicePayment(invoiceId: string, amountToRecord: number, paymentMethod = "other", reference = "", notes = "") {
   const { data, error } = await getSupabaseBrowserClient().rpc("record_invoice_payment", {
     p_invoice_id: invoiceId,
