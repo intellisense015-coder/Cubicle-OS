@@ -8,6 +8,10 @@ export type EmailSender = {
   replyTo?: string;
 };
 
+export type ResendEmailResult = {
+  id: string;
+};
+
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validEmail(value: unknown) {
@@ -95,5 +99,7 @@ export async function sendResendEmail({
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result?.message || "The email provider rejected the message.");
-  return result as { id?: string };
+  const messageId = typeof result?.id === "string" ? result.id.trim() : "";
+  if (!messageId) throw new Error("The email provider did not return a message ID.");
+  return { id: messageId } satisfies ResendEmailResult;
 }

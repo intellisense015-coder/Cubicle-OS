@@ -73,6 +73,7 @@ export async function GET(request: Request) {
       if (claimError) throw claimError;
       if (!claimed) continue;
 
+      let activityId: string | null = null;
       try {
         const { data: invoice, error: invoiceError } = await admin.from("invoices").select(invoiceColumns).eq("id", candidate.invoice_id).maybeSingle();
         if (invoiceError) throw invoiceError;
@@ -109,13 +110,26 @@ export async function GET(request: Request) {
         const activity = claimed.created_by
           ? await admin.from("activity_log").insert({ action: "invoice.email_reminder", entity_type: "invoice", entity_id: invoice.id, actor_user_id: claimed.created_by, recipient_email: recipientEmail, delivery_status: "pending", metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, sender: sender.from, attachment_filename: attachment.filename } }).select("id").maybeSingle()
           : { data: null, error: null };
+        if (activity.error) throw activity.error;
+        activityId = activity.data?.id || null;
         const emailResult = await sendResendEmail({ from: sender.from, replyTo: sender.replyTo, to: [recipientEmail], subject: `Invoice ${invoice.invoice_number} from The Cubicle`, html: renderInvoiceEmailHtml(emailInput), attachments: [{ filename: attachment.filename, content: attachment.content }] });
-        if (activity.data?.id) await admin.from("activity_log").update({ delivery_status: "sent", completed_at: new Date().toISOString(), metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, provider: "resend", provider_message_id: emailResult?.id || null, sender: sender.from, attachment_filename: attachment.filename } }).eq("id", activity.data.id);
-        await admin.from("invoice_email_queue").update({ status: "sent", sent_at: new Date().toISOString(), provider_message_id: emailResult?.id || null, last_error: null, updated_at: new Date().toISOString() }).eq("id", claimed.id);
-        await admin.from("invoices").update({ email_status: "sent" }).eq("id", invoice.id);
-        results.push({ invoice: invoice.invoice_number, status: "sent", providerMessageId: emailResult?.id || null });
+        const providerMessageId = emailResult.id.trim();
+        const activityUpdate = activityId
+          ? await admin.from("activity_log").update({ delivery_status: "sent", completed_at: new Date().toISOString(), metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, provider: "resend", provider_message_id: providerMessageId, sender: sender.from, attachment_filename: attachment.filename } }).eq("id", activityId)
+          : { error: null };
+        if (activityUpdate.error) throw activityUpdate.error;
+        const queueUpdate = await admin.from("invoice_email_queue").update({ status: "sent", sent_at: new Date().toISOString(), provider_message_id: providerMessageId, last_error: null, updated_at: new Date().toISOString() }).eq("id", claimed.id);
+        if (queueUpdate.error) throw queueUpdate.error;
+        const invoiceUpdate = await admin.from("invoices").update({ email_status: "sent" }).eq("id", invoice.id);
+        if (invoiceUpdate.error) throw invoiceUpdate.error;
+        console.info("Invoice email queue item sent:", { invoice: invoice.invoice_number, providerMessageId });
+        results.push({ invoice: invoice.invoice_number, status: "sent", providerMessageId });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Invoice email delivery failed.";
+        console.error("Invoice email queue item failed:", { invoiceId: claimed.invoice_id, deliveryKind: claimed.delivery_kind, message });
+        if (activityId) {
+          await admin.from("activity_log").update({ delivery_status: "failed", completed_at: new Date().toISOString(), metadata: { error: message } }).eq("id", activityId);
+        }
         const terminal = await markFailure(admin, claimed, message);
         results.push({ invoiceId: claimed.invoice_id, status: terminal ? "failed" : "retry_scheduled", error: message });
       }
