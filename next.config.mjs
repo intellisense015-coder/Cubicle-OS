@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
-const workspaceRoot = path.resolve(projectDir, "..");
 const isProduction = process.env.NODE_ENV === "production";
 const scriptSources = ["'self'", "'unsafe-inline'"];
 
@@ -12,10 +11,10 @@ const scriptSources = ["'self'", "'unsafe-inline'"];
 if (!isProduction) scriptSources.push("'unsafe-eval'");
 
 const nextConfig = {
-  // The website and OS intentionally live under the same client directory.
-  // Make the tracing boundary explicit so Next.js does not guess between the
-  // parent and OS package-lock.json files.
-  outputFileTracingRoot: workspaceRoot,
+  // Keep tracing inside this Next.js project. Vercel's project root is already
+  // Cubicle-OS, so tracing from the parent directory can produce duplicated
+  // deployment paths such as /vercel/path0/path0.
+  outputFileTracingRoot: projectDir,
   poweredByHeader: false,
   reactStrictMode: true,
   async headers() {
