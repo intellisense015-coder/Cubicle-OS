@@ -117,7 +117,7 @@ export default function CompaniesPage() {
         setCompanies(nextCompanies);
         saveDemoValue("companies", nextCompanies, { notify: false });
         queryClient.setQueryData(queryKeys.companies.all, (current: any) => ({ ...(current || { dataSource: "supabase", errorMessage: "" }), companies: nextCompanies, errorMessage: "" }));
-      }).catch((error) => showToast({ variant: "error", title: "Companies could not be completed", message: error?.message || "Supabase could not create missing company records." }));
+      }).catch((error) => showToast({ variant: "error", title: "Companies could not be completed", message: error?.message || "The missing company records could not be created." }));
     } else if (!canEdit && missingCompanies.length > 0) {
       setCompanies([...loadedCompanies, ...missingCompanies.map((name, index) => ({ id: `inferred-company-${index}`, name, status: "Active" }))]);
     }
@@ -145,9 +145,9 @@ export default function CompaniesPage() {
       const nextCompanies = [nextCompany, ...companies.filter((item) => item.name.toLowerCase() !== nextCompany.name.toLowerCase())];
       persistCompanies(nextCompanies);
       setShowForm(false);
-      showToast({ variant: "success", title: "Company added", message: `${nextCompany.name} was saved to Supabase.` });
+      showToast({ variant: "success", title: "Company added", message: `${nextCompany.name} was added successfully.` });
     } catch (error) {
-      showToast({ variant: "error", title: "Company was not saved", message: error?.message || "Supabase could not save this company." });
+      showToast({ variant: "error", title: "Company was not saved", message: error?.message || "The company could not be saved." });
     }
   };
 
@@ -188,11 +188,11 @@ export default function CompaniesPage() {
         variant: "success",
         title: `Company ${nextStatus === "Active" ? "activated" : "deactivated"}`,
         message: nextStatus === "Inactive" && associatedMembers.length > 0
-          ? `${company.name} and ${associatedMembers.length} associated member${associatedMembers.length === 1 ? "" : "s"} were saved to Supabase.`
-          : `${company.name} was saved to Supabase.`,
+          ? `${company.name} and ${associatedMembers.length} associated member${associatedMembers.length === 1 ? "" : "s"} were updated successfully.`
+          : `${company.name} was updated successfully.`,
       });
     } catch (error) {
-      showToast({ variant: "error", title: "Company status was not changed", message: error?.message || "Supabase could not update this company." });
+      showToast({ variant: "error", title: "Company status was not changed", message: error?.message || "The company status could not be updated." });
     }
   };
 

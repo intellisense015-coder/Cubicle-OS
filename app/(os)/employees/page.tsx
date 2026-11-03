@@ -228,14 +228,14 @@ export default function EmployeesPage() {
         const persistedEmployee = { ...mapSupabaseAdminUserToOsEmployee({ ...row, email: profileRow?.email || employee.email || row.email, phone: profileRow?.phone || employee.phone || row.phone, full_name: profileRow?.full_name || row.full_name || employee.name, last_sign_in_at: profileRow?.last_sign_in_at || row.last_sign_in_at }), name: employee.name, phone: normalizeEmployeePhone(employee.phone) };
         persist(employees.map((item) => item.id === employee.id ? persistedEmployee : item));
         setSelected(null);
-        showToast({ variant: "success", title: action === "status" ? "Account access updated" : "User role updated", message: `${persistedEmployee.email} was saved to Supabase.` });
+        showToast({ variant: "success", title: action === "status" ? "Account access updated" : "User role updated", message: `${persistedEmployee.email} was updated successfully.` });
         return;
       }
       persist(employees.map((item) => item.id === employee.id ? employee : item));
       setSelected(null);
       showToast({ variant: "success", title: action === "status" ? `Account ${employee.status === "Disabled" ? "suspended" : "reactivated"}` : "Employee profile updated", message: action === "status" ? `${employee.name}'s account is ${employee.status === "Disabled" ? "now suspended" : "active again"}.` : `${employee.name}'s profile was saved.` });
     } catch (error) {
-      showToast({ variant: "error", title: "User access was not updated", message: error?.message || "Supabase could not save this user." });
+      showToast({ variant: "error", title: "User access was not updated", message: error?.message || "The user account could not be updated." });
     }
   };
   const toggleStatus = () => { const next = { ...selected, status: selected.status === "Disabled" ? "Active" : "Disabled", lastActivity: "Just now" }; void saveEmployee(next, "status"); };
@@ -244,7 +244,7 @@ export default function EmployeesPage() {
     if (supabaseEnabled) {
       const selectedRole = adminRoles.find((role) => role.label === form.role);
       if (!selectedRole) {
-        showToast({ variant: "error", title: "Invitation was not sent", message: "Choose an active Supabase role." });
+        showToast({ variant: "error", title: "Invitation was not sent", message: "Choose an active role." });
         return;
       }
       try {
@@ -254,7 +254,7 @@ export default function EmployeesPage() {
         setShowInvite(false);
         showToast({ variant: "success", title: "Invitation sent", message: `${email} was invited with the ${selectedRole.label} role.` });
       } catch (error) {
-        showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "Supabase could not send the invitation." });
+      showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "The invitation could not be sent." });
       }
       return;
     }

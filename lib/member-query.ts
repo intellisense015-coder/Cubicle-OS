@@ -26,11 +26,11 @@ export async function fetchMembersSnapshot(): Promise<MembersQuerySnapshot> {
     saveDemoValue("members", members, { notify: false });
     return { members, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
-    const message = error?.message || "Unable to load members from Supabase.";
+    const message = error?.message || "Unable to load members.";
     return {
       members: cachedMembers,
       dataSource: "demo",
-      errorMessage: `Supabase could not load members: ${message}`,
+      errorMessage: `Could not load members: ${message}`,
     };
   }
 }

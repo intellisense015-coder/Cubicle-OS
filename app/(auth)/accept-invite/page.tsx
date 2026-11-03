@@ -39,16 +39,32 @@ export default function AcceptInvitePage() {
       }
     };
 
-    void supabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (sessionError) {
+    const establishInviteSession = async () => {
+      try {
+        const code = new URLSearchParams(window.location.search).get("code");
+        if (code) {
+          const response = await fetch("/api/admin/invite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "accept", code }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || "This invitation link is invalid or has expired.");
+          window.history.replaceState({}, document.title, "/accept-invite");
+        }
+
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        applySession(data.session);
+      } catch (sessionException) {
         if (active) {
           setState("error");
-          setError(sessionError.message);
+          setError(sessionException instanceof Error ? sessionException.message : "This invitation link is invalid or has expired.");
         }
-        return;
       }
-      applySession(data.session);
-    });
+    };
+
+    void establishInviteSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       applySession(session);
@@ -76,7 +92,8 @@ export default function AcceptInvitePage() {
     try {
       const { error: updateError } = await getSupabaseBrowserClient().auth.updateUser({ password });
       if (updateError) throw updateError;
-      router.replace("/mfa");
+      await getSupabaseBrowserClient().auth.signOut();
+      router.replace("/login?invite=success");
     } catch (updateException) {
       setError(updateException instanceof Error ? updateException.message : "The password could not be saved.");
     } finally {
@@ -84,7 +101,7 @@ export default function AcceptInvitePage() {
     }
   };
 
-  return <AuthShell title="Complete your account." description="Set a secure password before entering The Cubicle OS." asideTitle="You are invited in." asideCopy="Your role and workspace access are managed securely by The Cubicle. MFA setup is required next." step={1} variant="login">
-    {state === "loading" ? <div className="auth-form" aria-live="polite"><LoaderCircle size={24} className="sign-in-spinner" /><p className="muted-copy">Validating your invitation...</p></div> : state === "error" ? <div className="auth-form" aria-live="assertive"><p className="field-error">{error}</p><Link href="/login" className="back-link">Return to sign in <ArrowRight size={15} /></Link></div> : <motion.form onSubmit={submit} className="auth-form" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, delay: 0.1 }}><FormField label="Invitation email"><Input value={email} readOnly type="email" autoComplete="email" leftIcon={<Mail size={17} />} /></FormField><FormField label="New password"><Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" placeholder="At least 12 characters" leftIcon={<LockKeyhole size={17} />} /></FormField><FormField label="Confirm password"><Input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" placeholder="Repeat your password" leftIcon={<LockKeyhole size={17} />} /></FormField>{error ? <p className="field-error">{error}</p> : null}<Button type="submit" size="lg" className="w-full" disabled={saving}>{saving ? <><LoaderCircle size={13} className="sign-in-spinner" /> Saving...</> : <>Continue to MFA <ArrowRight size={17} /></>}</Button></motion.form>}
+  return <AuthShell title="Complete your account." description="Set a secure password, then sign in with your credentials and complete MFA setup." asideTitle="You are invited in." asideCopy="Your role and workspace access are managed securely by The Cubicle. After saving your password, you will return to sign in before MFA setup." step={1} variant="login">
+    {state === "loading" ? <div className="auth-form" aria-live="polite"><LoaderCircle size={24} className="sign-in-spinner" /><p className="muted-copy">Validating your invitation...</p></div> : state === "error" ? <div className="auth-form" aria-live="assertive"><p className="field-error">{error}</p><Link href="/login" className="back-link">Return to sign in <ArrowRight size={15} /></Link></div> : <motion.form onSubmit={submit} className="auth-form" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, delay: 0.1 }}><FormField label="Invitation email"><Input value={email} readOnly type="email" autoComplete="email" leftIcon={<Mail size={17} />} /></FormField><FormField label="New password"><Input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" placeholder="At least 12 characters" leftIcon={<LockKeyhole size={17} />} /></FormField><FormField label="Confirm password"><Input value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" placeholder="Repeat your password" leftIcon={<LockKeyhole size={17} />} /></FormField>{error ? <p className="field-error">{error}</p> : null}<Button type="submit" size="lg" className="w-full" disabled={saving}>{saving ? <><LoaderCircle size={13} className="sign-in-spinner" /> Saving...</> : <>Save password and return to sign in <ArrowRight size={17} /></>}</Button></motion.form>}
   </AuthShell>;
 }

@@ -133,11 +133,13 @@ export function toSupabaseWorkspaceInput(workspace: any) {
     notice_start_date: asDate(workspace?.noticeStartDate),
     expected_leaving_date: asDate(workspace?.expectedLeavingDate),
     notice_notes: asString(workspace?.noticeNotes) || null,
-    maintenance_category_id: asString(workspace?.maintenanceCategoryId) || null,
+    // Legacy/demo records may store the category name or slug here. The
+    // database column is a UUID foreign key, so only send a real category id.
+    maintenance_category_id: asUuid(workspace?.maintenanceCategoryId),
     maintenance_status: ["active", "locked", "blocked", "deactivated"].includes(workspace?.maintenanceStatus) ? workspace.maintenanceStatus : "deactivated",
     maintenance_reason: asString(workspace?.maintenanceReason) || null,
     operational_status: ["ACTIVE", "UNDER_MAINTENANCE", "OUT_OF_SERVICE"].includes(workspace?.operationalStatus) ? workspace.operationalStatus : "ACTIVE",
-    active_maintenance_id: asString(workspace?.activeMaintenanceId) || null,
+    active_maintenance_id: asUuid(workspace?.activeMaintenanceId),
   };
 }
 

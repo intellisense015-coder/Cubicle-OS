@@ -40,7 +40,7 @@ export async function fetchCompanyProfileSnapshot(): Promise<CompanyProfileQuery
     return {
       profile: cachedProfile,
       dataSource: "demo",
-      errorMessage: `Supabase could not load company settings: ${error?.message || "Unable to load company settings."}`,
+      errorMessage: `Could not load company settings: ${error?.message || "Unable to load company settings."}`,
     };
   }
 }

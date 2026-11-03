@@ -91,6 +91,12 @@
 .fp-adjacent-card .fp-badge { margin: 10px 0; }
 .fp-adjacent-card .fp-id { margin: 12px 0 0; }
 .fp-adjacent-card .fp-close { padding: 0 5px; font-size: 21px; }
+.fp-card-actions { display: flex; align-items: center; gap: 4px; }
+.fp-assign-trigger { width: 27px; height: 27px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50% !important; padding: 0 !important; color: #fff !important; background: #0a714e !important; font-size: 20px !important; line-height: 1; }
+.fp-assignment-picker { display: grid; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #e4ebe4; }
+.fp-assignment-picker label { color: #596b61; font-size: 11px; font-weight: 700; }
+.fp-assignment-picker select { width: 100%; padding: 8px 9px; font-size: 12px; }
+.fp-assignment-empty { color: #8a5e19; font-size: 11px; line-height: 1.35; }
 .fp-maintenance-details { margin: 2px 0 10px; padding: 9px; border: 1px solid #e4ebe4; border-radius: 10px; background: #f8fbf8; }
 .fp-maintenance-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 8px; font-size: 10px; font-weight: 800; }
 .fp-maintenance-active { color: #176b4b; background: #d9f0df; }

@@ -26,11 +26,11 @@ export async function fetchVisitsSnapshot(): Promise<VisitsQuerySnapshot> {
     saveDemoValue("visits", visits, { notify: false });
     return { visits, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
-    const message = error?.message || "Unable to load visits from Supabase.";
+    const message = error?.message || "Unable to load visits.";
     return {
       visits: cachedVisits,
       dataSource: "demo",
-      errorMessage: `Supabase could not load visits: ${message}`,
+      errorMessage: `Could not load visits: ${message}`,
     };
   }
 }

@@ -211,7 +211,7 @@ export default function QuotationsPage() {
           : [savedQuotation, ...quotations];
         updateQuotationCache(next, "supabase");
         setCreating(false); setEditing(null); setSelected(savedQuotation);
-        showToast({ variant: "success", title: wasEditing ? "Quotation updated" : "Quotation created", message: `${savedQuotation.quotation} was saved to Supabase.` });
+        showToast({ variant: "success", title: wasEditing ? "Quotation updated" : "Quotation created", message: `${savedQuotation.quotation} was saved successfully.` });
         return;
       }
 

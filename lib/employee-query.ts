@@ -33,7 +33,7 @@ function cachedEmployees() {
 
 function errorMessage(error: unknown, resource: string) {
   const message = error instanceof Error ? error.message : "The saved data could not be loaded.";
-  return `Supabase could not load ${resource}: ${message}`;
+  return `Could not load ${resource}: ${message}`;
 }
 
 export async function fetchEmployeesSnapshot(): Promise<EmployeeQuerySnapshot> {

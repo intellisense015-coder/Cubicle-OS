@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -75,7 +75,9 @@ function displayActor(value?: string, fallback = "Demo user") {
 }
 
 function operationalStatus(workspace: any): WorkspaceOperationalStatus {
-  return workspace.operationalStatus || "ACTIVE";
+  return workspace.operationalStatus === "UNDER_MAINTENANCE" || workspace.operationalStatus === "OUT_OF_SERVICE"
+    ? workspace.operationalStatus
+    : "ACTIVE";
 }
 
 function WorkspaceConfigForm({ workspace, workspaces, onCancel, onSave }) {
@@ -109,7 +111,7 @@ function ResolutionForm({ maintenance, onCancel, onSave }) {
   const { register, handleSubmit, watch, formState } = formApi;
   const error = (field) => formState.errors[field]?.message;
   const verified = watch("verifiedReadyForUse");
-  return <div className="inline-form-card maintenance-action-form"><div className="card-heading"><div><span className="seat-details-label">Maintenance resolution</span><h2>Restore Workspace</h2><p className="muted-copy">Document the repair and confirm the workspace is ready for use.</p></div><RotateCcw size={21} /></div><div className="maintenance-issue-summary"><strong>{maintenance.title}</strong><span>{maintenance.category} · {MAINTENANCE_SEVERITY_LABELS[maintenance.severity]} · Reported {formatDate(maintenance.reportedAt)}</span><p>{maintenance.description}</p></div><form className="inline-form-grid" onSubmit={handleSubmit(async (values) => onSave(values))}><label className="settings-label maintenance-textarea-field">What was fixed?<textarea className={`text-input textarea-input${error("resolutionSummary") ? " has-error" : ""}`} {...register("resolutionSummary")} placeholder="Summarize the repair or corrective action." />{error("resolutionSummary") && <FieldError error={error("resolutionSummary")} />}</label><label className="settings-label">Parts/materials used<input className="text-input floating-input" {...register("partsUsed")} placeholder="Optional" />{error("partsUsed") && <FieldError error={error("partsUsed")} />}</label><label className="settings-label maintenance-textarea-field">Resolution notes<textarea className="text-input textarea-input" {...register("resolutionNotes")} placeholder="Optional verification or handover notes." />{error("resolutionNotes") && <FieldError error={error("resolutionNotes")} />}</label><label className={`maintenance-ready-check${verified ? " is-checked" : ""}`}><input type="checkbox" {...register("verifiedReadyForUse")} /><span><strong>Workspace is ready for use</strong><small>Required before the workspace returns to Active.</small></span></label>{error("verifiedReadyForUse") && <FieldError error={error("verifiedReadyForUse")} />}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={!formState.isValid || !verified} loading={formState.isSubmitting}><CheckCircle2 size={15} /> Issue fixed</Button></div></form></div>;
+  return <div className="inline-form-card maintenance-action-form"><div className="card-heading"><div><span className="seat-details-label">Maintenance resolution</span><h2>Restore Workspace</h2><p className="muted-copy">Document the repair and confirm the workspace is ready for use.</p></div><RotateCcw size={21} /></div><div className="maintenance-issue-summary"><strong>{maintenance.title}</strong><span>{maintenance.category} · {MAINTENANCE_SEVERITY_LABELS[maintenance.severity]} · Reported {formatDate(maintenance.reportedAt)}</span><p>{maintenance.description}</p></div><form className="inline-form-grid" onSubmit={handleSubmit(async (values) => onSave(values))}><label className="settings-label maintenance-textarea-field">What was fixed?<textarea className={`text-input textarea-input${error("resolutionSummary") ? " has-error" : ""}`} {...register("resolutionSummary")} placeholder="Summarize the repair or corrective action." />{error("resolutionSummary") && <FieldError error={error("resolutionSummary")} />}</label><label className="settings-label">Parts/materials used<input className="text-input floating-input" {...register("partsUsed")} placeholder="Optional" />{error("partsUsed") && <FieldError error={error("partsUsed")} />}</label><label className="settings-label maintenance-textarea-field">Resolution notes<textarea className="text-input textarea-input" {...register("resolutionNotes")} placeholder="Optional verification or handover notes." />{error("resolutionNotes") && <FieldError error={error("resolutionNotes")} />}</label><label className={`maintenance-ready-check${verified ? " is-checked" : ""}`}><input type="checkbox" {...register("verifiedReadyForUse")} /><span><strong>Workspace is ready for use</strong><small>Required before the workspace returns to Active.</small></span></label>{error("verifiedReadyForUse") && <FieldError error={error("verifiedReadyForUse")} />}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={!formState.isValid || !verified || formState.isSubmitting} loading={formState.isSubmitting}><CheckCircle2 size={15} /> Issue fixed</Button></div></form></div>;
 }
 
 function CancellationForm({ maintenance, onCancel, onSave }) {
@@ -160,6 +162,7 @@ export default function WorkspacesPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({ status: "", type: "" });
   const [maintenanceCategories, setMaintenanceCategories] = useState<MaintenanceCategory[]>(() => getMaintenanceCategories());
+  const resolvingMutationInFlight = useRef(false);
 
   const setWorkspaceSnapshot = (nextWorkspaces: any[]) => {
     setWorkspaces(nextWorkspaces);
@@ -254,24 +257,42 @@ export default function WorkspacesPage() {
     return nextWorkspace;
   };
 
+  const refreshOperationalQueries = async () => {
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all, refetchType: "active" }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.maintenance.records, refetchType: "active" }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.maintenance.events, refetchType: "active" }),
+    ]);
+  };
+
   const updateWorkspace = async (workspace) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can configure workspace details." }); return; }
-    const previous = workspaces.find((item) => item.areaId === workspace.areaId);
-    if (workspaces.some((item) => item.areaId !== workspace.areaId && item.label.trim().toLowerCase() === workspace.label.trim().toLowerCase())) {
+    const workspaceId = workspace.areaId || workspace.id;
+    const previous = workspaces.find((item) => String(item.areaId || item.id) === String(workspaceId));
+    if (workspaces.some((item) => String(item.areaId || item.id) !== String(workspaceId) && item.label.trim().toLowerCase() === workspace.label.trim().toLowerCase())) {
       showToast({ variant: "error", title: "Workspace was not saved", message: "Workspace names must be unique. Choose a different name." });
       return;
     }
     try {
-      const row = await updateSupabaseWorkspace(workspace.areaId, workspace);
+      // Configuration edits must not change the maintenance lifecycle. Only
+      // the maintenance actions can restore a workspace to Active.
+      const lifecycleFields = previous ? {
+        operationalStatus: operationalStatus(previous),
+        maintenanceStatus: previous.maintenanceStatus,
+        maintenanceCategoryId: previous.maintenanceCategoryId,
+        maintenanceReason: previous.maintenanceReason,
+        activeMaintenanceId: previous.activeMaintenanceId,
+      } : {};
+      const row = await updateSupabaseWorkspace(workspaceId, { ...workspace, ...lifecycleFields, areaId: workspaceId, id: workspaceId });
       const persistedWorkspace = { ...workspace, ...mapSupabaseWorkspaceToOsWorkspace(row), id: row.id, areaId: row.id };
-      const next = workspaces.map((item) => item.areaId === workspace.areaId ? persistedWorkspace : item);
+      const next = workspaces.map((item) => String(item.areaId || item.id) === String(workspaceId) ? persistedWorkspace : item);
       setWorkspaceSnapshot(next);
       const savedMembers = getDemoValue("members");
-      if (Array.isArray(savedMembers)) saveDemoValue("members", savedMembers.map((member) => member.spaceId === workspace.areaId || member.space === previous?.label ? { ...member, spaceId: workspace.areaId, space: workspace.label } : member));
+      if (Array.isArray(savedMembers)) saveDemoValue("members", savedMembers.map((member) => member.spaceId === workspaceId || member.space === previous?.label ? { ...member, spaceId: workspaceId, space: workspace.label } : member));
       setConfiguring(null);
-      showToast({ variant: "success", title: "Workspace configuration updated", message: `${workspace.label} was saved to Supabase.` });
+      showToast({ variant: "success", title: "Workspace configuration updated", message: `${workspace.label} was updated successfully.` });
     } catch (error) {
-      showToast({ variant: "error", title: "Workspace was not saved", message: error?.message || "Supabase could not save this workspace." });
+      showToast({ variant: "error", title: "Workspace was not saved", message: error?.message || "The workspace could not be saved." });
     }
   };
 
@@ -281,18 +302,20 @@ export default function WorkspacesPage() {
       const result = reportMaintenance(reportingWorkspace.areaId || reportingWorkspace.id, values);
       const remoteRecord = await createSupabaseMaintenanceRecord(result.maintenance);
       const remoteEvent = await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
-      await updateSupabaseWorkspace(reportingWorkspace.areaId || reportingWorkspace.id, { ...result.workspace, activeMaintenanceId: remoteRecord.id });
+      const remoteWorkspace = await updateSupabaseWorkspace(reportingWorkspace.areaId || reportingWorkspace.id, { ...result.workspace, activeMaintenanceId: remoteRecord.id });
       const persistedRecord = mapSupabaseMaintenanceRecordToOsRecord(remoteRecord);
       const persistedEvent = mapSupabaseMaintenanceEventToOsEvent(remoteEvent);
       const localRecords = getMaintenanceRecords().map((record) => record.id === result.maintenance.id ? persistedRecord : record);
       const localEvents = [persistedEvent, ...getMaintenanceEvents().filter((event) => event.id !== result.event.id)];
-      const localWorkspaces = getWorkspaceRecords().map((workspace) => workspace.areaId === reportingWorkspace.areaId ? { ...workspace, ...result.workspace, activeMaintenanceId: remoteRecord.id } : workspace);
+      const persistedWorkspace = { ...result.workspace, ...mapSupabaseWorkspaceToOsWorkspace(remoteWorkspace), id: remoteWorkspace.id, areaId: remoteWorkspace.id, activeMaintenanceId: remoteRecord.id };
+      const localWorkspaces = getWorkspaceRecords().map((workspace) => String(workspace.areaId || workspace.id) === String(reportingWorkspace.areaId || reportingWorkspace.id) ? persistedWorkspace : workspace);
       saveDemoValue("maintenanceRecords", localRecords, { notify: false });
       saveDemoValue("maintenanceEvents", localEvents, { notify: false });
       setWorkspaceSnapshot(localWorkspaces);
       setMaintenanceRecords(localRecords);
       setReportingWorkspace(null);
       const updated = refreshAndSelect(reportingWorkspace.areaId || reportingWorkspace.id);
+      await refreshOperationalQueries();
       if (result.existing) {
         showToast({ variant: "info", title: "Active maintenance already exists", message: `${reportingWorkspace.label} already has an active maintenance issue.` });
       } else {
@@ -320,19 +343,51 @@ export default function WorkspacesPage() {
   };
 
   const submitResolution = async (values) => {
-    if (!resolvingMaintenance || !selectedWorkspace) return;
+    if (!resolvingMaintenance || !selectedWorkspace || resolvingMutationInFlight.current) return;
+    resolvingMutationInFlight.current = true;
     try {
       const result = resolveMaintenance(resolvingMaintenance.id, values);
       const remoteRecord = await updateSupabaseMaintenanceRecord(result.maintenance.id, result.maintenance);
-      if (result.event) await createSupabaseMaintenanceEvent(result.event, remoteRecord.id);
-      if (result.workspace) await updateSupabaseWorkspace(result.workspace.areaId || result.workspace.id, result.workspace);
+      const remoteEvent = result.event ? await createSupabaseMaintenanceEvent(result.event, remoteRecord.id) : null;
+      const remoteWorkspace = result.workspace ? await updateSupabaseWorkspace(result.workspace.areaId || result.workspace.id, result.workspace) : null;
       const workspaceName = selectedWorkspace.label;
+      const workspaceId = String(selectedWorkspace.areaId || selectedWorkspace.id);
+      const resolvedRecord = mapSupabaseMaintenanceRecordToOsRecord(remoteRecord);
+      const resolvedEvent = remoteEvent ? mapSupabaseMaintenanceEventToOsEvent(remoteEvent) : null;
+      const resolvedRecordIds = new Set([resolvingMaintenance.id, resolvedRecord.id]);
+      const nextRecords = maintenanceRecords.map((record) => resolvedRecordIds.has(record.id) ? resolvedRecord : record);
+      const resolvedMaintenanceIds = new Set([resolvingMaintenance.id, resolvedRecord.id]);
+      const nextEvents = resolvedEvent
+        ? [resolvedEvent, ...maintenanceEvents.filter((event) => event.id !== resolvedEvent.id && !resolvedMaintenanceIds.has(event.maintenanceId))]
+        : maintenanceEvents;
+      const nextWorkspace = {
+        ...(remoteWorkspace ? mapSupabaseWorkspaceToOsWorkspace(remoteWorkspace) : {}),
+        ...result.workspace,
+        id: workspaceId,
+        areaId: workspaceId,
+        operationalStatus: "ACTIVE",
+        activeMaintenanceId: "",
+        status: result.workspace?.status === "maintenance" ? "available" : result.workspace?.status,
+      };
+      const nextWorkspaces = workspaces.map((workspace) => String(workspace.areaId || workspace.id) === workspaceId ? { ...workspace, ...nextWorkspace } : workspace);
+      saveDemoValue("maintenanceRecords", nextRecords, { notify: false });
+      saveDemoValue("maintenanceEvents", nextEvents, { notify: false });
+      saveDemoValue("workspaces", nextWorkspaces, { notify: false });
+      setWorkspaces(nextWorkspaces);
+      setMaintenanceRecords(nextRecords);
+      setMaintenanceEvents(nextEvents);
+      queryClient.setQueryData<WorkspacesQuerySnapshot>(queryKeys.workspaces.all, (current) => ({ workspaces: nextWorkspaces, dataSource: current?.dataSource || "supabase", errorMessage: "" }));
+      queryClient.setQueryData<MaintenanceRecordsQuerySnapshot>(queryKeys.maintenance.records, (current) => ({ records: nextRecords, dataSource: current?.dataSource || "supabase", errorMessage: "" }));
+      queryClient.setQueryData<MaintenanceEventsQuerySnapshot>(queryKeys.maintenance.events, (current) => ({ events: nextEvents, dataSource: current?.dataSource || "supabase", errorMessage: "" }));
+      setSelectedWorkspace(nextWorkspace);
       setResolvingMaintenance(null);
-      refreshAndSelect(selectedWorkspace.areaId || selectedWorkspace.id);
-      showToast({ variant: "success", title: "Workspace restored successfully", message: `${workspaceName} has been restored and is available again.` });
+      void refreshOperationalQueries();
+      showToast({ variant: "success", title: "Workspace restored successfully", message: `${workspaceName} is available again.` });
     } catch (error) {
       showToast({ variant: "error", title: "Workspace was not restored", message: error?.message || "Unable to resolve this maintenance issue." });
       throw error;
+    } finally {
+      resolvingMutationInFlight.current = false;
     }
   };
 

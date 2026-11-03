@@ -27,7 +27,7 @@ export async function fetchQuotationsSnapshot(): Promise<QuotationsQuerySnapshot
     return {
       quotations: cachedQuotations,
       dataSource: "demo",
-      errorMessage: `Supabase could not load quotations: ${error?.message || "Unable to load quotations."}`,
+      errorMessage: `Could not load quotations: ${error?.message || "Unable to load quotations."}`,
     };
   }
 }

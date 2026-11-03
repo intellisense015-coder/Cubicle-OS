@@ -26,11 +26,11 @@ export async function fetchCompaniesSnapshot(): Promise<CompaniesQuerySnapshot> 
     saveDemoValue("companies", companies, { notify: false });
     return { companies, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
-    const message = error?.message || "Unable to load companies from Supabase.";
+    const message = error?.message || "Unable to load companies.";
     return {
       companies: cachedCompanies,
       dataSource: "demo",
-      errorMessage: `Supabase could not load companies: ${message}`,
+      errorMessage: `Could not load companies: ${message}`,
     };
   }
 }

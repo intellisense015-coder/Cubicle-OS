@@ -42,13 +42,15 @@ export function getAreaStatus(area: FloorArea, live?: AreaLiveData): MapStatus {
   if (live.operationalStatus === "UNDER_MAINTENANCE") return "maintenance";
   const maintenanceStatus = String(live.maintenance?.status || "").toUpperCase();
   if (["OPEN", "IN_PROGRESS", "ACTIVE", "LOCKED", "BLOCKED"].includes(maintenanceStatus)) return "maintenance";
-  if (live.membershipStatus === "notice-period") return "notice-period";
   if (live.occupancy === "available") return "available";
   if (live.occupancy === "reserved") return "reserved";
   if (live.occupancy === "maintenance") return "maintenance";
+  // An assigned employee keeps the occupied/green state. Payment state is not
+  // a floor-plan assignment state and must not recolor an assigned workspace.
+  if (live.occupancy === "occupied") return "occupied";
+  if (live.membershipStatus === "notice-period") return "notice-period";
   if (live.paymentStatus === "grace") return "grace";
   if (live.paymentStatus === "due-soon") return "due-soon";
   if (live.paymentStatus === "overdue") return "overdue";
-  if (live.occupancy === "occupied") return "occupied";
   return "unknown";
 }

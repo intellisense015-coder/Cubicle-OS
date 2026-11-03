@@ -153,6 +153,15 @@ function uuid(value: unknown, required = true) {
   return result;
 }
 
+// Workspace IDs are the stable floor-plan area keys (for example,
+// `floor4-office02`), not UUIDs. Member, invoice, and maintenance references
+// must preserve that text key when they point to a workspace.
+function workspaceIdValue(value: unknown, required = false) {
+  const result = optionalText(value, 160);
+  if (!result && required) throw new Error("Invalid mutation payload.");
+  return result;
+}
+
 function numeric(value: unknown, max = 1_000_000_000_000, integer = false) {
   const result = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
   if (!Number.isFinite(result) || result < 0 || result > max || (integer && !Number.isInteger(result))) {
@@ -315,7 +324,7 @@ function invoiceCreatePayload(input: any, actorUserId: string) {
     payload: {
       invoice_number: text(input.invoice, 60, true),
       member_id: uuid(input.memberId),
-      workspace_id: uuid(input.workspaceId, false),
+      workspace_id: workspaceIdValue(input.workspaceId),
       account_name: text(input.account, 200, true),
       period_start: `${issueDate.slice(0, 7)}-01`,
       period_end: lastDayOfMonth(`${issueDate.slice(0, 7)}-01`),
@@ -390,10 +399,39 @@ function entityIdFor(payload: unknown) {
 function safeDatabaseMessage(error: any) {
   const code = String(error?.code || "");
   const message = String(error?.message || "").toLowerCase();
+  if (error instanceof MutationConflictError) return error.message;
   if (code === "23514" && message.includes("active maintenance ticket")) return "This category cannot be deactivated while it has an active maintenance ticket.";
+  if (code === "23505" && message.includes("members_email_unique_idx")) return "A member with this email already exists.";
   if (code === "23505") return "That record already exists.";
   if (code === "42501") return "You are not allowed to perform this action.";
   return "The requested change could not be saved.";
+}
+
+class MutationConflictError extends Error {
+  status = 409;
+}
+
+function sameMemberCreate(existing: any, input: Record<string, any>) {
+  const sameText = (left: unknown, right: unknown) => String(left ?? "").trim().toLowerCase() === String(right ?? "").trim().toLowerCase();
+  const sameDate = (left: unknown, right: unknown) => String(left ?? "") === String(right ?? "");
+  const sameNumber = (left: unknown, right: unknown) => Number(left ?? 0) === Number(right ?? 0);
+
+  return sameText(existing.email, input.email)
+    && sameText(existing.member_name, input.member_name)
+    && sameText(existing.phone, input.phone)
+    && sameText(existing.company_name, input.company_name)
+    && sameText(existing.team, input.team)
+    && String(existing.lead_id || "") === String(input.lead_id || "")
+    && sameNumber(existing.monthly_rent, input.monthly_rent)
+    && sameNumber(existing.security_deposit, input.security_deposit)
+    && sameDate(existing.billing_start_date, input.billing_start_date)
+    && Number(existing.due_day || 0) === Number(input.due_day || 0)
+    && sameDate(existing.joined_date, input.joined_date)
+    && String(existing.status || "") === String(input.status || "")
+    && String(existing.membership_status || "") === String(input.membership_status || "")
+    && sameDate(existing.notice_start_date, input.notice_start_date)
+    && sameDate(existing.expected_leaving_date, input.expected_leaving_date)
+    && sameText(existing.notice_notes, input.notice_notes);
 }
 
 async function runMutation(action: string, rawPayload: unknown, client: SupabaseClient, actorUserId: string) {
@@ -468,7 +506,25 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     };
     if (action.endsWith("create")) {
       const { data, error } = await client.from("members").insert({ ...memberInput, created_by: actorUserId, updated_by: actorUserId }).select(memberColumns).single();
-      if (error) throw error;
+      if (error) {
+        // A double-click, network retry, or concurrent identical request can
+        // legitimately reach the unique email constraint after the first
+        // request has already committed. Return that exact row so the client
+        // can finish the workspace assignment instead of showing a false
+        // "not saved" error. A different member using the email remains a
+        // real conflict.
+        if (error.code === "23505" && memberInput.email) {
+          const { data: existing, error: lookupError } = await client
+            .from("members")
+            .select(memberColumns)
+            .eq("email", memberInput.email)
+            .maybeSingle();
+          if (lookupError) throw lookupError;
+          if (existing && sameMemberCreate(existing, memberInput)) return existing;
+          throw new MutationConflictError("A member with this email already exists.");
+        }
+        throw error;
+      }
       return data;
     }
     const { data, error } = await client.from("members").update({ ...memberInput, updated_by: actorUserId }).eq("id", id).select(memberColumns).single();
@@ -515,7 +571,7 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
   if (action === "maintenance.record.create" || action === "maintenance.record.update") {
     const record = objectPayload(payload.record);
     const recordInput = {
-      workspace_id: uuid(record.workspaceId),
+      workspace_id: workspaceIdValue(record.workspaceId, true),
       status: statusValue(record.status, ["open", "in_progress", "resolved", "cancelled"]).toUpperCase(),
       category: text(record.category || "Uncategorized", 160, true),
       severity: statusValue(record.severity, ["low", "medium", "high", "critical"]).toUpperCase(),
@@ -594,7 +650,7 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       if (error) throw error;
       return data || [];
     }
-    const id = uuid(payload.id);
+    const id = workspaceIdValue(payload.id, true);
     const input = normalizeWorkspace({ ...objectPayload(payload.input), id });
     const { data, error } = await client.from("workspaces").update({ ...input, updated_by: actorUserId }).eq("id", id).select(workspaceColumns).single();
     if (error) throw error;
@@ -602,7 +658,7 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
   }
   if (action === "workspace.assign") {
     const memberId = uuid(payload.memberId);
-    const workspaceId = uuid(payload.workspaceId, false);
+    const workspaceId = workspaceIdValue(payload.workspaceId);
     const { error: rpcError } = await client.rpc("assign_member_to_workspace", { p_member_id: memberId, p_workspace_id: workspaceId });
     if (!rpcError) return { assigned: true };
 
@@ -854,6 +910,8 @@ export async function POST(request: Request) {
       await recordSecurityAudit(admin, { action, outcome: "failure", actorUserId, entityType: entityTypeFor(action), entityId, request, metadata: { reason: "mutation_failed" } });
     }
     console.error("OS mutation failed:", action, error);
-    return errorResponse(safeDatabaseMessage(error), String((error as any)?.code || "") === "42501" ? 403 : 400);
+    const errorCode = String((error as any)?.code || "");
+    const errorStatus = Number((error as any)?.status || 0);
+    return errorResponse(safeDatabaseMessage(error), errorStatus || (errorCode === "42501" ? 403 : errorCode === "23505" ? 409 : 400));
   }
 }

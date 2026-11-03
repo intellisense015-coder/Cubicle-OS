@@ -27,7 +27,7 @@ export async function fetchProposalsSnapshot(): Promise<ProposalsQuerySnapshot> 
     return {
       proposals: cachedProposals,
       dataSource: "demo",
-      errorMessage: `Supabase could not load proposals: ${error?.message || "Unable to load proposals."}`,
+      errorMessage: `Could not load proposals: ${error?.message || "Unable to load proposals."}`,
     };
   }
 }

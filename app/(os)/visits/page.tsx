@@ -206,7 +206,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     }
     if (visitErrorShown.current) return;
     visitErrorShown.current = true;
-    showToast({ variant: "error", title: "Visits could not be loaded", message: "Showing the saved visits while Supabase is unavailable." });
+    showToast({ variant: "error", title: "Visits could not be loaded", message: "Showing the most recently saved visits." });
   }, [showToast, visitsQuery.data?.errorMessage]);
 
   useEffect(() => {
@@ -217,7 +217,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     }
     if (leadErrorShown.current) return;
     leadErrorShown.current = true;
-    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the saved leads while Supabase is unavailable." });
+    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the most recently saved leads." });
   }, [showToast, leadsQuery.data?.errorMessage]);
 
   useEffect(() => {
@@ -261,7 +261,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled()) {
         if (!selectedLead || !isUuid(visit.leadId)) {
-          const message = "Select a lead loaded from Supabase before scheduling a visit.";
+          const message = "Select a lead before scheduling a visit.";
           showToast({ variant: "error", title: "Visit was not scheduled", message });
           return message;
         }
@@ -269,7 +269,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
         savedVisit = mapSupabaseVisitToOsVisit(row);
       }
     } catch (error) {
-      const message = error?.code === "23505" ? `${visit.host} is already booked at that time.` : error?.message || "Supabase could not save this visit.";
+      const message = error?.code === "23505" ? `${visit.host} is already booked at that time.` : error?.message || "The visit could not be saved.";
       showToast({ variant: "error", title: "Visit was not scheduled", message });
       return message;
     }
@@ -303,7 +303,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled() && isUuid(id)) await updateSupabaseVisitStatus(id, status);
     } catch (error) {
-      showToast({ variant: "error", title: "Visit was not updated", message: error?.message || "Supabase could not update this visit." });
+      showToast({ variant: "error", title: "Visit was not updated", message: error?.message || "The visit could not be updated." });
       return;
     }
     const next = visits.map((visit) => visit.id === id ? { ...visit, status } : visit);
@@ -365,7 +365,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
         if (canWriteLeads && isUuid(journeyLead.id)) await updateSupabaseLead(journeyLead.id, { visited: true });
       }
     } catch (error) {
-      showToast({ variant: "error", title: "Visit was not completed", message: error?.message || "Supabase could not complete this visit." });
+      showToast({ variant: "error", title: "Visit was not completed", message: error?.message || "The visit could not be completed." });
       return;
     }
     const stored = getDemoValue("leads");

@@ -45,7 +45,7 @@ export default function LeadJourneyIndexPage() {
     }
     if (errorShown.current) return;
     errorShown.current = true;
-    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the saved leads while Supabase is unavailable." });
+    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the most recently saved leads." });
   }, [loadError, showToast]);
 
   const sortedLeads = useMemo(() => [...leads].sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))), [leads]);

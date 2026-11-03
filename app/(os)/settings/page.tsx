@@ -91,7 +91,7 @@ export default function SettingsPage() {
       }));
       showToast({ variant: "success", title: "Company profile saved", message: "Company name, contact email and owner name were saved to the OS database." });
     } catch (error) {
-      showToast({ variant: "error", title: "Company profile was not saved", message: error instanceof Error ? error.message : "Supabase could not update the owner profile." });
+      showToast({ variant: "error", title: "Company profile was not saved", message: error instanceof Error ? error.message : "The owner profile could not be updated." });
     } finally {
       setCompanySaving(false);
     }

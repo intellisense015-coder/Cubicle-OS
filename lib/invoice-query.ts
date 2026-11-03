@@ -22,7 +22,7 @@ function fallbackInvoices() {
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "The saved invoice data could not be loaded.";
-  return `Supabase could not load invoices: ${message}`;
+  return `Could not load invoices: ${message}`;
 }
 
 export async function fetchInvoicesSnapshot(): Promise<InvoiceQuerySnapshot> {

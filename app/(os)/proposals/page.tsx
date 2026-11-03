@@ -268,7 +268,7 @@ export default function ProposalsPage() {
           : [savedProposal, ...proposals];
         updateProposalCache(next, "supabase");
         setCreating(false); setEditing(null); setSelected(savedProposal);
-        showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: `${savedProposal.proposalNumber} was saved to Supabase.` });
+        showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: `${savedProposal.proposalNumber} was saved successfully.` });
         return;
       }
 
@@ -305,7 +305,7 @@ export default function ProposalsPage() {
         return;
       }
 
-      if (!isSupabaseLeadsEnabled() || !selected.id) throw new Error("This proposal is not synchronized with Supabase yet.");
+      if (!isSupabaseLeadsEnabled() || !selected.id) throw new Error("This proposal is not ready to send yet.");
       const { data: sessionData } = await getSupabaseBrowserClient().auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error("Your session has expired. Sign in again before sending a proposal.");

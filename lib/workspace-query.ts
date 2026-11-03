@@ -40,11 +40,11 @@ export async function fetchWorkspacesSnapshot(): Promise<WorkspacesQuerySnapshot
     saveDemoValue("workspaces", workspaces, { notify: false });
     return { workspaces, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
-    const message = error?.message || "Unable to load workspaces from Supabase.";
+    const message = error?.message || "Unable to load workspaces.";
     return {
       workspaces: cachedWorkspaces,
       dataSource: "demo",
-      errorMessage: `Supabase could not load workspaces: ${message}`,
+      errorMessage: `Could not load workspaces: ${message}`,
     };
   }
 }

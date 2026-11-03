@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendResendEmail, resolveEmailSender, validEmail } from "@/lib/server-email";
-import { renderInvoiceEmailHtml } from "@/lib/invoice-email-html";
+import { invoiceEmailSubject, renderInvoiceEmailHtml, renderInvoiceEmailText } from "@/lib/invoice-email-html";
 import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
 import { z } from "zod";
 
@@ -13,7 +13,7 @@ const invoiceSendSchema = z.object({
   attachment: z.object({
     filename: z.string().trim().min(1).max(255),
     content: z.string().trim().min(1).max(34_000_000),
-  }).strict().optional(),
+  }).strict(),
 }).strict();
 
 function isMissingSalesTaxColumn(error: unknown) {
@@ -54,15 +54,19 @@ async function updateDelivery(admin, eventId: string, invoiceId: string, status:
 function parsePdfAttachment(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const record = value as { filename?: unknown; content?: unknown };
-  const content = String(record.content || "")
-    .replace(/^data:application\/pdf;base64,/i, "")
+  let content = String(record.content || "")
+    .replace(/^data:[^,]*,/i, "")
     .replace(/\s+/g, "")
     .trim();
   if (!content) return null;
   if (content.length > 25_000_000) throw new Error("The invoice PDF attachment is too large.");
-  if (!/^[A-Za-z0-9+/=]+$/.test(content)) throw new Error("The invoice PDF attachment is invalid.");
+  if (!/^[A-Za-z0-9+/_=-]+$/.test(content)) throw new Error("The invoice PDF attachment is invalid.");
+  content = content.replaceAll("-", "+").replaceAll("_", "/");
   const decoded = Buffer.from(content, "base64");
-  if (decoded.length < 5 || decoded.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("The invoice PDF attachment is invalid.");
+  const pdfHeader = decoded.indexOf(Buffer.from("%PDF-", "ascii"));
+  if (pdfHeader < 0 || pdfHeader > 64) throw new Error("The invoice PDF attachment is invalid.");
+  const pdfBytes = pdfHeader ? decoded.subarray(pdfHeader) : decoded;
+  content = pdfBytes.toString("base64");
   const filename = String(record.filename || "invoice.pdf").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/\.pdf$/i, "") + ".pdf";
   return { filename, content };
 }
@@ -137,7 +141,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     let attachment;
     try {
       attachment = parsePdfAttachment(parsedBody.data.attachment);
-    } catch {
+    } catch (attachmentError) {
+      console.error("Invoice PDF attachment rejected:", attachmentError instanceof Error ? attachmentError.message : attachmentError);
       return NextResponse.json({ error: "The invoice attachment is invalid." }, { status: 400 });
     }
     const actorEmail = String(userData.user.email || "").trim().toLowerCase();
@@ -156,7 +161,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (activityError) throw activityError;
     eventId = activity.id;
 
-    const html = renderInvoiceEmailHtml({
+    const emailInput = {
       memberName: member?.member_name || invoice.account_name,
       invoiceNumber: invoice.invoice_number,
       billingPeriod: invoice.period_start,
@@ -169,14 +174,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       whtEnabled: invoice.tax_enabled === true,
       whtAmount: invoice.tax_amount,
       totalAmount: invoice.total_amount,
-    });
+    };
+    const html = renderInvoiceEmailHtml(emailInput);
+    const text = renderInvoiceEmailText(emailInput);
+    const subject = invoiceEmailSubject.replace("{{invoice_number}}", String(invoice.invoice_number));
 
     const emailResult = await sendResendEmail({
       from: sender.from,
       replyTo: sender.replyTo,
       to: [recipientEmail],
-      subject: `Invoice ${invoice.invoice_number} from The Cubicle`,
+      subject,
       html,
+      text,
       attachments: attachment ? [{ filename: attachment.filename, content: attachment.content }] : [],
     });
 

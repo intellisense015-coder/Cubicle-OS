@@ -71,7 +71,7 @@ export default function ProfilePage() {
       });
       if (error) throw error;
     } catch (updateError) {
-      showToast({ variant: "error", title: "Profile was not saved", message: updateError instanceof Error ? updateError.message : "Supabase could not update your profile." });
+      showToast({ variant: "error", title: "Profile was not saved", message: updateError instanceof Error ? updateError.message : "Your profile could not be updated." });
       return;
     }
     saveDemoValue("profileName", values.name.trim());

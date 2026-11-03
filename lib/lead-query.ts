@@ -59,11 +59,11 @@ export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
     saveDemoValue("leads", leads, { notify: false });
     return { leads, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
-    const message = error?.message || "Unable to load leads from Supabase.";
+    const message = error?.message || "Unable to load leads.";
     return {
       leads: cachedLeads,
       dataSource: "demo",
-      errorMessage: `Supabase could not load leads: ${message}`,
+      errorMessage: `Could not load leads: ${message}`,
     };
   }
 }

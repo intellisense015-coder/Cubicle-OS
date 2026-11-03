@@ -3,6 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 let browserClient: SupabaseClient | null = null;
 
+// Short-lived same-tab fallback used while handing a fresh login to MFA.
+// It is never placed in the URL and is cleared once the protected shell
+// confirms the AAL2 session.
+export const BROWSER_SESSION_HANDOFF_KEY = "cubicle-os-session-handoff";
+
 export function hasSupabaseConfig() {
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL &&

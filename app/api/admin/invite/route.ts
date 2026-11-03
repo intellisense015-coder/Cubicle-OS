@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createHash, randomBytes } from "node:crypto";
+import { createServerClient } from "@supabase/ssr";
 import { z } from "zod";
 import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
+import { resolveEmailSender, sendResendEmail } from "@/lib/server-email";
 
 export const runtime = "nodejs";
 
@@ -12,16 +15,83 @@ const inviteSchema = z.object({
   roleKey: z.string().trim().regex(/^[a-z][a-z0-9_]{1,63}$/),
 }).strict();
 
+const inviteAcceptSchema = z.object({
+  action: z.literal("accept"),
+  code: z.string().trim().min(32).max(128).regex(/^[A-Za-z0-9_-]+$/),
+}).strict();
+
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
-export async function POST(request: Request) {
-  const authorization = request.headers.get("authorization") || "";
-  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+function escapeHtml(value: unknown) {
+  return String(value || "").replace(/[&<>\"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '\"': "&quot;",
+    "'": "&#39;",
+  }[character] || character));
+}
 
-  if (!token) return errorResponse("Authentication required.", 401);
+function invitationHtml(name: string, roleLabel: string, acceptLink: string) {
+  const safeName = escapeHtml(name);
+  const safeRole = escapeHtml(roleLabel);
+  const safeLink = escapeHtml(acceptLink);
+  return `<!doctype html><html><body style="margin:0;background:#f5f8f6;color:#18362b;font-family:Arial,sans-serif"><div style="max-width:560px;margin:32px auto;padding:32px;background:#fff;border:1px solid #e3ebe5;border-radius:16px"><p style="margin:0 0 16px;color:#0a714e;font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px">The Cubicle OS</p><h1 style="margin:0 0 16px;font-size:28px">You are invited</h1><p style="font-size:16px;line-height:1.6">Hello ${safeName},</p><p style="font-size:16px;line-height:1.6">You have been invited to access The Cubicle OS with the <strong>${safeRole}</strong> role.</p><p style="font-size:16px;line-height:1.6">Use the button below to create your password. After saving it, you will return to sign in and complete MFA setup.</p><p style="margin:28px 0"><a href="${safeLink}" style="display:inline-block;padding:13px 20px;border-radius:8px;background:#006b4f;color:#fff;text-decoration:none;font-weight:700">Accept invitation</a></p><p style="font-size:13px;line-height:1.5;color:#617269">This secure invitation link expires and can only be used once.</p></div></body></html>`;
+}
 
+async function acceptInvitation(request: NextRequest, code: string, supabaseUrl: string, publicKey: string, serviceRoleKey: string) {
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const codeHash = createHash("sha256").update(code).digest("hex");
+  const { data: invitation, error: invitationError } = await adminClient
+    .from("admin_invitation_links")
+    .select("id,user_id,email,provider_token_hash,expires_at,consumed_at")
+    .eq("code_hash", codeHash)
+    .is("consumed_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+
+  if (invitationError || !invitation) return errorResponse("This invitation link is invalid or has expired.", 400);
+
+  let response = NextResponse.json({ ok: true, email: invitation.email });
+  const sessionClient = createServerClient(supabaseUrl, publicKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+      },
+    },
+  });
+
+  const { data: sessionData, error: verifyError } = await sessionClient.auth.verifyOtp({
+    type: "invite",
+    token_hash: invitation.provider_token_hash,
+  });
+  if (verifyError || !sessionData.session || sessionData.user?.id !== invitation.user_id) {
+    await recordSecurityAudit(adminClient, { action: "admin.invite.accept", outcome: "failure", actorUserId: invitation.user_id, request, metadata: { reason: "provider_token_rejected" } });
+    return errorResponse("This invitation link is invalid or has expired.", 400);
+  }
+
+  const { error: consumeError } = await adminClient
+    .from("admin_invitation_links")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("id", invitation.id)
+    .is("consumed_at", null);
+  if (consumeError) {
+    console.error("Invitation link could not be finalized:", consumeError.message);
+    return errorResponse("The invitation could not be completed. Ask an owner to send a new invitation.", 500);
+  }
+
+  await recordSecurityAudit(adminClient, { action: "admin.invite.accept", outcome: "success", actorUserId: invitation.user_id, request, metadata: { email: invitation.email } });
+  return response;
+}
+
+export async function POST(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabasePublicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -35,6 +105,14 @@ export async function POST(request: Request) {
     const status = "status" in body ? body.status : 400;
     return errorResponse(requestBodyError(status), status);
   }
+
+  const acceptPayload = inviteAcceptSchema.safeParse(body.value);
+  if (acceptPayload.success) return acceptInvitation(request, acceptPayload.data.code, supabaseUrl, supabasePublicKey, serviceRoleKey);
+
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return errorResponse("Authentication required.", 401);
+
   const parsed = inviteSchema.safeParse(body.value);
   if (!parsed.success) return errorResponse("Enter a valid name, email, phone and role.", 400);
 
@@ -93,18 +171,64 @@ export async function POST(request: Request) {
   const existingUser = (existingUsers.users as Array<{ email?: string | null }>).find((item) => item.email?.toLowerCase() === normalizedEmail);
   if (existingUser) return errorResponse("An account with this email already exists.", 409);
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
-  const { data: invitation, error: invitationError } = await adminClient.auth.admin.inviteUserByEmail(normalizedEmail, {
-    data: {
-      full_name: parsed.data.name,
-      phone: parsed.data.phone || null,
+  const requestOrigin = new URL(request.url).origin;
+  const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "";
+  const siteUrl = /^(https?:\/\/localhost|https?:\/\/127\.0\.0\.1)/i.test(requestOrigin)
+    ? requestOrigin
+    : configuredSiteUrl || requestOrigin;
+  const redirectTo = new URL("/accept-invite", siteUrl).toString();
+  const { data: invitation, error: invitationError } = await adminClient.auth.admin.generateLink({
+    type: "invite",
+    email: normalizedEmail,
+    options: {
+      redirectTo,
+      data: {
+        full_name: parsed.data.name,
+        phone: parsed.data.phone || null,
+      },
     },
-    redirectTo: new URL("/accept-invite", siteUrl).toString(),
   });
 
-  if (invitationError || !invitation.user) {
+  if (invitationError || !invitation.user || !invitation.properties?.action_link) {
+    console.error("Employee invitation link generation failed:", invitationError?.message || "No invitation link returned.");
     await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, request, metadata: { reason: "provider_rejected_invitation" } });
-    return errorResponse("The invitation could not be sent.", 400);
+    return errorResponse("The invitation could not be prepared.", 502);
+  }
+
+  let providerActionUrl: URL;
+  try {
+    providerActionUrl = new URL(invitation.properties.action_link);
+  } catch {
+    await adminClient.auth.admin.deleteUser(invitation.user.id);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "provider_link_invalid" } });
+    return errorResponse("The invitation could not be prepared.", 502);
+  }
+  const providerTokenHash = providerActionUrl.searchParams.get("token") || providerActionUrl.searchParams.get("token_hash") || "";
+  if (!providerTokenHash) {
+    await adminClient.auth.admin.deleteUser(invitation.user.id);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "provider_token_missing" } });
+    return errorResponse("The invitation could not be prepared.", 502);
+  }
+
+  // Keep the provider token server-side. The employee receives only an opaque,
+  // short-lived code that is exchanged by the server before the accept page
+  // receives a session. This prevents Supabase auth tokens from appearing in
+  // email links, browser history, referrers, or screenshots.
+  const inviteCode = randomBytes(32).toString("base64url");
+  const inviteCodeHash = createHash("sha256").update(inviteCode).digest("hex");
+  const invitationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: linkError } = await adminClient.from("admin_invitation_links").insert({
+    user_id: invitation.user.id,
+    email: normalizedEmail,
+    code_hash: inviteCodeHash,
+    provider_token_hash: providerTokenHash,
+    expires_at: invitationExpiresAt,
+  });
+  if (linkError) {
+    await adminClient.auth.admin.deleteUser(invitation.user.id);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "invitation_link_storage_failed" } });
+    return errorResponse("The invitation could not be prepared.", 500);
   }
 
   const { data: adminUser, error: adminUserError } = await adminClient
@@ -114,9 +238,31 @@ export async function POST(request: Request) {
     .single();
 
   if (adminUserError || !adminUser) {
+    await adminClient.from("admin_invitation_links").delete().eq("user_id", invitation.user.id);
     await adminClient.auth.admin.deleteUser(invitation.user.id);
     await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "administrator_link_failed" } });
     return errorResponse("The invitation could not be linked to an administrator role.", 500);
+  }
+
+  try {
+    const sender = resolveEmailSender({ actorName: "The Cubicle" });
+    const acceptLink = new URL("/accept-invite", siteUrl);
+    acceptLink.searchParams.set("code", inviteCode);
+    await sendResendEmail({
+      from: sender.from,
+      replyTo: sender.replyTo,
+      to: [normalizedEmail],
+      subject: "You are invited to The Cubicle OS",
+      html: invitationHtml(parsed.data.name, role.label, acceptLink.toString()),
+      text: `Hello ${parsed.data.name},\n\nYou have been invited to access The Cubicle OS with the ${role.label} role. Use this secure link to create your password:\n\n${acceptLink.toString()}\n\nAfter saving your password, return to sign in and complete MFA setup. This invitation link expires and can only be used once.`,
+    });
+  } catch (emailError) {
+    console.error("Employee invitation email delivery failed:", emailError instanceof Error ? emailError.message : emailError);
+    await adminClient.from("admin_users").delete().eq("user_id", invitation.user.id);
+    await adminClient.from("admin_invitation_links").delete().eq("user_id", invitation.user.id);
+    await adminClient.auth.admin.deleteUser(invitation.user.id);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "invitation_email_delivery_failed" } });
+    return errorResponse("The invitation email could not be delivered.", 502);
   }
 
   await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "success", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { role: parsed.data.roleKey } });

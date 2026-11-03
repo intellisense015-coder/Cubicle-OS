@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { OsHeader } from "@/components/os/header";
 import { OsSidebar } from "@/components/os/sidebar";
 import { clearDemoSession, clearSeededBusinessDataOnce } from "@/lib/demo-session";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AppSkeleton, RouteSkeleton } from "@/components/ui/skeleton";
 
 const PAGE_TITLES = {
@@ -113,6 +113,12 @@ export function PageShell({ children }) {
           return;
         }
 
+        try {
+          window.sessionStorage.removeItem(BROWSER_SESSION_HANDOFF_KEY);
+        } catch {
+          // Ignore storage cleanup failures; the authenticated session remains valid.
+        }
+
         if (!cancelled) {
           setCurrentUserName(getDisplayName(userData.user));
           setCurrentUserRole(formatAdminRole(roleData));
@@ -160,6 +166,11 @@ export function PageShell({ children }) {
     try {
       await getSupabaseBrowserClient().auth.signOut();
     } finally {
+      try {
+        window.sessionStorage.removeItem(BROWSER_SESSION_HANDOFF_KEY);
+      } catch {
+        // Ignore storage cleanup failures during sign-out.
+      }
       clearDemoSession();
       router.replace("/splash");
     }

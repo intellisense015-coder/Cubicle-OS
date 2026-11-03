@@ -6,13 +6,46 @@ import type { FormEvent } from "react";
 import { motion } from "motion/react";
 import { LoaderCircle } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
+import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { AuthShell } from "@/components/ui/auth-shell";
 import { Button } from "@/components/ui/button";
 import { InputOTP } from "@/components/ui/input-otp";
 import { saveDemoValue } from "@/lib/demo-session";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type MfaMode = "loading" | "enroll" | "verify" | "error";
+
+async function waitForBrowserSession(
+  supabase: SupabaseClient,
+  isCancelled: () => boolean,
+): Promise<Session | null> {
+  for (let attempt = 0; attempt < 15 && !isCancelled(); attempt += 1) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw error;
+    if (data.session) return data.session;
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+  }
+
+  // Recover the same-tab handoff if the browser did not expose the SSR cookie
+  // to the newly loaded MFA document yet.
+  try {
+    const rawHandoff = window.sessionStorage.getItem(BROWSER_SESSION_HANDOFF_KEY);
+    if (rawHandoff) {
+      const handoff = JSON.parse(rawHandoff) as { access_token?: unknown; refresh_token?: unknown };
+      if (typeof handoff.access_token === "string" && typeof handoff.refresh_token === "string") {
+        const { data, error } = await supabase.auth.setSession({
+          access_token: handoff.access_token,
+          refresh_token: handoff.refresh_token,
+        });
+        if (!error && data.session) return data.session;
+      }
+    }
+  } catch {
+    // Fall through to the normal unauthenticated redirect.
+  }
+
+  return null;
+}
 
 // TITLE: MFA PAGE
 export default function MfaPage() {
@@ -40,9 +73,9 @@ export default function MfaPage() {
     const prepareMfa = async () => {
       try {
         const supabase = getSupabaseBrowserClient();
-        const { data: sessionData } = await supabase.auth.getSession();
+        const session = await waitForBrowserSession(supabase, () => cancelled);
 
-        if (!sessionData.session) {
+        if (!session) {
           router.replace("/login");
           return;
         }
@@ -153,9 +186,27 @@ export default function MfaPage() {
         throw new Error("MFA verification did not create an AAL2 session. Refresh and try again.");
       }
 
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session) {
+        throw sessionError || new Error("MFA session could not be established. Please try again.");
+      }
+
+      const handoffResponse = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          access_token: sessionData.session.access_token,
+          refresh_token: sessionData.session.refresh_token,
+        }),
+      });
+      if (!handoffResponse.ok) {
+        const handoffBody = await handoffResponse.json().catch(() => ({}));
+        throw new Error(handoffBody.error || "MFA session could not be established.");
+      }
+
       setValidationState("is-success");
       saveDemoValue("mfaVerified", true);
-      router.push(returnPathRef.current || returnPath);
+      window.location.assign(returnPathRef.current || returnPath);
     } catch (verifyException) {
       setValidationState("is-error");
       setError(verifyException instanceof Error ? verifyException.message : "Unable to verify MFA.");
