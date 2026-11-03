@@ -2,26 +2,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, DoorOpen, Grid2X2, History, PlayCircle, RotateCcw, Settings2, SlidersHorizontal, Wrench, XCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { z } from "zod";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/primitives";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords, workspaceTypes } from "@/lib/workspace-records";
-import { createSupabaseWorkspaces, fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace, updateSupabaseWorkspace } from "@/lib/supabase/workspaces";
-import { fetchSupabaseMaintenanceCategories, mapSupabaseMaintenanceCategoryToOsCategory } from "@/lib/supabase/maintenance-categories";
-import { createSupabaseMaintenanceEvent, createSupabaseMaintenanceRecord, fetchSupabaseMaintenanceEvents, fetchSupabaseMaintenanceRecords, mapSupabaseMaintenanceEventToOsEvent, mapSupabaseMaintenanceRecordToOsRecord, updateSupabaseMaintenanceRecord } from "@/lib/supabase/maintenance";
+import { getWorkspaceRecords, isAssignableWorkspace, workspaceTypes } from "@/lib/workspace-records";
+import { mapSupabaseWorkspaceToOsWorkspace, updateSupabaseWorkspace } from "@/lib/supabase/workspaces";
+import { createSupabaseMaintenanceEvent, createSupabaseMaintenanceRecord, mapSupabaseMaintenanceEventToOsEvent, mapSupabaseMaintenanceRecordToOsRecord, updateSupabaseMaintenanceRecord } from "@/lib/supabase/maintenance";
 import { useToast } from "@/components/ui/toast-provider";
 import { getMaintenanceCategories, getActiveMaintenanceRecord, getMaintenanceHistory, getMaintenanceTimeline, getMaintenanceEvents, getMaintenanceRecords, MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, OPERATIONAL_STATUS_LABELS, reportMaintenance, resolveMaintenance, startMaintenance, cancelMaintenance, type MaintenanceCategory, type MaintenanceRecord, type MaintenanceSeverity, type WorkspaceOperationalStatus } from "@/lib/maintenance";
 import { numericField, numericString } from "@/lib/number-input";
 import { useHasPermission, useMaintenancePermissions } from "@/lib/access-control";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchWorkspacesSnapshot, type WorkspacesQuerySnapshot } from "@/lib/workspace-query";
+import { fetchMaintenanceCategoriesSnapshot, fetchMaintenanceEventsSnapshot, fetchMaintenanceRecordsSnapshot, type MaintenanceEventsQuerySnapshot, type MaintenanceRecordsQuerySnapshot } from "@/lib/maintenance-query";
 
 const workspaceConfigSchema = z.object({
   label: z.string().trim().min(1, "Enter a workspace name.").max(80, "Workspace names must be 80 characters or fewer."),
@@ -91,7 +94,7 @@ function WorkspaceConfigForm({ workspace, workspaces, onCancel, onSave }) {
     onSave({ ...workspace, ...values, label: values.label.trim(), capacity: values.capacity === "" ? "" : Number(values.capacity) });
   };
   const error = (field) => formState.errors[field]?.message;
-  return <div className="inline-form-card"><div className="card-heading"><div><span className="seat-details-label">Workspace setup</span><h2>Workspace configuration</h2><p className="muted-copy">Update the mapped area without changing its operational maintenance state.</p></div><Settings2 size={21} /></div><form className="inline-form-grid" onSubmit={handleSubmit(submit)}><label className="settings-label">Workspace name<Input className={error("label") ? "has-error" : ""} {...register("label")} aria-invalid={Boolean(error("label"))} />{error("label") && <FieldError error={error("label")} />}</label><WorkspaceTypeSelect value={watch("type")} onChange={(value) => setValue("type", value, { shouldDirty: true })} /><label className="settings-label">Capacity<Input className={error("capacity") ? "has-error" : ""} type="text" {...numericField(register, "capacity", true)} />{error("capacity") && <FieldError error={error("capacity")} />}</label><div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting}><Settings2 size={15} /> Save configuration</Button></div></form></div>;
+  return <div className="inline-form-card"><div className="card-heading"><div><span className="seat-details-label">Workspace setup</span><h2>Workspace configuration</h2><p className="muted-copy">Update the mapped area without changing its operational maintenance state.</p></div><Settings2 size={21} /></div><form className="inline-form-grid" onSubmit={handleSubmit(submit)}><label className="settings-label">Workspace name<Input className={error("label") ? "has-error" : ""} {...register("label")} aria-invalid={Boolean(error("label"))} />{error("label") && <FieldError error={error("label")} />}</label><WorkspaceTypeSelect value={watch("type")} onChange={(value) => setValue("type", value, { shouldDirty: true })} /><label className="settings-label">Capacity<Input className={error("capacity") ? "has-error" : ""} type="text" {...numericField(register, "capacity", true)} />{error("capacity") && <FieldError error={error("capacity")} />}</label><div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><Settings2 size={15} /> Save configuration</Button></div></form></div>;
 }
 
 function ReportMaintenanceForm({ workspace, categories, onCancel, onSave }) {
@@ -127,6 +130,23 @@ function MaintenanceDetail({ workspace, activeMaintenance, history, timeline, pe
 export default function WorkspacesPage() {
   const { showToast } = useToast();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const workspacesQuery = useQuery({
+    queryKey: queryKeys.workspaces.all,
+    queryFn: fetchWorkspacesSnapshot,
+  });
+  const maintenanceCategoriesQuery = useQuery({
+    queryKey: queryKeys.maintenance.categories,
+    queryFn: fetchMaintenanceCategoriesSnapshot,
+  });
+  const maintenanceRecordsQuery = useQuery({
+    queryKey: queryKeys.maintenance.records,
+    queryFn: fetchMaintenanceRecordsSnapshot,
+  });
+  const maintenanceEventsQuery = useQuery({
+    queryKey: queryKeys.maintenance.events,
+    queryFn: fetchMaintenanceEventsSnapshot,
+  });
   const canEdit = useHasPermission("workspaces.write");
   const permissions = useMaintenancePermissions();
   const [workspaces, setWorkspaces] = useState<any[]>([]);
@@ -136,56 +156,71 @@ export default function WorkspacesPage() {
   const [selectedWorkspace, setSelectedWorkspace] = useState<any>(null);
   const [resolvingMaintenance, setResolvingMaintenance] = useState<MaintenanceRecord | null>(null);
   const [cancellingMaintenance, setCancellingMaintenance] = useState<MaintenanceRecord | null>(null);
+  const [maintenanceEvents, setMaintenanceEvents] = useState(() => getMaintenanceEvents());
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({ status: "", type: "" });
   const [maintenanceCategories, setMaintenanceCategories] = useState<MaintenanceCategory[]>(() => getMaintenanceCategories());
 
-  const refresh = async () => {
-    const localRecords = getWorkspaceRecords();
-    try {
-      const rows = await fetchSupabaseWorkspaces();
-      const existingIds = new Set(rows.map((row) => row.id));
-      const missingRecords = localRecords.filter((record) => !existingIds.has(String(record.areaId || record.id)));
-      const seededRows = await createSupabaseWorkspaces(missingRecords);
-      const remoteRecords = [...rows, ...seededRows].map(mapSupabaseWorkspaceToOsWorkspace);
-      const nextWorkspaces = mergeWorkspaceRecords(remoteRecords);
-      setWorkspaces(nextWorkspaces);
-      saveDemoValue("workspaces", nextWorkspaces, { notify: false });
-    } catch (error) {
-      setWorkspaces([]);
-      showToast({ variant: "error", title: "Workspaces could not be loaded", message: error?.message || "Supabase did not return the workspace records." });
-    }
-    try {
-      const categoryRows = await fetchSupabaseMaintenanceCategories();
-      const remoteCategories = categoryRows.map(mapSupabaseMaintenanceCategoryToOsCategory);
-      setMaintenanceCategories(remoteCategories);
-      saveDemoValue("maintenanceCategories", remoteCategories, { notify: false });
-    } catch (error) {
-      setMaintenanceCategories(getMaintenanceCategories());
-      showToast({ variant: "error", title: "Maintenance categories could not be loaded", message: error?.message || "Supabase did not return the maintenance categories." });
-    }
-    try {
-      const [recordRows, eventRows] = await Promise.all([fetchSupabaseMaintenanceRecords(), fetchSupabaseMaintenanceEvents()]);
-      const remoteRecords = recordRows.map(mapSupabaseMaintenanceRecordToOsRecord);
-      const remoteEvents = eventRows.map(mapSupabaseMaintenanceEventToOsEvent);
-      setMaintenanceRecords(remoteRecords);
-      saveDemoValue("maintenanceRecords", remoteRecords, { notify: false });
-      saveDemoValue("maintenanceEvents", remoteEvents, { notify: false });
-    } catch (error) {
-      const savedRecords = getDemoValue("maintenanceRecords");
-      setMaintenanceRecords(Array.isArray(savedRecords) ? savedRecords : []);
-      showToast({ variant: "error", title: "Maintenance records could not be loaded", message: error?.message || "Supabase did not return maintenance records." });
-    }
+  const setWorkspaceSnapshot = (nextWorkspaces: any[]) => {
+    setWorkspaces(nextWorkspaces);
+    saveDemoValue("workspaces", nextWorkspaces, { notify: false });
+    queryClient.setQueryData<WorkspacesQuerySnapshot>(queryKeys.workspaces.all, (current) => ({
+      workspaces: nextWorkspaces,
+      dataSource: current?.dataSource || "demo",
+      errorMessage: "",
+    }));
   };
 
   useEffect(() => {
-    void refresh();
+    if (workspacesQuery.data) setWorkspaces(workspacesQuery.data.workspaces);
+    if (workspacesQuery.data?.errorMessage) {
+      showToast({ variant: "error", title: "Workspaces could not be refreshed", message: workspacesQuery.data.errorMessage });
+    }
+  }, [showToast, workspacesQuery.data]);
+
+  useEffect(() => {
+    if (!maintenanceCategoriesQuery.data) return;
+    setMaintenanceCategories(maintenanceCategoriesQuery.data.categories);
+    if (maintenanceCategoriesQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Maintenance categories could not be loaded", message: "Showing the saved maintenance categories." });
+    }
+  }, [maintenanceCategoriesQuery.data, showToast]);
+
+  useEffect(() => {
+    if (!maintenanceRecordsQuery.data) return;
+    setMaintenanceRecords(maintenanceRecordsQuery.data.records);
+    if (maintenanceRecordsQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Maintenance records could not be loaded", message: "Showing the saved maintenance records." });
+    }
+  }, [maintenanceRecordsQuery.data, showToast]);
+
+  useEffect(() => {
+    if (!maintenanceEventsQuery.data) return;
+    setMaintenanceEvents(maintenanceEventsQuery.data.events);
+    if (maintenanceEventsQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Maintenance history could not be loaded", message: "Showing the saved maintenance history." });
+    }
+  }, [maintenanceEventsQuery.data, showToast]);
+
+  useEffect(() => {
     const handleDemoChange = (event) => {
-      if (["maintenance", "maintenanceRecords", "maintenanceEvents", "workspaces", "maintenanceCategories", "members", "employees"].includes(event.detail?.key || "")) void refresh();
+      const key = event.detail?.key || "";
+      if (key === "workspaces" || key === "members" || key === "maintenance") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all, refetchType: "active" });
+      }
+      if (key === "maintenance" || key === "maintenanceRecords") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.maintenance.records, refetchType: "active" });
+      }
+      if (key === "maintenance" || key === "maintenanceEvents") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.maintenance.events, refetchType: "active" });
+      }
+      if (key === "maintenance" || key === "maintenanceCategories") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.maintenance.categories, refetchType: "active" });
+      }
     };
     window.addEventListener("cubicle-demo-change", handleDemoChange);
     return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
-  }, [showToast]);
+  }, [queryClient]);
 
   useEffect(() => {
     const workspaceId = searchParams.get("workspaceId");
@@ -199,9 +234,21 @@ export default function WorkspacesPage() {
   const activeRecordFor = (workspace) => getActiveMaintenanceRecord(String(workspace.areaId || workspace.id), maintenanceRecords);
   const refreshAndSelect = (workspaceId: string) => {
     const nextWorkspaces = getWorkspaceRecords();
-    const nextRecords = getDemoValue("maintenanceRecords");
-    setWorkspaces(nextWorkspaces);
-    setMaintenanceRecords(Array.isArray(nextRecords) ? nextRecords : []);
+    const nextRecords = getMaintenanceRecords();
+    const nextEvents = getMaintenanceEvents();
+    setWorkspaceSnapshot(nextWorkspaces);
+    setMaintenanceRecords(nextRecords);
+    setMaintenanceEvents(nextEvents);
+    queryClient.setQueryData<MaintenanceRecordsQuerySnapshot>(queryKeys.maintenance.records, (current) => ({
+      records: nextRecords,
+      dataSource: current?.dataSource || "demo",
+      errorMessage: "",
+    }));
+    queryClient.setQueryData<MaintenanceEventsQuerySnapshot>(queryKeys.maintenance.events, (current) => ({
+      events: nextEvents,
+      dataSource: current?.dataSource || "demo",
+      errorMessage: "",
+    }));
     const nextWorkspace = nextWorkspaces.find((item) => String(item.areaId || item.id) === String(workspaceId));
     if (nextWorkspace) setSelectedWorkspace(nextWorkspace);
     return nextWorkspace;
@@ -218,8 +265,7 @@ export default function WorkspacesPage() {
       const row = await updateSupabaseWorkspace(workspace.areaId, workspace);
       const persistedWorkspace = { ...workspace, ...mapSupabaseWorkspaceToOsWorkspace(row), id: row.id, areaId: row.id };
       const next = workspaces.map((item) => item.areaId === workspace.areaId ? persistedWorkspace : item);
-      setWorkspaces(next);
-      saveDemoValue("workspaces", next);
+      setWorkspaceSnapshot(next);
       const savedMembers = getDemoValue("members");
       if (Array.isArray(savedMembers)) saveDemoValue("members", savedMembers.map((member) => member.spaceId === workspace.areaId || member.space === previous?.label ? { ...member, spaceId: workspace.areaId, space: workspace.label } : member));
       setConfiguring(null);
@@ -243,7 +289,7 @@ export default function WorkspacesPage() {
       const localWorkspaces = getWorkspaceRecords().map((workspace) => workspace.areaId === reportingWorkspace.areaId ? { ...workspace, ...result.workspace, activeMaintenanceId: remoteRecord.id } : workspace);
       saveDemoValue("maintenanceRecords", localRecords, { notify: false });
       saveDemoValue("maintenanceEvents", localEvents, { notify: false });
-      saveDemoValue("workspaces", localWorkspaces, { notify: false });
+      setWorkspaceSnapshot(localWorkspaces);
       setMaintenanceRecords(localRecords);
       setReportingWorkspace(null);
       const updated = refreshAndSelect(reportingWorkspace.areaId || reportingWorkspace.id);
@@ -323,7 +369,7 @@ export default function WorkspacesPage() {
   const statusLabels = OPERATIONAL_STATUS_LABELS;
   const selectedRecord = selectedWorkspace ? activeRecordFor(selectedWorkspace) : null;
   const selectedHistory = selectedWorkspace ? getMaintenanceHistory(String(selectedWorkspace.areaId || selectedWorkspace.id), maintenanceRecords) : [];
-  const selectedTimeline = selectedRecord ? getMaintenanceTimeline(selectedRecord.id) : [];
+  const selectedTimeline = selectedRecord ? getMaintenanceTimeline(selectedRecord.id, maintenanceEvents) : [];
 
-  return <PageShell><motion.div className="module-content workspace-page" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Workspaces</h1><p className="muted-copy">Manage mapped spaces and move maintenance issues from report to restoration.</p></div><Button variant="ghost" onClick={() => setShowFilters(true)}><SlidersHorizontal size={14} /> Filter</Button></div><section className="stat-grid module-stats workspace-stats workspace-lifecycle-stats"><KpiCard icon={<Grid2X2 size={18} />} label="Total workspaces" value={assignableWorkspaces.length} detail="Mapped offices and seats" /><KpiCard icon={<DoorOpen size={18} />} label="Available spaces" value={availableAssignable} detail="Active and ready for assignment" /><KpiCard icon={<Clock3 size={18} />} label="Under maintenance" value={underMaintenance} detail="Active issues in progress" /><KpiCard icon={<AlertTriangle size={18} />} label="Out of service" value={outOfService} detail="Unavailable for assignment" /></section><div className="section-heading"><div><h2>Workspace directory</h2><p className="muted-copy">Operational state is controlled by maintenance actions. Workspace configuration is separate.</p></div></div><section className="table-card workspace-directory-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Workspace</th><th>Type</th><th>Zone</th><th>Capacity</th><th>Occupant</th><th>Status</th><th>Maintenance</th><th>Action</th></tr></thead><tbody>{visibleWorkspaces.map((workspace) => { const currentStatus = operationalStatus(workspace); const activeMaintenance = activeRecordFor(workspace); const actionLabel = currentStatus === "ACTIVE" ? "Report Issue" : "View Maintenance"; return <tr key={workspace.id}><td className="table-primary"><strong>{workspace.label}</strong></td><td>{workspace.type}</td><td>{workspace.zone}</td><td>{workspace.capacity ?? "—"}</td><td>{workspace.occupant || "Available"}</td><td><span className={`status-tag workspace-operational-status status-${currentStatus.toLowerCase().replaceAll("_", "-")}`}>{currentStatus === "ACTIVE" ? <CheckCircle2 size={13} /> : currentStatus === "UNDER_MAINTENANCE" ? <Wrench size={13} /> : <AlertTriangle size={13} />}{OPERATIONAL_STATUS_LABELS[currentStatus]}</span></td><td>{activeMaintenance ? <button type="button" className={`maintenance-badge maintenance-record-${activeMaintenance.status.toLowerCase()}`} onClick={() => openMaintenance(workspace)}><strong>{activeMaintenance.title}</strong><small>{activeMaintenance.category} · {MAINTENANCE_SEVERITY_LABELS[activeMaintenance.severity]}</small></button> : <span className="muted-copy">No active issue</span>}</td><td><div className="workspace-action-stack">{(currentStatus === "ACTIVE" ? permissions.canReport : true) ? <button type="button" className={`table-action workspace-maintenance-action workspace-maintenance-action-${currentStatus.toLowerCase().replaceAll("_", "-")}`} onClick={() => currentStatus === "ACTIVE" ? setReportingWorkspace(workspace) : openMaintenance(workspace)}>{currentStatus === "ACTIVE" ? <Wrench size={14} /> : <History size={14} />}{actionLabel}</button> : <span className="read-only-label">View only</span>}{canEdit ? <button type="button" className="table-action workspace-configure-action" onClick={() => setConfiguring(workspace)}><Settings2 size={14} /> Configure</button> : null}</div></td></tr>; })}</tbody></table></div></section><Dialog open={showFilters} onClose={() => setShowFilters(false)} ariaLabel="Filter workspaces"><div className="inline-form-card lead-filter-panel"><div className="card-heading"><div><h2>Filter workspaces</h2><p className="muted-copy">Filter mapped spaces by operational state or workspace type.</p></div></div><div className="inline-form-grid"><WorkspaceFilterSelect label="Status" value={filters.status} options={statusOptions} labels={statusLabels} emptyLabel="All statuses" onChange={(status) => setFilters((current) => ({ ...current, status }))} /><WorkspaceFilterSelect label="Workspace type" value={filters.type} options={[...new Set(assignableWorkspaces.map((workspace) => workspace.type))]} emptyLabel="All types" onChange={(type) => setFilters((current) => ({ ...current, type }))} /></div><div className="inline-form-actions"><Button variant="ghost" onClick={() => { setFilters({ status: "", type: "" }); setShowFilters(false); showToast({ variant: "success", title: "Workspace filters cleared", message: "All workspaces are visible again." }); }}>Clear</Button><Button onClick={() => { setShowFilters(false); showToast({ variant: "success", title: "Workspace filters applied", message: "The workspace directory was updated." }); }}>Apply</Button></div></div></Dialog><Dialog open={Boolean(configuring)} onClose={() => setConfiguring(null)} ariaLabel="Workspace configuration">{configuring ? <WorkspaceConfigForm workspace={configuring} workspaces={workspaces} onCancel={() => setConfiguring(null)} onSave={updateWorkspace} /> : null}</Dialog><Dialog open={Boolean(reportingWorkspace)} onClose={() => setReportingWorkspace(null)} ariaLabel="Report maintenance issue">{reportingWorkspace ? <ReportMaintenanceForm workspace={reportingWorkspace} categories={maintenanceCategories} onCancel={() => setReportingWorkspace(null)} onSave={submitReport} /> : null}</Dialog><Dialog open={Boolean(selectedWorkspace)} onClose={() => setSelectedWorkspace(null)} ariaLabel="Maintenance detail">{selectedWorkspace ? <MaintenanceDetail workspace={selectedWorkspace} activeMaintenance={selectedRecord} history={selectedHistory} timeline={selectedTimeline} permissions={permissions} onStart={beginMaintenance} onResolve={() => selectedRecord && setResolvingMaintenance(selectedRecord)} onCancelReport={openCancellation} onClose={() => setSelectedWorkspace(null)} /> : null}</Dialog><Dialog open={Boolean(resolvingMaintenance)} onClose={() => setResolvingMaintenance(null)} ariaLabel="Restore workspace">{resolvingMaintenance ? <ResolutionForm maintenance={resolvingMaintenance} onCancel={() => setResolvingMaintenance(null)} onSave={submitResolution} /> : null}</Dialog><Dialog open={Boolean(cancellingMaintenance)} onClose={() => setCancellingMaintenance(null)} ariaLabel="Withdraw maintenance report">{cancellingMaintenance ? <CancellationForm maintenance={cancellingMaintenance} onCancel={() => setCancellingMaintenance(null)} onSave={submitCancellation} /> : null}</Dialog></motion.div></PageShell>;
+  return <motion.div className="module-content workspace-page" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Workspaces</h1><p className="muted-copy">Manage mapped spaces and move maintenance issues from report to restoration.</p></div><Button variant="ghost" onClick={() => setShowFilters(true)}><SlidersHorizontal size={14} /> Filter</Button></div><section className="stat-grid module-stats workspace-stats workspace-lifecycle-stats"><KpiCard icon={<Grid2X2 size={18} />} label="Total workspaces" value={assignableWorkspaces.length} detail="Mapped offices and seats" /><KpiCard icon={<DoorOpen size={18} />} label="Available spaces" value={availableAssignable} detail="Active and ready for assignment" /><KpiCard icon={<Clock3 size={18} />} label="Under maintenance" value={underMaintenance} detail="Active issues in progress" /><KpiCard icon={<AlertTriangle size={18} />} label="Out of service" value={outOfService} detail="Unavailable for assignment" /></section><div className="section-heading"><div><h2>Workspace directory</h2><p className="muted-copy">Operational state is controlled by maintenance actions. Workspace configuration is separate.</p></div></div><section className="table-card workspace-directory-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Workspace</th><th>Type</th><th>Zone</th><th>Capacity</th><th>Occupant</th><th>Status</th><th>Maintenance</th><th>Action</th></tr></thead><tbody>{visibleWorkspaces.map((workspace) => { const currentStatus = operationalStatus(workspace); const activeMaintenance = activeRecordFor(workspace); const actionLabel = currentStatus === "ACTIVE" ? "Report Issue" : "View Maintenance"; return <tr key={workspace.id}><td className="table-primary"><strong>{workspace.label}</strong></td><td>{workspace.type}</td><td>{workspace.zone}</td><td>{workspace.capacity ?? "—"}</td><td>{workspace.occupant || "Available"}</td><td><span className={`status-tag workspace-operational-status status-${currentStatus.toLowerCase().replaceAll("_", "-")}`}>{currentStatus === "ACTIVE" ? <CheckCircle2 size={13} /> : currentStatus === "UNDER_MAINTENANCE" ? <Wrench size={13} /> : <AlertTriangle size={13} />}{OPERATIONAL_STATUS_LABELS[currentStatus]}</span></td><td>{activeMaintenance ? <button type="button" className={`maintenance-badge maintenance-record-${activeMaintenance.status.toLowerCase()}`} onClick={() => openMaintenance(workspace)}><strong>{activeMaintenance.title}</strong><small>{activeMaintenance.category} · {MAINTENANCE_SEVERITY_LABELS[activeMaintenance.severity]}</small></button> : <span className="muted-copy">No active issue</span>}</td><td><div className="workspace-action-stack">{(currentStatus === "ACTIVE" ? permissions.canReport : true) ? <button type="button" className="action-icon-btn" onClick={() => currentStatus === "ACTIVE" ? setReportingWorkspace(workspace) : openMaintenance(workspace)} aria-label={`${actionLabel} for ${workspace.label}`} title={actionLabel}>{currentStatus === "ACTIVE" ? <Wrench size={16} /> : <History size={16} />}</button> : <span className="read-only-label">View only</span>}{canEdit ? <button type="button" className="action-icon-btn" onClick={() => setConfiguring(workspace)} aria-label={`Configure ${workspace.label}`} title="Configure workspace"><Settings2 size={16} /></button> : null}</div></td></tr>; })}</tbody></table></div></section><Dialog open={showFilters} onClose={() => setShowFilters(false)} ariaLabel="Filter workspaces"><div className="inline-form-card lead-filter-panel"><div className="card-heading"><div><h2>Filter workspaces</h2><p className="muted-copy">Filter mapped spaces by operational state or workspace type.</p></div></div><div className="inline-form-grid"><WorkspaceFilterSelect label="Status" value={filters.status} options={statusOptions} labels={statusLabels} emptyLabel="All statuses" onChange={(status) => setFilters((current) => ({ ...current, status }))} /><WorkspaceFilterSelect label="Workspace type" value={filters.type} options={[...new Set(assignableWorkspaces.map((workspace) => workspace.type))]} emptyLabel="All types" onChange={(type) => setFilters((current) => ({ ...current, type }))} /></div><div className="inline-form-actions"><Button variant="ghost" onClick={() => { setFilters({ status: "", type: "" }); setShowFilters(false); showToast({ variant: "success", title: "Workspace filters cleared", message: "All workspaces are visible again." }); }}>Clear</Button><Button onClick={() => { setShowFilters(false); showToast({ variant: "success", title: "Workspace filters applied", message: "The workspace directory was updated." }); }}>Apply</Button></div></div></Dialog><Dialog open={Boolean(configuring)} onClose={() => setConfiguring(null)} ariaLabel="Workspace configuration">{configuring ? <WorkspaceConfigForm workspace={configuring} workspaces={workspaces} onCancel={() => setConfiguring(null)} onSave={updateWorkspace} /> : null}</Dialog><Dialog open={Boolean(reportingWorkspace)} onClose={() => setReportingWorkspace(null)} ariaLabel="Report maintenance issue">{reportingWorkspace ? <ReportMaintenanceForm workspace={reportingWorkspace} categories={maintenanceCategories} onCancel={() => setReportingWorkspace(null)} onSave={submitReport} /> : null}</Dialog><Dialog open={Boolean(selectedWorkspace)} onClose={() => setSelectedWorkspace(null)} ariaLabel="Maintenance detail">{selectedWorkspace ? <MaintenanceDetail workspace={selectedWorkspace} activeMaintenance={selectedRecord} history={selectedHistory} timeline={selectedTimeline} permissions={permissions} onStart={beginMaintenance} onResolve={() => selectedRecord && setResolvingMaintenance(selectedRecord)} onCancelReport={openCancellation} onClose={() => setSelectedWorkspace(null)} /> : null}</Dialog><Dialog open={Boolean(resolvingMaintenance)} onClose={() => setResolvingMaintenance(null)} ariaLabel="Restore workspace">{resolvingMaintenance ? <ResolutionForm maintenance={resolvingMaintenance} onCancel={() => setResolvingMaintenance(null)} onSave={submitResolution} /> : null}</Dialog><Dialog open={Boolean(cancellingMaintenance)} onClose={() => setCancellingMaintenance(null)} ariaLabel="Withdraw maintenance report">{cancellingMaintenance ? <CancellationForm maintenance={cancellingMaintenance} onCancel={() => setCancellingMaintenance(null)} onSave={submitCancellation} /> : null}</Dialog></motion.div>;
 }

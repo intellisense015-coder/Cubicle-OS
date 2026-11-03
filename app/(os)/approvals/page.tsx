@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
 import { motion } from "motion/react";
 import { Check, CheckCircle2, CirclePlus, ListChecks, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DataTable } from "@/components/ui/table";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { saveDemoValue } from "@/lib/demo-session";
+import { fetchApprovalsSnapshot } from "@/lib/approval-query";
+import { queryKeys } from "@/lib/query-keys";
 import { useToast } from "@/components/ui/toast-provider";
 
 const approvalRequestTypes = [
@@ -42,33 +45,42 @@ function createApprovalColumns(onAction) {
     columnHelper.accessor("requestedBy", { header: "Requested by" }),
     columnHelper.accessor("createdAt", { header: "Date" }),
     columnHelper.accessor("status", { header: "Status", cell: ({ getValue }) => <StatusBadge tone={getValue() === "Pending" ? "accent" : getValue() === "Approved" ? "success" : "danger"}>{getValue()}</StatusBadge> }),
-    columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => row.original.status === "Pending" ? <div className="approval-actions"><button className="approve-button" type="button" onClick={() => onAction(row.original, "Approved")}><Check size={14} /> Approve</button><button className="reject-button" type="button" onClick={() => onAction(row.original, "Rejected")}><X size={14} /> Reject</button></div> : <span className="muted-copy">Completed</span> }),
+    columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => row.original.status === "Pending" ? <div className="lead-table-actions"><button className="action-icon-btn" type="button" onClick={() => onAction(row.original, "Approved")} aria-label={`Approve ${row.original.title}`} title="Approve request"><Check size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onAction(row.original, "Rejected")} aria-label={`Reject ${row.original.title}`} title="Reject request"><X size={16} /></button></div> : <span className="muted-copy">Completed</span> }),
   ];
 }
 
 export default function ApprovalsPage() {
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
+  const approvalsQuery = useQuery({
+    queryKey: queryKeys.approvals.all,
+    queryFn: fetchApprovalsSnapshot,
+  });
   const [approvals, setApprovals] = useState([]);
   const [pendingAction, setPendingAction] = useState(null);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    const savedApprovals = getDemoValue("approvals");
-    if (Array.isArray(savedApprovals)) setApprovals(savedApprovals);
-  }, []);
+    if (approvalsQuery.data) setApprovals(approvalsQuery.data.approvals);
+  }, [approvalsQuery.data]);
+
+  const saveApprovalSnapshot = (nextApprovals) => {
+    const snapshot = { approvals: nextApprovals, dataSource: "demo", errorMessage: "" };
+    setApprovals(nextApprovals);
+    queryClient.setQueryData(queryKeys.approvals.all, snapshot);
+    saveDemoValue("approvals", nextApprovals);
+  };
 
   const updateApproval = (id, status) => {
     const next = approvals.map((approval) => approval.id === id ? { ...approval, status } : approval);
-    setApprovals(next);
-    saveDemoValue("approvals", next);
+    saveApprovalSnapshot(next);
     showToast({ variant: status === "Approved" ? "success" : "info", title: `Request ${status.toLowerCase()}`, message: "The approval status was saved successfully." });
   };
 
   const createApproval = (request) => {
     const next = { id: `approval-${Date.now()}`, ...request, createdAt: "Just now", status: "Pending" };
     const nextApprovals = [next, ...approvals];
-    setApprovals(nextApprovals);
-    saveDemoValue("approvals", nextApprovals);
+    saveApprovalSnapshot(nextApprovals);
     setCreating(false);
     showToast({ variant: "success", title: "Approval request submitted", message: "It is now waiting in the approval queue." });
   };
@@ -82,7 +94,7 @@ export default function ApprovalsPage() {
     setPendingAction(null);
   };
 
-  return <PageShell>
+  return (
     <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
       <div className="module-header"><div><h1>Approval Requests</h1><p className="muted-copy">Review sensitive changes and keep the operating team on track.</p></div><Button onClick={() => setCreating(true)}><CirclePlus size={16} /> New request</Button></div>
       <section className="stat-grid module-stats approval-kpi-grid">
@@ -97,5 +109,5 @@ export default function ApprovalsPage() {
         {pendingAction ? <div className="dialog-content"><span className="setup-check-icon"><ListChecks size={17} /></span><h2>{pendingAction.label === "approve" ? "Approve this request?" : "Reject this request?"}</h2><p className="muted-copy">This demo will update the approval status and save it in the current session.</p><div className="dialog-actions"><Button variant="ghost" onClick={() => setPendingAction(null)}>Cancel</Button><Button onClick={confirmAction}>{pendingAction.label === "approve" ? "Approve request" : "Reject request"}</Button></div></div> : null}
       </Dialog>
     </motion.div>
-  </PageShell>;
+  );
 }

@@ -1,6 +1,7 @@
 import "./globals.css";
 import "./invoice-template.css";
 import "@/features/floor-plan/floor-plan.css";
+import "sileo/styles.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/ui/toast-provider";
 

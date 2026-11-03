@@ -1,9 +1,21 @@
 // TITLE: DEMO SESSION STORAGE
 const SESSION_PREFIX = "cubicle-demo-";
 const EMPTY_WORKSPACE_MARKER = "empty-workspace-v1";
+const LEGACY_SENSITIVE_KEYS = new Set(["password", "passwordDraft", "pin", "pinChangedAt"]);
+
+export function clearLegacySensitiveDemoValues() {
+  if (typeof window === "undefined") return;
+  LEGACY_SENSITIVE_KEYS.forEach((key) => window.sessionStorage.removeItem(`${SESSION_PREFIX}${key}`));
+}
+
+if (typeof window !== "undefined") clearLegacySensitiveDemoValues();
 
 export function saveDemoValue(key, value, options: { notify?: boolean } = {}) {
   if (typeof window === "undefined") return;
+  if (LEGACY_SENSITIVE_KEYS.has(key)) {
+    clearLegacySensitiveDemoValues();
+    return;
+  }
   window.sessionStorage.setItem(`${SESSION_PREFIX}${key}`, JSON.stringify(value));
   if (options.notify === false) return;
   // sessionStorage does not emit a storage event in the same document. The
@@ -13,6 +25,10 @@ export function saveDemoValue(key, value, options: { notify?: boolean } = {}) {
 
 export function getDemoValue(key) {
   if (typeof window === "undefined") return null;
+  if (LEGACY_SENSITIVE_KEYS.has(key)) {
+    clearLegacySensitiveDemoValues();
+    return null;
+  }
   const raw = window.sessionStorage.getItem(`${SESSION_PREFIX}${key}`);
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
@@ -22,7 +38,6 @@ export function getDemoValue(key) {
 export function getDemoSession() {
   return {
     email: getDemoValue("email") || "",
-    password: getDemoValue("password") || "",
     mfaVerified: getDemoValue("mfaVerified") === true
   };
 }
@@ -30,13 +45,14 @@ export function getDemoSession() {
 // TITLE: DEMO SESSION RESET
 export function clearDemoSession() {
   if (typeof window === "undefined") return;
+  clearLegacySensitiveDemoValues();
   Object.keys(window.sessionStorage).filter((key) => key.startsWith(SESSION_PREFIX)).forEach((key) => window.sessionStorage.removeItem(key));
 }
 
 // TITLE: DEMO WORKSPACE RESET
 export function resetDemoWorkspace() {
   if (typeof window === "undefined") return;
-  const protectedKeys = new Set(["email", "password", "mfaVerified", "theme"]);
+  const protectedKeys = new Set(["email", "mfaVerified", "theme"]);
   Object.keys(window.sessionStorage).filter((key) => key.startsWith(SESSION_PREFIX) && !protectedKeys.has(key.replace(SESSION_PREFIX, ""))).forEach((key) => window.sessionStorage.removeItem(key));
 }
 

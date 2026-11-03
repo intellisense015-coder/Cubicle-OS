@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { checkRateLimits, rateLimitResponse, recordSecurityAudit } from "@/lib/server-security";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
@@ -18,6 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!supabaseUrl || !supabasePublicKey || !serviceRoleKey) return errorResponse("Server-side Supabase user management is not configured.", 503);
 
   const { id: targetUserId } = await context.params;
+  if (!z.string().uuid().safeParse(targetUserId).success) return errorResponse("Administrator account not found.", 404);
   const userClient = createClient(supabaseUrl, supabasePublicKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -33,6 +36,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (permissionError || canManage !== true) return errorResponse("You are not allowed to reset employee authenticators.", 403);
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const rateLimit = await checkRateLimits({
+    client: adminClient,
+    request,
+    scope: "admin.user_mfa_reset",
+    userId: callerData.user.id,
+    ipLimit: 10,
+    userLimit: 5,
+    windowSeconds: 15 * 60,
+  });
+  if (!rateLimit.allowed) {
+    await recordSecurityAudit(adminClient, { action: "admin.user_mfa_reset", outcome: "rate_limited", actorUserId: callerData.user.id, targetUserId, request, metadata: { scope: "admin.user_mfa_reset" } });
+    const response = rateLimitResponse(rateLimit);
+    return NextResponse.json({ error: "Too many MFA reset requests. Please try again later." }, response);
+  }
   const { data: targetAdmin, error: targetError } = await adminClient
     .from("admin_users")
     .select("user_id, role, active")
@@ -66,6 +83,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (remainingFactors.factors.length) {
     return errorResponse("Supabase did not remove the employee's authenticator. No reset was reported as successful.", 502);
   }
+
+  await recordSecurityAudit(adminClient, { action: "admin.user_mfa_reset", outcome: "success", actorUserId: callerData.user.id, targetUserId, request, metadata: { removed_factors: factors.length } });
 
   return NextResponse.json({ reset: true, removedFactors: factors.length });
 }

@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseMemberRow = {
   id: string;
@@ -145,24 +146,9 @@ export async function fetchSupabaseMembers() {
 }
 
 export async function createSupabaseMember(member: any) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("members")
-    .insert(toSupabaseMemberInput(member))
-    .select(memberColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMemberRow;
+  return secureOsMutation<SupabaseMemberRow>("member.create", { input: toSupabaseMemberInput(member) });
 }
 
 export async function updateSupabaseMember(id: string, member: any) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("members")
-    .update(toSupabaseMemberInput(member))
-    .eq("id", id)
-    .select(memberColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMemberRow;
+  return secureOsMutation<SupabaseMemberRow>("member.update", { id, input: toSupabaseMemberInput(member) });
 }

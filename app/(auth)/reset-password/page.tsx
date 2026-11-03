@@ -9,7 +9,6 @@ import { AuthShell } from "@/components/ui/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
-import { saveDemoValue } from "@/lib/demo-session";
 import { getSupabaseBrowserClient, hasSupabaseConfig } from "@/lib/supabase/client";
 
 // TITLE: RESET PASSWORD PAGE
@@ -71,7 +70,7 @@ export default function ResetPasswordPage() {
         if (updateError) throw updateError;
         await supabase.auth.signOut();
       } else {
-        saveDemoValue("password", password);
+        throw new Error("Password reset is unavailable until Supabase Auth is configured.");
       }
       router.push("/login?reset=success");
     } catch (updateException) {

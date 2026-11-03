@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { clearLegacySensitiveDemoValues } from "@/lib/demo-session";
 
 // TITLE: THEME CONTEXT
 const ThemeContext = createContext(null);
@@ -17,6 +18,7 @@ export function ThemeProvider({ children }) {
   };
 
   useEffect(() => {
+    clearLegacySensitiveDemoValues();
     const stored = window.sessionStorage.getItem("cubicle-theme");
     const nextTheme = stored === "dark" ? "dark" : "light";
     setTheme(nextTheme);

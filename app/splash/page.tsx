@@ -32,26 +32,39 @@ export default function SplashPage() {
 
   return (
     <main className="splash-shell">
+      <div className="splash-background" aria-hidden="true" />
       <motion.div
-        className="splash-orb splash-orb-one"
-        animate={{ scale: [1, 1.15, 1], opacity: [0.35, 0.55, 0.35] }}
-        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="splash-orb splash-orb-two"
-        animate={{ scale: [1.1, 0.95, 1.1], opacity: [0.25, 0.45, 0.25] }}
-        transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="splash-content"
-        initial={{ opacity: 0, y: 18, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+        className="splash-glass-panel"
+        initial={{ opacity: 0, x: 72, scale: 0.96, filter: "blur(12px)" }}
+        animate={{ opacity: 1, x: 0, scale: 1, filter: "blur(0px)" }}
+        transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
       >
-        <Logo size="xl" priority />
-        <h1>The Cubicle OS</h1>
-        <p className="splash-caption">A calmer way to run the workspace.</p>
-        <div className="splash-loader" aria-label="Loading" />
+        <div className="splash-content">
+          <motion.div
+            className="splash-brand-mark"
+            initial={{ opacity: 0, y: 12, scale: 0.88 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ delay: 0.22, duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Logo size="xl" priority />
+          </motion.div>
+          <motion.div
+            className="splash-copy"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.38, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <h1>The Cubicle OS</h1>
+            <p className="splash-caption">A calmer way to run the workspace.</p>
+          </motion.div>
+          <motion.div
+            className="splash-loader"
+            aria-label="Loading"
+            initial={{ opacity: 0, scaleX: 0.4 }}
+            animate={{ opacity: 1, scaleX: 1 }}
+            transition={{ delay: 0.62, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          />
+        </div>
       </motion.div>
     </main>
   );

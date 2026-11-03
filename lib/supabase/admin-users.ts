@@ -1,8 +1,10 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseAdminUserRow = {
   user_id: string;
   email: string | null;
+  phone?: string | null;
   full_name?: string | null;
   role: string;
   active: boolean;
@@ -55,12 +57,7 @@ export async function fetchSupabaseRolePermissions(roleKey: string) {
 }
 
 export async function updateSupabaseRolePermission(roleKey: string, permissionKey: string, granted: boolean) {
-  const { error } = await getSupabaseBrowserClient().rpc("set_admin_role_permission", {
-    p_role_key: roleKey,
-    p_permission_key: permissionKey,
-    p_granted: granted,
-  });
-  if (error) throw error;
+  await secureOsMutation<{ updated: boolean }>("admin.rolePermission", { roleKey, permissionKey, granted });
 }
 
 export async function fetchSupabaseUserPermissions(userId: string) {
@@ -72,28 +69,18 @@ export async function fetchSupabaseUserPermissions(userId: string) {
 }
 
 export async function updateSupabaseUserPermission(userId: string, permissionKey: string, granted: boolean) {
-  const { error } = await getSupabaseBrowserClient().rpc("set_admin_user_permission", {
-    p_user_id: userId,
-    p_permission_key: permissionKey,
-    p_granted: granted,
-  });
-  if (error) throw error;
+  await secureOsMutation<{ updated: boolean }>("admin.userPermission", { userId, permissionKey, granted });
 }
 
 export async function updateSupabaseAdminUser(userId: string, role: string, active: boolean) {
-  const { data, error } = await getSupabaseBrowserClient().rpc("update_admin_user", {
-    p_user_id: userId,
-    p_role: role,
-    p_active: active,
-  });
-
-  if (error) throw error;
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) throw new Error("Supabase did not return the updated user.");
-  return row as SupabaseAdminUserRow;
+  return secureOsMutation<SupabaseAdminUserRow>("admin.update", { userId, role, active });
 }
 
 export async function updateSupabaseAdminUserEmail(userId: string, email: string) {
+  return updateSupabaseAdminUserProfile(userId, { email });
+}
+
+export async function updateSupabaseAdminUserProfile(userId: string, input: { email?: string; fullName?: string; phone?: string }) {
   const supabase = getSupabaseBrowserClient();
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
@@ -105,10 +92,10 @@ export async function updateSupabaseAdminUserEmail(userId: string, email: string
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email: input.email, full_name: input.fullName, phone: input.phone }),
   });
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(payload?.error || "Supabase could not update the email address.");
+  if (!response.ok) throw new Error(payload?.error || "Supabase could not update the employee profile.");
   if (!payload?.user) throw new Error("Supabase did not return the updated user.");
   return payload.user as SupabaseAdminUserRow;
 }
@@ -174,10 +161,10 @@ export function mapSupabaseAdminUserToOsEmployee(row: SupabaseAdminUserRow) {
     roleKey,
     name,
     email,
-    phone: "",
+    phone: row.phone || "",
     role,
     permissions: role === "Owner" ? "All workspace access" : "Workspace access",
     status: row.active ? "Active" : "Disabled",
-    lastActivity: row.last_sign_in_at ? row.last_sign_in_at.slice(0, 10) : "Not available",
+    lastActivity: row.last_sign_in_at || "Not available",
   };
 }

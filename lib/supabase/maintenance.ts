@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseMaintenanceRecordRow = {
   id: string;
@@ -123,78 +124,13 @@ export async function fetchSupabaseMaintenanceEvents() {
 }
 
 export async function createSupabaseMaintenanceRecord(record: any) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("maintenance_records")
-    .insert({
-      workspace_id: String(record.workspaceId),
-      status: record.status,
-      category: String(record.category || "Uncategorized"),
-      severity: record.severity,
-      title: String(record.title || "Maintenance issue"),
-      description: String(record.description || ""),
-      reported_by: await currentUserId(),
-      reported_at: record.reportedAt || new Date().toISOString(),
-      assigned_to_id: record.assignedToId || null,
-      started_at: record.startedAt || null,
-      resolved_by: record.resolvedById || null,
-      resolved_at: record.resolvedAt || null,
-      cancellation_reason: record.cancellationReason || null,
-      resolution_summary: record.resolutionSummary || null,
-      parts_used: record.partsUsed || null,
-      resolution_notes: record.resolutionNotes || null,
-      verified_ready_for_use: record.verifiedReadyForUse === true,
-      updated_at: record.updatedAt || new Date().toISOString(),
-    })
-    .select(recordColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMaintenanceRecordRow;
+  return secureOsMutation<SupabaseMaintenanceRecordRow>("maintenance.record.create", { record });
 }
 
 export async function updateSupabaseMaintenanceRecord(id: string, record: any) {
-  const resolvedBy = record.status === "RESOLVED" ? await currentUserId() : null;
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("maintenance_records")
-    .update({
-      status: record.status,
-      category: String(record.category || "Uncategorized"),
-      severity: record.severity,
-      title: String(record.title || "Maintenance issue"),
-      description: String(record.description || ""),
-      assigned_to_id: record.assignedToId || null,
-      started_at: record.startedAt || null,
-      resolved_by: resolvedBy,
-      resolved_at: record.resolvedAt || null,
-      cancellation_reason: record.cancellationReason || null,
-      resolution_summary: record.resolutionSummary || null,
-      parts_used: record.partsUsed || null,
-      resolution_notes: record.resolutionNotes || null,
-      verified_ready_for_use: record.verifiedReadyForUse === true,
-      updated_at: record.updatedAt || new Date().toISOString(),
-    })
-    .eq("id", id)
-    .select(recordColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMaintenanceRecordRow;
+  return secureOsMutation<SupabaseMaintenanceRecordRow>("maintenance.record.update", { id, record });
 }
 
 export async function createSupabaseMaintenanceEvent(event: any, maintenanceId: string) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("maintenance_events")
-    .insert({
-      maintenance_id: maintenanceId,
-      from_status: event.fromStatus || null,
-      to_status: event.toStatus,
-      action: event.action,
-      notes: event.notes || null,
-      actor_id: await currentUserId(),
-    })
-    .select(eventColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMaintenanceEventRow;
+  return secureOsMutation<SupabaseMaintenanceEventRow>("maintenance.event.create", { event, maintenanceId });
 }

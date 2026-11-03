@@ -1,19 +1,22 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseMaintenanceCategoryRow = {
   id: string;
   name: string;
+  description?: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
 };
 
-const categoryColumns = "id,name,active,created_at,updated_at";
+const categoryColumns = "id,name,description,active,created_at,updated_at";
 
 export function mapSupabaseMaintenanceCategoryToOsCategory(row: SupabaseMaintenanceCategoryRow) {
   return {
     id: row.id,
     name: row.name,
+    subtitle: row.description || (row.active ? "Available for maintenance requests" : "Deactivated for new requests"),
     active: row.active,
   };
 }
@@ -28,31 +31,26 @@ export async function fetchSupabaseMaintenanceCategories() {
   return (data || []) as unknown as SupabaseMaintenanceCategoryRow[];
 }
 
-export async function createSupabaseMaintenanceCategory(name: string) {
+export async function createSupabaseMaintenanceCategory(name: string, description?: string) {
   const normalizedName = String(name || "").trim();
   if (!normalizedName) throw new Error("Maintenance category name is required.");
+  const normalizedDescription = String(description || "").trim();
 
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("maintenance_categories")
-    .insert({ name: normalizedName, active: true })
-    .select(categoryColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMaintenanceCategoryRow;
+  return secureOsMutation<SupabaseMaintenanceCategoryRow>("maintenance.category.create", {
+    name: normalizedName,
+    description: normalizedDescription,
+  });
 }
 
-export async function updateSupabaseMaintenanceCategory(id: string, input: { name: string; active: boolean }) {
+export async function updateSupabaseMaintenanceCategory(id: string, input: { name: string; active: boolean; description?: string }) {
   const normalizedName = String(input.name || "").trim();
   if (!normalizedName) throw new Error("Maintenance category name is required.");
+  const normalizedDescription = String(input.description || "").trim();
 
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("maintenance_categories")
-    .update({ name: normalizedName, active: input.active, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select(categoryColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseMaintenanceCategoryRow;
+  return secureOsMutation<SupabaseMaintenanceCategoryRow>("maintenance.category.update", {
+    id,
+    name: normalizedName,
+    ...(typeof input.description === "string" ? { description: normalizedDescription } : {}),
+    active: input.active,
+  });
 }

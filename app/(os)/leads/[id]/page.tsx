@@ -2,21 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { motion } from "motion/react";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { LeadFollowUpForm } from "@/components/os/lead-journey";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLead, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
 import { normalizeLeadJourney } from "@/lib/lead-journey";
 import { isTerminalLeadStage, normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
 import { leadRows } from "@/lib/module-b-data";
 import { useToast } from "@/components/ui/toast-provider";
 import { DetailPageHeader } from "@/components/ui/detail-page-header";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchLeadsSnapshot, type LeadsQuerySnapshot } from "@/lib/lead-query";
 
 function formatJourneyDate(date, time) {
   if (!date) return "—";
@@ -52,35 +53,22 @@ export default function LeadJourneyPage({ params }) {
   const routeParams = use<any>(params);
   const router = useRouter();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
+  const leadsQuery = useQuery({
+    queryKey: queryKeys.leads.all,
+    queryFn: fetchLeadsSnapshot,
+  });
   const [lead, setLead] = useState<any>(null);
   const [selectedEntry, setSelectedEntry] = useState<any>(null);
   const [showFollowUp, setShowFollowUp] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    const loadLead = async () => {
-      const stored = getDemoValue("leads");
-      const rows: any[] = Array.isArray(stored) ? stored : [];
-      const selected = rows.find((item) => item.id === routeParams.id);
-      if (selected) {
-        setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey: normalizeLeadJourney(selected, rows.indexOf(selected)) });
-        return;
-      }
-
-      if (!isSupabaseLeadsEnabled()) return;
-      try {
-        const remote = await fetchSupabaseLead(routeParams.id);
-        if (!remote || cancelled) return;
-        const mapped = mapSupabaseLeadToOsLead(remote);
-        saveDemoValue("leads", [mapped], { notify: false });
-        setLead({ ...mapped, stage: normalizeLeadStage(mapped.stage, mapped), journey: [] });
-      } catch {
-        // The page keeps its existing skeleton for a missing or inaccessible lead.
-      }
-    };
-    loadLead();
-    return () => { cancelled = true; };
-  }, [routeParams.id]);
+    const rows = leadsQuery.data?.leads ?? [];
+    const selectedIndex = rows.findIndex((item) => item.id === routeParams.id);
+    if (selectedIndex < 0) return;
+    const selected = rows[selectedIndex];
+    setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey: normalizeLeadJourney(selected, selectedIndex) });
+  }, [leadsQuery.data, routeParams.id]);
 
   const saveFollowUp = ({ entry, outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp }) => {
     if (!lead) return;
@@ -88,7 +76,12 @@ export default function LeadJourneyPage({ params }) {
     updated.journey = [entry, ...(Array.isArray(lead.journey) ? lead.journey : [])];
     const stored = getDemoValue("leads");
     const rows: any[] = Array.isArray(stored) ? stored : [];
-    saveDemoValue("leads", rows.map((item) => item.id === updated.id ? updated : item));
+    const nextLeads = rows.map((item) => item.id === updated.id ? updated : item);
+    saveDemoValue("leads", nextLeads);
+    queryClient.setQueryData<LeadsQuerySnapshot>(queryKeys.leads.all, (current) => current ? {
+      ...current,
+      leads: current.leads.map((item) => item.id === updated.id ? updated : item),
+    } : current);
     setLead(updated);
     setShowFollowUp(false);
     showToast({ variant: "success", title: "Follow-up logged", message: `${updated.name}'s journey was updated successfully.` });
@@ -98,7 +91,7 @@ export default function LeadJourneyPage({ params }) {
     }
   };
 
-  if (!lead) return <PageShell><AppSkeleton /></PageShell>;
+  if (leadsQuery.isPending || !lead) return <AppSkeleton />;
 
-  return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><DetailPageHeader backHref="/leads" backLabel="Back to leads" title={`${lead.name} journey`} description={`${lead.stage} · ${lead.company || "No company linked"}`} actions={!isTerminalLeadStage(lead.stage) ? <Button onClick={() => setShowFollowUp(true)}>Log follow-up</Button> : null} /><section className="table-card lead-journey-table-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Type</th><th>Date and time</th><th>Followed by</th><th>Channel</th><th>Purpose</th><th>Companions</th><th>Mood</th><th>Objections / doubts</th><th>Outcome</th><th>Conversation</th><th>Probability</th><th>Next follow-up</th></tr></thead><tbody>{lead.journey.map((entry) => <tr key={entry.id} onClick={() => setSelectedEntry(entry)}><td>{journeyEntryType(entry)}</td><td>{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</td><td>{entry.followedUpBy || "—"}</td><td>{journeyEntryChannel(entry)}</td><td>{journeyEntryValue(entry, entry.purpose)}</td><td>{journeyEntryValue(entry, entry.companions)}</td><td>{entry.entryType === "follow-up" ? "—" : <span className={moodClass(entry.mood)}>{entry.mood || "—"}</span>}</td><td>{journeyEntryValue(entry, entry.objections)}</td><td>{entry.outcome || "—"}</td><td>{entry.conversationSummary || entry.notes || entry.purpose || "—"}</td><td>{entry.entryType === "follow-up" ? "—" : <span className={`journey-probability journey-probability-${(entry.conversionProbability || "medium").toLowerCase()}`}>{entry.conversionProbability || "—"}</span>}</td><td>{formatJourneyDate(entry.nextFollowUpDate, entry.nextFollowUpTime)}</td></tr>)}</tbody></table></div></section><Dialog open={Boolean(selectedEntry)} onClose={() => setSelectedEntry(null)} ariaLabel="Interaction details">{selectedEntry ? <JourneyEntryDetails entry={selectedEntry} onClose={() => setSelectedEntry(null)} /> : null}</Dialog><Dialog open={showFollowUp} onClose={() => setShowFollowUp(false)} ariaLabel="Log follow-up"><LeadFollowUpForm lead={lead} onCancel={() => setShowFollowUp(false)} onSave={saveFollowUp} /></Dialog></motion.div></PageShell>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><DetailPageHeader backHref="/leads" backLabel="Back to leads" title={`${lead.name} journey`} description={`${lead.stage} · ${lead.company || "No company linked"}`} actions={!isTerminalLeadStage(lead.stage) ? <Button onClick={() => setShowFollowUp(true)}>Log follow-up</Button> : null} /><section className="table-card lead-journey-table-card"><div className="table-scroll"><table className="data-table"><thead><tr><th>Type</th><th>Date and time</th><th>Followed by</th><th>Channel</th><th>Purpose</th><th>Companions</th><th>Mood</th><th>Objections / doubts</th><th>Outcome</th><th>Conversation</th><th>Probability</th><th>Next follow-up</th></tr></thead><tbody>{lead.journey.map((entry) => <tr key={entry.id} onClick={() => setSelectedEntry(entry)}><td>{journeyEntryType(entry)}</td><td>{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</td><td>{entry.followedUpBy || "—"}</td><td>{journeyEntryChannel(entry)}</td><td>{journeyEntryValue(entry, entry.purpose)}</td><td>{journeyEntryValue(entry, entry.companions)}</td><td>{entry.entryType === "follow-up" ? "—" : <span className={moodClass(entry.mood)}>{entry.mood || "—"}</span>}</td><td>{journeyEntryValue(entry, entry.objections)}</td><td>{entry.outcome || "—"}</td><td>{entry.conversationSummary || entry.notes || entry.purpose || "—"}</td><td>{entry.entryType === "follow-up" ? "—" : <span className={`journey-probability journey-probability-${(entry.conversionProbability || "medium").toLowerCase()}`}>{entry.conversionProbability || "—"}</span>}</td><td>{formatJourneyDate(entry.nextFollowUpDate, entry.nextFollowUpTime)}</td></tr>)}</tbody></table></div></section><Dialog open={Boolean(selectedEntry)} onClose={() => setSelectedEntry(null)} ariaLabel="Interaction details">{selectedEntry ? <JourneyEntryDetails entry={selectedEntry} onClose={() => setSelectedEntry(null)} /> : null}</Dialog><Dialog open={showFollowUp} onClose={() => setShowFollowUp(false)} ariaLabel="Log follow-up"><LeadFollowUpForm lead={lead} onCancel={() => setShowFollowUp(false)} onSave={saveFollowUp} /></Dialog></motion.div>;
 }

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createColumnHelper } from "@tanstack/react-table";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, CirclePlus, Power, Search } from "lucide-react";
 import { motion } from "motion/react";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
 import { Dialog } from "@/components/ui/dialog";
@@ -17,9 +18,12 @@ import { useToast } from "@/components/ui/toast-provider";
 import { z } from "zod";
 import { closeCurrentMembership } from "@/lib/member-lifecycle";
 import { useHasPermission } from "@/lib/access-control";
-import { createSupabaseCompany, fetchSupabaseCompanies, mapSupabaseCompanyToOsCompany, updateSupabaseCompanyStatus } from "@/lib/supabase/companies";
-import { fetchSupabaseMembers, mapSupabaseMemberToOsMember, updateSupabaseMember } from "@/lib/supabase/members";
+import { createSupabaseCompany, mapSupabaseCompanyToOsCompany, updateSupabaseCompanyStatus } from "@/lib/supabase/companies";
+import { mapSupabaseMemberToOsMember, updateSupabaseMember } from "@/lib/supabase/members";
 import { assignSupabaseMemberToWorkspace } from "@/lib/supabase/workspaces";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchCompaniesSnapshot } from "@/lib/company-query";
+import { fetchMembersSnapshot } from "@/lib/member-query";
 
 const companySchema = z.object({ name: z.string().trim().min(1, "Enter the company name.") });
 
@@ -51,7 +55,7 @@ function createCompanyColumns(onToggleStatus, canEdit) {
     columnHelper.display({
       id: "actions",
       header: "Action",
-      cell: ({ row }) => canEdit ? <button className="table-action" type="button" onClick={() => onToggleStatus(row.original)}><Power size={13} /> {row.original.status === "Active" ? "Deactivate" : "Activate"}</button> : <span className="read-only-label">Read only</span>,
+      cell: ({ row }) => canEdit ? <div className="lead-table-actions"><button className="action-icon-btn" type="button" onClick={() => onToggleStatus(row.original)} aria-label={`${row.original.status === "Active" ? "Deactivate" : "Activate"} ${row.original.name}`} title={row.original.status === "Active" ? "Deactivate company" : "Activate company"}><Power size={16} /></button></div> : <span className="read-only-label">Read only</span>,
     }),
   ];
 }
@@ -60,13 +64,17 @@ function CompanyForm({ onCancel, onSave }) {
   const formApi = useForm({ resolver: zodResolver(companySchema), defaultValues: { name: "" }, mode: "onBlur" });
   const { register, handleSubmit, formState } = formApi;
   const error = formState.errors.name?.message;
-  return <div className="dialog-content"><div className="card-heading"><div><span className="seat-details-label">New company</span><h2>Add company</h2><p className="muted-copy">Create a company record for member assignments.</p></div></div><form onSubmit={handleSubmit((values) => onSave({ id: `company-${Date.now()}`, name: values.name.trim(), status: "Active" }))}><label className="settings-label">Company name<Input className={error ? "has-error" : ""} {...register("name")} aria-invalid={Boolean(error)} />{error && <span className="lead-form-error">{error}</span>}</label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting}><Building2 size={15} /> Save company</Button></div></form></div>;
+  return <div className="dialog-content"><div className="card-heading"><div><span className="seat-details-label">New company</span><h2>Add company</h2><p className="muted-copy">Create a company record for member assignments.</p></div></div><form onSubmit={handleSubmit((values) => onSave({ id: `company-${Date.now()}`, name: values.name.trim(), status: "Active" }))}><label className="settings-label">Company name<Input className={error ? "has-error" : ""} {...register("name")} aria-invalid={Boolean(error)} />{error && <span className="lead-form-error">{error}</span>}</label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><Building2 size={15} /> Save company</Button></div></form></div>;
 }
 
 export default function CompaniesPage() {
   const { showToast } = useToast();
   const canView = useHasPermission("companies.read");
   const canEdit = useHasPermission("companies.write");
+  const queryClient = useQueryClient();
+  const companiesQuery = useQuery({ queryKey: queryKeys.companies.all, queryFn: fetchCompaniesSnapshot, enabled: canView });
+  const membersQuery = useQuery({ queryKey: queryKeys.members.all, queryFn: fetchMembersSnapshot, enabled: canView });
+  const hydratedMissingKey = useRef("");
   const [companies, setCompanies] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [companyView, setCompanyView] = useState("active");
@@ -75,50 +83,59 @@ export default function CompaniesPage() {
   const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
-      if (!canView) {
-        setCompanies([]);
-        setMembers([]);
-        return;
-      }
-      try {
-        const [companyRows, memberRows] = await Promise.all([fetchSupabaseCompanies(), fetchSupabaseMembers()]);
-        const loadedMembers = memberRows.map(mapSupabaseMemberToOsMember);
-        const loadedCompanies = companyRows.map(mapSupabaseCompanyToOsCompany);
-        const knownNames = new Set(loadedCompanies.map((company) => company.name.trim().toLowerCase()));
-        const missingCompanies = [...new Set(loadedMembers.map((member) => String(member.company || "").trim()).filter((name) => name && name !== "Unassigned" && name !== "No company" && !knownNames.has(name.toLowerCase())))];
-        // Loading a read-only company directory must never try to create rows.
-        // Members can contain a company name before a canonical companies row
-        // exists, so show that name locally until an editor creates it.
-        const createdCompanies = canEdit
-          ? await Promise.all(missingCompanies.map((name) => createSupabaseCompany(name)))
-          : [];
-        const inferredCompanies = canEdit
-          ? []
-          : missingCompanies.map((name, index) => ({ id: `inferred-company-${index}`, name, status: "Active" }));
-        const nextCompanies = [...loadedCompanies, ...createdCompanies.map(mapSupabaseCompanyToOsCompany), ...inferredCompanies];
-        if (!cancelled) {
-          setMembers(loadedMembers);
-          setCompanies(nextCompanies);
-          saveDemoValue("members", loadedMembers);
-          saveDemoValue("companies", nextCompanies);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setMembers([]);
-          setCompanies([]);
-          showToast({ variant: "error", title: "Companies could not be loaded", message: error?.message || "Supabase did not return the company records." });
-        }
-      }
-    };
-    void refresh();
+    if (!canView) {
+      setCompanies([]);
+      setMembers([]);
+      return;
+    }
     const handleDemoChange = (event) => {
-      if (["members", "companies"].includes(event.detail?.key || "")) void refresh();
+      const key = event.detail?.key || "";
+      if (key === "members") void queryClient.invalidateQueries({ queryKey: queryKeys.members.all, refetchType: "active" });
+      if (key === "companies") void queryClient.invalidateQueries({ queryKey: queryKeys.companies.all, refetchType: "active" });
     };
     window.addEventListener("cubicle-demo-change", handleDemoChange);
-    return () => { cancelled = true; window.removeEventListener("cubicle-demo-change", handleDemoChange); };
-  }, [canEdit, canView, showToast]);
+    return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
+  }, [canView, queryClient]);
+
+  useEffect(() => {
+    if (!canView || !membersQuery.data || !companiesQuery.data) return;
+    const loadedMembers = membersQuery.data.members;
+    const loadedCompanies = companiesQuery.data.companies;
+    const knownNames = new Set(loadedCompanies.map((company) => String(company.name || "").trim().toLowerCase()));
+    const missingCompanies = [...new Set(loadedMembers.map((member) => String(member.company || "").trim()).filter((name) => name && name !== "Unassigned" && name !== "No company" && !knownNames.has(name.toLowerCase())))];
+    const missingKey = missingCompanies.slice().sort().join("|");
+
+    setMembers(loadedMembers);
+    setCompanies(loadedCompanies);
+    saveDemoValue("members", loadedMembers, { notify: false });
+    saveDemoValue("companies", loadedCompanies, { notify: false });
+
+    if (canEdit && missingCompanies.length > 0 && hydratedMissingKey.current !== missingKey) {
+      hydratedMissingKey.current = missingKey;
+      void Promise.all(missingCompanies.map((name) => createSupabaseCompany(name))).then((createdRows) => {
+        const nextCompanies = [...loadedCompanies, ...createdRows.map(mapSupabaseCompanyToOsCompany)];
+        setCompanies(nextCompanies);
+        saveDemoValue("companies", nextCompanies, { notify: false });
+        queryClient.setQueryData(queryKeys.companies.all, (current: any) => ({ ...(current || { dataSource: "supabase", errorMessage: "" }), companies: nextCompanies, errorMessage: "" }));
+      }).catch((error) => showToast({ variant: "error", title: "Companies could not be completed", message: error?.message || "Supabase could not create missing company records." }));
+    } else if (!canEdit && missingCompanies.length > 0) {
+      setCompanies([...loadedCompanies, ...missingCompanies.map((name, index) => ({ id: `inferred-company-${index}`, name, status: "Active" }))]);
+    }
+
+    if (membersQuery.data.errorMessage) showToast({ variant: "error", title: "Company members could not be refreshed", message: membersQuery.data.errorMessage });
+    if (companiesQuery.data.errorMessage) showToast({ variant: "error", title: "Companies could not be refreshed", message: companiesQuery.data.errorMessage });
+  }, [canEdit, canView, companiesQuery.data, membersQuery.data, queryClient, showToast]);
+
+  const persistCompanies = (nextCompanies) => {
+    setCompanies(nextCompanies);
+    saveDemoValue("companies", nextCompanies, { notify: false });
+    queryClient.setQueryData(queryKeys.companies.all, (current: any) => ({ ...(current || { dataSource: "demo", errorMessage: "" }), companies: nextCompanies, errorMessage: "" }));
+  };
+  const persistMembers = (nextMembers) => {
+    setMembers(nextMembers);
+    saveDemoValue("members", nextMembers, { notify: false });
+    queryClient.setQueryData(queryKeys.members.all, (current: any) => ({ ...(current || { dataSource: "demo", errorMessage: "" }), members: nextMembers, errorMessage: "" }));
+  };
 
   const addCompany = async (company) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can add company records." }); return; }
@@ -126,8 +143,7 @@ export default function CompaniesPage() {
       const row = await createSupabaseCompany(company.name);
       const nextCompany = normalizeCompanyRecord(mapSupabaseCompanyToOsCompany(row), companies.length);
       const nextCompanies = [nextCompany, ...companies.filter((item) => item.name.toLowerCase() !== nextCompany.name.toLowerCase())];
-      setCompanies(nextCompanies);
-      saveDemoValue("companies", nextCompanies);
+      persistCompanies(nextCompanies);
       setShowForm(false);
       showToast({ variant: "success", title: "Company added", message: `${nextCompany.name} was saved to Supabase.` });
     } catch (error) {
@@ -160,14 +176,13 @@ export default function CompaniesPage() {
         if (Array.isArray(savedWorkspaces)) {
           const associatedMemberIds = new Set(associatedMembers.map((member) => member.id));
           const nextWorkspaces = savedWorkspaces.map((workspace) => associatedMemberIds.has(workspace.memberId) ? { ...workspace, status: "available" } : workspace);
-          saveDemoValue("workspaces", nextWorkspaces);
+          saveDemoValue("workspaces", nextWorkspaces, { notify: false });
+          queryClient.setQueryData(queryKeys.workspaces.all, (current: any) => ({ ...(current || { dataSource: "demo", errorMessage: "" }), workspaces: nextWorkspaces, errorMessage: "" }));
         }
       }
 
-      setCompanies(nextCompanies);
-      setMembers(nextMembers);
-      saveDemoValue("companies", nextCompanies);
-      saveDemoValue("members", nextMembers);
+      persistCompanies(nextCompanies);
+      persistMembers(nextMembers);
       setSelectedCompany((current) => current?.id === company.id ? { ...company, ...nextCompany } : current);
       showToast({
         variant: "success",
@@ -186,7 +201,7 @@ export default function CompaniesPage() {
   const deactivatedCount = companies.length - activeCount;
   const selectedCompanyMembers = selectedCompany ? members.filter((member) => String(member.company || "").trim().toLowerCase() === String(selectedCompany.name || "").trim().toLowerCase()) : [];
 
-  if (!canView) return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Companies</h1><p className="muted-copy">Company records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Companies — View access.</div></motion.div></PageShell>;
+  if (!canView) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Companies</h1><p className="muted-copy">Company records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Companies — View access.</div></motion.div>;
 
-  return <PageShell><motion.div className="module-content companies-page" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Companies</h1><p className="muted-copy">Manage company records separately from the member directory.</p></div>{canEdit ? <Button onClick={() => setShowForm(true)}><CirclePlus size={16} /> Add company</Button> : <span className="read-only-label">Admin editing only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<Building2 size={18} />} label="Total companies" value={companies.length} detail="Saved company records" /><KpiCard icon={<Building2 size={18} />} label="Activated" value={activeCount} detail="Available for assignments" /><KpiCard icon={<Power size={18} />} label="Deactivated" value={deactivatedCount} detail="Hidden from the active view" /></section><div className="leads-toolbar"><div className="leads-search-wrap"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies" aria-label="Search companies" /></div></div><div className="section-heading"><div><h2>{companyView === "active" ? "Activated companies" : "Deactivated companies"}</h2><p className="muted-copy">Keep this table focused and easy to scan.</p></div><div className="directory-view-toggle" role="group" aria-label="Company status filter"><button className={companyView === "active" ? "is-selected" : ""} type="button" onClick={() => setCompanyView("active")}>Activated ({activeCount})</button><button className={companyView === "deactivated" ? "is-selected" : ""} type="button" onClick={() => setCompanyView("deactivated")}>Deactivated ({deactivatedCount})</button></div></div><DataTable columns={createCompanyColumns(toggleCompanyStatus, canEdit)} data={visibleCompanies} onRowClick={(company) => setSelectedCompany(company)} emptyMessage={companyView === "active" ? "No activated companies found." : "No deactivated companies found."} /><Dialog open={Boolean(selectedCompany)} onClose={() => setSelectedCompany(null)} ariaLabel="Company details">{selectedCompany ? <div className="dialog-content company-details-dialog"><div className="card-heading"><div><span className="seat-details-label">Company profile</span><h2>{selectedCompany.name}</h2><p className="muted-copy">{selectedCompanyMembers.length} member{selectedCompanyMembers.length === 1 ? "" : "s"} linked to this company</p></div><span className={`status-tag ${isActiveCompany(selectedCompany) ? "status-active" : "status-inactive"}`}>{isActiveCompany(selectedCompany) ? "Activated" : "Deactivated"}</span></div><div className="company-member-detail-list">{selectedCompanyMembers.length > 0 ? selectedCompanyMembers.map((member) => <article className="company-member-detail-card" key={member.id}><div className="company-member-detail-heading"><div><strong>{member.member || "Unnamed member"}</strong><span>{member.email || member.phone || "Contact details not recorded"}</span></div><span className={`status-tag ${isActiveMember(member) ? "status-active" : "status-inactive"}`}>{isActiveMember(member) ? "Activated" : "Deactivated"}</span></div><dl className="company-member-detail-grid"><div><dt>Member ID</dt><dd>{member.id || "—"}</dd></div><div><dt>Email</dt><dd>{member.email || "—"}</dd></div><div><dt>Phone</dt><dd>{member.phone || "—"}</dd></div><div><dt>Assigned space</dt><dd>{member.space || member.spaceId || "Unassigned"}</dd></div><div><dt>Monthly rent</dt><dd>{member.rent || "—"}</dd></div><div><dt>Security deposit</dt><dd>{member.deposit || "—"}</dd></div><div><dt>Joined</dt><dd>{member.joined || "—"}</dd></div><div><dt>Billing start</dt><dd>{member.billingStartDate || "—"}</dd></div><div><dt>Due day</dt><dd>{member.dueDay ? `Day ${member.dueDay}` : "—"}</dd></div></dl></article>) : <div className="table-empty-state">No members are linked to this company.</div>}</div><div className="dialog-actions"><Button variant="ghost" onClick={() => setSelectedCompany(null)}>Close</Button></div></div> : null}</Dialog><Dialog open={showForm} onClose={() => setShowForm(false)} ariaLabel="Add company"><CompanyForm onCancel={() => setShowForm(false)} onSave={addCompany} /></Dialog></motion.div></PageShell>;
+  return <motion.div className="module-content companies-page" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Companies</h1><p className="muted-copy">Manage company records separately from the member directory.</p></div>{canEdit ? <Button onClick={() => setShowForm(true)}><CirclePlus size={16} /> Add company</Button> : <span className="read-only-label">Admin editing only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<Building2 size={18} />} label="Total companies" value={companies.length} detail="Saved company records" /><KpiCard icon={<Building2 size={18} />} label="Activated" value={activeCount} detail="Available for assignments" /><KpiCard icon={<Power size={18} />} label="Deactivated" value={deactivatedCount} detail="Hidden from the active view" /></section><div className="leads-toolbar page-search-row"><div className="header-search-wrap page-search-wrap"><Search size={14} className="search-leading-icon" /><input type="text" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" aria-label="Search companies" className="search-input" /><div className="search-kbd-pill"><span>Ctrl K</span></div></div></div><div className="section-heading"><div><h2>{companyView === "active" ? "Activated companies" : "Deactivated companies"}</h2><p className="muted-copy">Keep this table focused and easy to scan.</p></div><div className="directory-view-toggle" role="group" aria-label="Company status filter"><button className={companyView === "active" ? "is-selected" : ""} type="button" onClick={() => setCompanyView("active")}>Activated ({activeCount})</button><button className={companyView === "deactivated" ? "is-selected" : ""} type="button" onClick={() => setCompanyView("deactivated")}>Deactivated ({deactivatedCount})</button></div></div><DataTable columns={createCompanyColumns(toggleCompanyStatus, canEdit)} data={visibleCompanies} onRowClick={(company) => setSelectedCompany(company)} emptyMessage={companyView === "active" ? "No activated companies found." : "No deactivated companies found."} /><Dialog open={Boolean(selectedCompany)} onClose={() => setSelectedCompany(null)} ariaLabel="Company details">{selectedCompany ? <div className="dialog-content company-details-dialog"><div className="card-heading"><div><span className="seat-details-label">Company profile</span><h2>{selectedCompany.name}</h2><p className="muted-copy">{selectedCompanyMembers.length} member{selectedCompanyMembers.length === 1 ? "" : "s"} linked to this company</p></div><span className={`status-tag ${isActiveCompany(selectedCompany) ? "status-active" : "status-inactive"}`}>{isActiveCompany(selectedCompany) ? "Activated" : "Deactivated"}</span></div><div className="company-member-detail-list">{selectedCompanyMembers.length > 0 ? selectedCompanyMembers.map((member) => <article className="company-member-detail-card" key={member.id}><div className="company-member-detail-heading"><div><strong>{member.member || "Unnamed member"}</strong><span>{member.email || member.phone || "Contact details not recorded"}</span></div><span className={`status-tag ${isActiveMember(member) ? "status-active" : "status-inactive"}`}>{isActiveMember(member) ? "Activated" : "Deactivated"}</span></div><dl className="company-member-detail-grid"><div><dt>Member ID</dt><dd>{member.id || "—"}</dd></div><div><dt>Email</dt><dd>{member.email || "—"}</dd></div><div><dt>Phone</dt><dd>{member.phone || "—"}</dd></div><div><dt>Assigned space</dt><dd>{member.space || member.spaceId || "Unassigned"}</dd></div><div><dt>Monthly rent</dt><dd>{member.rent || "—"}</dd></div><div><dt>Security deposit</dt><dd>{member.deposit || "—"}</dd></div><div><dt>Joined</dt><dd>{member.joined || "—"}</dd></div><div><dt>Billing start</dt><dd>{member.billingStartDate || "—"}</dd></div><div><dt>Due day</dt><dd>{member.dueDay ? `Day ${member.dueDay}` : "—"}</dd></div></dl></article>) : <div className="table-empty-state">No members are linked to this company.</div>}</div><div className="dialog-actions"><Button variant="ghost" onClick={() => setSelectedCompany(null)}>Close</Button></div></div> : null}</Dialog><Dialog open={showForm} onClose={() => setShowForm(false)} ariaLabel="Add company"><CompanyForm onCancel={() => setShowForm(false)} onSave={addCompany} /></Dialog></motion.div>;
 }

@@ -88,7 +88,7 @@ const DEFAULT_SEARCH_MODULES: SearchResultItem[] = [
   { label: "Proposals", href: "/proposals", category: "Billing", icon: FileText },
   { label: "Employees & Access", href: "/employees", category: "Administration", icon: UserRound },
   { label: "Approval Requests", href: "/approvals", category: "Administration", icon: ShieldCheck },
-  { label: "Settings", href: "/settings", category: "Administration", icon: Settings2 },
+  { label: "Company settings", href: "/settings", category: "Settings", icon: Settings2 },
   { label: "Email Templates", href: "/email-templates", category: "Administration", icon: Mail },
   { label: "Profile & Security", href: "/profile", category: "Account", icon: UserRound },
 ];
@@ -151,10 +151,33 @@ export function OsHeader({
 }: DashboardHeaderProps) {
   const [isScrolled, setIsScrolled] = useState(false);
   useEffect(() => {
-    const onScroll = () => setIsScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    const scrollContainers = [
+      document.querySelector<HTMLElement>(".erp-main"),
+      document.querySelector<HTMLElement>(".erp-page-frame"),
+    ].filter((container): container is HTMLElement => Boolean(container));
+
+    const updateScrolledState = () => {
+      const scrollTop = Math.max(
+        window.scrollY,
+        document.documentElement.scrollTop,
+        document.body.scrollTop,
+        ...scrollContainers.map((container) => container.scrollTop),
+      );
+      const nextScrolledState = scrollTop > 8;
+      setIsScrolled((currentState) => currentState === nextScrolledState ? currentState : nextScrolledState);
+    };
+
+    const scrollOptions: AddEventListenerOptions = { passive: true, capture: true };
+    window.addEventListener("scroll", updateScrolledState, scrollOptions);
+    document.addEventListener("scroll", updateScrolledState, scrollOptions);
+    scrollContainers.forEach((container) => container.addEventListener("scroll", updateScrolledState, scrollOptions));
+    updateScrolledState();
+
+    return () => {
+      window.removeEventListener("scroll", updateScrolledState, scrollOptions);
+      document.removeEventListener("scroll", updateScrolledState, scrollOptions);
+      scrollContainers.forEach((container) => container.removeEventListener("scroll", updateScrolledState, scrollOptions));
+    };
   }, []);
   const [activeBranchId, setActiveBranchId] = useState(selectedBranchId);
   const [openDropdown, setOpenDropdown] = useState<OpenDropdown>(null);
@@ -260,7 +283,9 @@ export function OsHeader({
     onBranchChange?.(id);
   };
 
-  const filteredSearchResults = searchIndex.filter((item) =>
+  const isOwner = String(userRole).trim().toLowerCase() === "owner";
+  const availableSearchIndex = isOwner ? searchIndex : searchIndex.filter((item) => item.href !== "/settings");
+  const filteredSearchResults = availableSearchIndex.filter((item) =>
     `${item.label} ${item.category || ""} ${item.description || ""}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
   ).slice(0, 6);
 
@@ -310,7 +335,7 @@ export function OsHeader({
               setSearchFocused(true);
               setOpenDropdown(null);
             }}
-            placeholder="Search dashboard"
+            placeholder="Search"
             className="search-input"
           />
           <div className="search-kbd-pill">
@@ -410,7 +435,7 @@ export function OsHeader({
                     type="text"
                     value={branchSearch}
                     onChange={(e) => setBranchSearch(e.target.value)}
-                    placeholder="Search locations..."
+                  placeholder="Search"
                     className="dropdown-input"
                     autoFocus
                   />
@@ -605,13 +630,13 @@ export function OsHeader({
         :root {
           --hdr-bg: rgba(255, 255, 255, 0.85);
           --hdr-card: #ffffff;
-          --hdr-soft: #f5f3ff;
-          --hdr-soft-hover: #ede9fe;
+          --hdr-soft: #E7F2EE;
+          --hdr-soft-hover: #D4E9E0;
           --hdr-border: #e2e8f0;
-          --hdr-text: #1e1b4b;
+          --hdr-text: #151515;
           --hdr-muted: #64748b;
-          --hdr-brand: #6657ee;
-          --hdr-brand-soft: #eeecff;
+          --hdr-brand: #004C39;
+          --hdr-brand-soft: #E7F2EE;
           --hdr-brand-text: #ffffff;
           --hdr-danger: #ea6b78;
           --hdr-danger-soft: rgba(234, 107, 120, 0.12);
@@ -625,14 +650,14 @@ export function OsHeader({
         html[data-theme="dark"] {
           --hdr-bg: rgba(26, 26, 34, 0.88);
           --hdr-card: #1f1f28;
-          --hdr-soft: #272733;
-          --hdr-soft-hover: #313140;
+          --hdr-soft: #2a302e;
+          --hdr-soft-hover: #35453f;
           --hdr-border: #2f2f3f;
           --hdr-text: #f8fafc;
           --hdr-muted: #94a3b8;
-          --hdr-brand: #9b92ff;
-          --hdr-brand-soft: rgba(155, 146, 255, 0.16);
-          --hdr-brand-text: #0f0e17;
+          --hdr-brand: #72D3A9;
+          --hdr-brand-soft: #19382F;
+          --hdr-brand-text: #06251B;
           --hdr-danger: #f07e89;
           --hdr-danger-soft: rgba(240, 126, 137, 0.16);
           --hdr-shadow: 0 16px 45px rgba(0, 0, 0, 0.4);
@@ -1019,7 +1044,7 @@ export function OsHeader({
           font-size: 11.5px;
           font-weight: 500;
           cursor: pointer;
-          box-shadow: 0 4px 12px rgba(102, 87, 238, 0.3);
+          box-shadow: 0 4px 12px rgba(0, 76, 57, 0.3);
           transition: transform 0.2s ease;
         }
 
@@ -1425,13 +1450,14 @@ export function OsHeader({
           border-bottom: 0 !important;
           backdrop-filter: none;
           -webkit-backdrop-filter: none;
-          transition: background .2s ease, border-color .2s ease, backdrop-filter .2s ease;
+          transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, backdrop-filter .2s ease;
         }
         .solexa-header.is-scrolled {
-          background: color-mix(in srgb, var(--paper) 76%, transparent) !important;
-          border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent) !important;
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
+          background: rgba(255, 255, 255, 0.04) !important;
+          border-bottom: 0 !important;
+          box-shadow: none !important;
+          backdrop-filter: blur(14px) saturate(115%) !important;
+          -webkit-backdrop-filter: blur(14px) saturate(115%) !important;
         }
         .greeting-label { font-size: 10px; color: var(--text); }
         .header-page-title { font-size: 12px; letter-spacing: -0.025em; }
@@ -1441,7 +1467,7 @@ export function OsHeader({
           border: 0;
           border-radius: 12px;
           background: var(--surface-soft, var(--hdr-soft));
-          font-size: 8px;
+          font-size: 10px;
         }
         .search-kbd-pill { font-size: 6px; }
         .header-actions { gap: 8px; }
@@ -1459,7 +1485,7 @@ export function OsHeader({
           .solexa-header { min-height: 74px; padding: 10px 20px; gap: 16px; }
           .header-page-title { font-size: 14px; }
           .header-search-wrap { flex: 0 1 310px; width: 310px; max-width: 310px; margin: 0 auto; }
-          .search-input { font-size: 8px; }
+          .search-input { font-size: 10px; }
           .user-avatar-btn { width: 32px; height: 32px; }
         }
         @media (min-width: 1280px) {

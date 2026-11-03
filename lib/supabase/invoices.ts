@@ -1,5 +1,6 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { calculateInvoiceTotals, parseAmount } from "@/lib/invoice-calculations";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseInvoiceRow = {
   id: string;
@@ -226,84 +227,15 @@ function isMissingSalesTaxColumn(error: unknown) {
 }
 
 export async function createSupabaseInvoice(invoice: any) {
-  const issueDate = dateKey(invoice.issueDate) || new Date().toISOString().slice(0, 10);
-  const periodStart = `${issueDate.slice(0, 7)}-01`;
-  const items = Array.isArray(invoice.charges) && invoice.charges.length
-    ? invoice.charges
-    : [{ description: invoice.itemDescription || "Workspace monthly rent", amount: invoice.subtotal || invoice.amount }];
-  const subtotal = parseAmount(invoice.subtotal || invoice.amount);
-  const totals = calculateInvoiceTotals({
-    subtotal,
-    salesTaxEnabled: Boolean(invoice.salesTaxEnabled),
-    salesTaxRate: invoice.salesTaxRate,
-    whtEnabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled),
-    whtRate: invoice.whtRate ?? invoice.taxRate,
-  });
-  const client = getSupabaseBrowserClient();
-  const insertPayload = {
-      invoice_number: invoice.invoice,
-      member_id: invoice.memberId,
-      workspace_id: invoice.workspaceId || null,
-      account_name: invoice.account,
-      period_start: periodStart,
-      period_end: lastDayOfMonth(periodStart),
-      issue_date: issueDate,
-      due_date: dateKey(invoice.dueDate) || issueDate,
-      billing_start_date: dateKey(invoice.billingStartDate) || null,
-      due_day: Number(invoice.dueDay) || 5,
-      subtotal: totals.subtotal,
-      tax_enabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled) && totals.whtAmount > 0,
-      tax_rate: totals.whtRate,
-      tax_amount: totals.whtAmount,
-      sales_tax_enabled: Boolean(invoice.salesTaxEnabled) && totals.salesTaxAmount > 0,
-      sales_tax_rate: totals.salesTaxRate,
-      sales_tax_amount: totals.salesTaxAmount,
-      total_amount: totals.total,
-      payment_status: String(invoice.paymentStatus || "Due soon").toLowerCase().replaceAll(" ", "_"),
-      email_status: "not_sent",
-      grace_until: dateKey(invoice.graceUntil) || null,
-      manual_date_override: invoice.manualDateOverride === true,
-      created_by: await currentUserId(),
-    };
-  let { data, error } = await client
-    .from("invoices")
-    .insert(insertPayload)
-    .select(invoiceColumns)
-    .single();
-
-  if (error && isMissingSalesTaxColumn(error)) {
-    const { sales_tax_enabled: _salesTaxEnabled, sales_tax_rate: _salesTaxRate, sales_tax_amount: _salesTaxAmount, ...legacyPayload } = insertPayload;
-    const legacyResult = await client
-      .from("invoices")
-      .insert(legacyPayload)
-      .select(legacyInvoiceColumns)
-      .single();
-    data = legacyResult.data;
-    error = legacyResult.error;
-  }
-
-  if (error) throw error;
-  const row = data as unknown as SupabaseInvoiceRow;
-  const { data: itemData, error: itemError } = await client
-    .from("invoice_items")
-    .insert(items.map((item: any, index: number) => ({
-      invoice_id: row.id,
-      description: String(item.description || "Charge").trim(),
-      quantity: Number(item.quantity) || 1,
-      unit_price: amount(item.amount ?? item.price),
-      sort_order: index,
-    })))
-    .select(itemColumns);
-
-  if (itemError) throw itemError;
+  const result = await secureOsMutation<{ row: SupabaseInvoiceRow; items: SupabaseInvoiceItemRow[]; totals: { total: number; salesTaxRate: number; salesTaxAmount: number } }>("invoice.create", { input: invoice });
   return {
-    ...mapSupabaseInvoiceToOsInvoice(row, (itemData || []) as unknown as SupabaseInvoiceItemRow[]),
+    ...mapSupabaseInvoiceToOsInvoice(result.row, result.items),
     // Preserve the just-entered inclusive Sales Tax in the current client
     // session when the compatibility path had to use the legacy schema.
-    salesTaxEnabled: Boolean(invoice.salesTaxEnabled) && totals.salesTaxAmount > 0,
-    salesTaxRate: String(totals.salesTaxRate),
-    salesTaxAmount: String(totals.salesTaxAmount),
-    amount: `PKR ${totals.total.toLocaleString("en-PK")}`,
+    salesTaxEnabled: Boolean(invoice.salesTaxEnabled) && result.totals.salesTaxAmount > 0,
+    salesTaxRate: String(result.totals.salesTaxRate),
+    salesTaxAmount: String(result.totals.salesTaxAmount),
+    amount: `PKR ${result.totals.total.toLocaleString("en-PK")}`,
   };
 }
 
@@ -325,24 +257,25 @@ export async function updateSupabaseInvoice(invoiceId: string, invoice: any) {
 }
 
 export async function recordSupabaseInvoicePayment(invoiceId: string, amountToRecord: number, paymentMethod = "other", reference = "", notes = "") {
-  const { data, error } = await getSupabaseBrowserClient().rpc("record_invoice_payment", {
-    p_invoice_id: invoiceId,
-    p_amount: amountToRecord,
-    p_payment_method: paymentMethod,
-    p_reference: reference || null,
-    p_notes: notes || null,
-  });
+  const { data: sessionData } = await getSupabaseBrowserClient().auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error("Your session has expired. Sign in again before recording a payment.");
 
-  if (error) throw error;
-  return data as unknown as SupabaseInvoiceRow;
+  const response = await fetch(`/api/invoices/${encodeURIComponent(invoiceId)}/payment`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      amount: amountToRecord,
+      paymentMethod,
+      reference,
+      notes,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "The invoice payment could not be recorded.");
+  return (payload.invoice ?? payload) as SupabaseInvoiceRow;
 }
 
 export async function queueSupabaseInvoiceEmail(invoiceId: string, deliveryKind = "initial") {
-  const { data, error } = await getSupabaseBrowserClient().rpc("queue_invoice_email", {
-    p_invoice_id: invoiceId,
-    p_delivery_kind: deliveryKind,
-  });
-
-  if (error) throw error;
-  return data as { id: string; status: string; recipient_email: string; invoice_id: string };
+  return secureOsMutation<{ id: string; status: string; recipient_email: string; invoice_id: string }>("invoice.queueEmail", { invoiceId, deliveryKind });
 }

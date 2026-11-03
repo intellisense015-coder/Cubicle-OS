@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseVisitStatus = "Scheduled" | "Completed" | "Cancelled" | "No-show";
 
@@ -86,38 +87,18 @@ export async function createSupabaseVisit(visit: {
   purpose: string;
   notes?: string;
 }) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("visits")
-    .insert({
-      lead_id: visit.leadId,
-      visitor_name: visit.visitor,
-      company_name: visit.company?.trim() || null,
-      visit_date: visit.date,
-      visit_time: normalizeTime(visit.time),
-      host: visit.host,
-      purpose: visit.purpose.trim(),
-      status: "Scheduled",
-      notes: visit.notes?.trim() || null,
-      created_by: await currentUserId(),
-    })
-    .select(visitColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseVisitRow;
+  return secureOsMutation<SupabaseVisitRow>("visit.create", {
+    leadId: visit.leadId,
+    visitor: visit.visitor,
+    company: visit.company?.trim() || "",
+    date: visit.date,
+    time: normalizeTime(visit.time),
+    host: visit.host,
+    purpose: visit.purpose.trim(),
+    notes: visit.notes?.trim() || "",
+  });
 }
 
 export async function updateSupabaseVisitStatus(id: string, status: SupabaseVisitStatus) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("visits")
-    .update({
-      status,
-      completed_at: status === "Completed" ? new Date().toISOString() : null,
-    })
-    .eq("id", id)
-    .select(visitColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseVisitRow;
+  return secureOsMutation<SupabaseVisitRow>("visit.status", { id, status });
 }

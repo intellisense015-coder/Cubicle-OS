@@ -2,26 +2,27 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowUpRight, CalendarDays, CreditCard, Grid2X2, ListChecks, Receipt, Users } from "lucide-react";
 import { motion } from "motion/react";
-import { PageShell } from "@/components/ui/page-shell";
-import { KpiCard } from "@/components/ui/kpi-card";
+
 import { DataTable } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { getDemoValue } from "@/lib/demo-session";
 import { getWorkspaceRecords, isAssignableWorkspace } from "@/lib/workspace-records";
 import { syncWorkspaceBilling } from "@/lib/billing";
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { normalizeLeadStage } from "@/lib/lead-stages";
-import { getActiveMemberInvoices } from "@/lib/billing";
 import { useToast } from "@/components/ui/toast-provider";
-import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
-import { fetchSupabaseVisits, mapSupabaseVisitToOsVisit } from "@/lib/supabase/visits";
-import { fetchSupabaseInvoices } from "@/lib/supabase/invoices";
-import { fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace } from "@/lib/supabase/workspaces";
+import { DashboardCleanView } from "@/components/os/dashboard-clean-view";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchLeadsSnapshot } from "@/lib/lead-query";
+import { fetchVisitsSnapshot } from "@/lib/visit-query";
+import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
+import { fetchInvoicesSnapshot } from "@/lib/invoice-query";
+import { fetchApprovalsSnapshot } from "@/lib/approval-query";
 
 function formatDashboardFollowUp(value) {
   if (!value || value === "Not scheduled") return value || "Not scheduled";
@@ -148,7 +149,14 @@ function dashboardAmount(value) {
 }
 
 function formatDashboardAmount(value) {
-  return `PKR ${dashboardAmount(value).toLocaleString("en-PK")}`;
+  return `Rs. ${dashboardAmount(value).toLocaleString("en-PK")}`;
+}
+
+function formatDashboardCompactAmount(value) {
+  const amount = dashboardAmount(value);
+  if (amount >= 1_000_000) return `Rs. ${(amount / 1_000_000).toFixed(2).replace(/\.00$/, "")}m`;
+  if (amount >= 1_000) return `Rs. ${Math.round(amount / 1_000)}k`;
+  return formatDashboardAmount(amount);
 }
 
 function dashboardWorkspaceSeats(workspace) {
@@ -183,6 +191,26 @@ function dashboardDateKey(date = new Date()) {
 export default function DashboardPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const leadsQuery = useQuery({
+    queryKey: queryKeys.leads.all,
+    queryFn: fetchLeadsSnapshot,
+  });
+  const visitsQuery = useQuery({
+    queryKey: queryKeys.visits.all,
+    queryFn: fetchVisitsSnapshot,
+  });
+  const workspacesQuery = useQuery({
+    queryKey: queryKeys.workspaces.all,
+    queryFn: fetchWorkspacesSnapshot,
+  });
+  const invoicesQuery = useQuery({
+    queryKey: queryKeys.invoices.all,
+    queryFn: fetchInvoicesSnapshot,
+  });
+  const approvalsQuery = useQuery({
+    queryKey: queryKeys.approvals.all,
+    queryFn: fetchApprovalsSnapshot,
+  });
   const [session, setSession] = useState(false);
   const [followUpRows, setFollowUpRows] = useState<any[]>([]);
   const [visitRows, setVisitRows] = useState<any[]>([]);
@@ -191,6 +219,42 @@ export default function DashboardPage() {
   const [approvalRows, setApprovalRows] = useState<any[]>([]);
   const [spaceOccupancy, setSpaceOccupancy] = useState({ occupied: 0, total: 0 });
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!leadsQuery.data) return;
+    const leads = leadsQuery.data.leads;
+    setFollowUpRows(leads.filter((lead) => lead.stage === "Follow-up due" && isFollowUpDueToday(lead.nextFollowUp)));
+  }, [leadsQuery.data]);
+
+  useEffect(() => {
+    if (!visitsQuery.data) return;
+    const visits = visitsQuery.data.visits;
+    setVisitRows(visits.filter((visit) => visit.status === "Scheduled" && isDateToday(visit.date)));
+  }, [visitsQuery.data]);
+
+  useEffect(() => {
+    if (!workspacesQuery.data) return;
+    const synced = syncWorkspaceBilling(workspacesQuery.data.workspaces).workspaces.filter(isAssignableWorkspace);
+    setWorkspaceRows(synced);
+    setSpaceOccupancy({
+      occupied: synced.filter((workspace) => workspace.status === "occupied").length,
+      total: synced.length,
+    });
+  }, [workspacesQuery.data]);
+
+  useEffect(() => {
+    if (!invoicesQuery.data) return;
+    const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
+    setInvoiceRows(invoicesQuery.data.invoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
+    if (invoicesQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Dashboard invoices could not be loaded", message: "Showing the saved invoice data." });
+    }
+  }, [invoicesQuery.data, showToast]);
+
+  useEffect(() => {
+    if (!approvalsQuery.data) return;
+    setApprovalRows(approvalsQuery.data.approvals);
+  }, [approvalsQuery.data]);
 
   useEffect(() => {
     setSession(true);
@@ -202,15 +266,6 @@ export default function DashboardPage() {
         occupied: workspaces.filter((workspace) => workspace.status === "occupied").length,
         total: workspaces.length,
       });
-
-      const savedMembers = getDemoValue("members");
-      const savedInvoices = getDemoValue("invoices");
-      const activeMemberInvoices = getActiveMemberInvoices(savedInvoices, Array.isArray(savedMembers) ? savedMembers : [], workspaces);
-      const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
-      setInvoiceRows(activeMemberInvoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
-
-      const savedApprovals = getDemoValue("approvals");
-      setApprovalRows(Array.isArray(savedApprovals) ? savedApprovals : []);
 
       const savedLeads = getDemoValue("leads");
       if (Array.isArray(savedLeads)) {
@@ -227,35 +282,6 @@ export default function DashboardPage() {
         setVisitRows([]);
       }
 
-      if (isSupabaseLeadsEnabled()) {
-        void Promise.all([fetchSupabaseLeads(), fetchSupabaseVisits(), fetchSupabaseInvoices()]).then(([leadRows, visitRowsFromSupabase, remoteInvoices]) => {
-          const remoteLeads = leadRows.map(mapSupabaseLeadToOsLead).map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
-          const remoteVisits = visitRowsFromSupabase.map(mapSupabaseVisitToOsVisit);
-          const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
-          setFollowUpRows(remoteLeads.filter((lead) => lead.stage === "Follow-up due" && isFollowUpDueToday(lead.nextFollowUp)));
-          setVisitRows(remoteVisits.filter((visit) => visit.status === "Scheduled" && isDateToday(visit.date)));
-          setInvoiceRows(remoteInvoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
-          if (remoteLeads.length) saveDemoValue("leads", remoteLeads, { notify: false });
-          if (visitRowsFromSupabase.length) saveDemoValue("visits", remoteVisits, { notify: false });
-          if (remoteInvoices.length) saveDemoValue("invoices", remoteInvoices, { notify: false });
-        }).catch((error) => {
-          showToast({ variant: "error", title: "Dashboard data could not be refreshed", message: error?.message || "Supabase did not return the latest leads and visits." });
-        });
-
-        void fetchSupabaseWorkspaces().then((remoteWorkspaceRows) => {
-          const remoteWorkspaces = remoteWorkspaceRows
-            .map(mapSupabaseWorkspaceToOsWorkspace)
-            .filter(isAssignableWorkspace);
-          setWorkspaceRows(remoteWorkspaces);
-          setSpaceOccupancy({
-            occupied: remoteWorkspaces.filter((workspace) => workspace.status === "occupied").length,
-            total: remoteWorkspaces.length,
-          });
-          if (remoteWorkspaces.length) saveDemoValue("workspaces", remoteWorkspaces, { notify: false });
-        }).catch((error) => {
-          showToast({ variant: "error", title: "Workspace data could not be refreshed", message: error?.message || "Supabase did not return the workspace records." });
-        });
-      }
     };
 
     loadDashboardData();
@@ -351,10 +377,25 @@ export default function DashboardPage() {
 
   if (!session) return <AppSkeleton />;
 
-  const occupancyPercentage = spaceOccupancy.total ? Math.round((spaceOccupancy.occupied / spaceOccupancy.total) * 100) : 0;
-  const availablePercentage = 100 - occupancyPercentage;
+  const occupancyPercentage = dashboardMetrics.totalSeats ? Math.round((dashboardMetrics.totalOccupied / dashboardMetrics.totalSeats) * 100) : 0;
 
-  return <PageShell><motion.div className="dashboard-content" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55 }}>
+  return <motion.div className="dashboard-content dashboard-clean-content" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55 }}><DashboardCleanView
+    dashboardMetrics={dashboardMetrics}
+    occupancyPercentage={occupancyPercentage}
+    paymentDueAmount={paymentDueAmount}
+    paymentRows={paymentRows}
+    paymentColumns={paymentColumns}
+    sortedFollowUpRows={sortedFollowUpRows}
+    sortedVisitRows={sortedVisitRows}
+    currentTime={currentTime}
+    pendingApprovals={pendingApprovals}
+    formatDashboardAmount={formatDashboardAmount}
+    formatDashboardCompactAmount={formatDashboardCompactAmount}
+    formatDashboardFollowUpAge={formatDashboardFollowUpAge}
+    formatDashboardVisitTime={formatDashboardVisitTime}
+    getPaymentRowClick={() => router.push("/invoices")}
+  /></motion.div>;
+  /*
     <div className="dashboard-main-grid">
       <div className="dashboard-main-column">
         <section className="dashboard-workspace-card">
@@ -367,7 +408,7 @@ export default function DashboardPage() {
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Sales capacity</span><h3>Seats to sell</h3><div className="dashboard-metric-row"><span>Private office seats</span><strong>{dashboardMetrics.privateAvailable}</strong></div><div className="dashboard-metric-row"><span>Shared seats</span><strong>{dashboardMetrics.sharedAvailable}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total available seats</span><strong>{dashboardMetrics.privateAvailable + dashboardMetrics.sharedAvailable}</strong></div></div>
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Pricing</span><h3>Average price</h3><div className="dashboard-metric-row"><span>Overall average price</span><strong>{formatDashboardAmount(dashboardMetrics.averagePrice)}</strong></div><div className="dashboard-metric-row"><span>Private office</span><strong>{formatDashboardAmount(dashboardMetrics.privateAveragePrice)}</strong></div><div className="dashboard-metric-row"><span>Shared seat</span><strong>{formatDashboardAmount(dashboardMetrics.sharedAveragePrice)}</strong></div></div>
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Revenue</span><h3>Monthly recurring revenue</h3><div className="dashboard-metric-row"><span>Private office MRR</span><strong>{formatDashboardAmount(dashboardMetrics.privateMrr)}</strong></div><div className="dashboard-metric-row"><span>Shared seats MRR</span><strong>{formatDashboardAmount(dashboardMetrics.sharedMrr)}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total MRR</span><strong>{formatDashboardAmount(dashboardMetrics.totalMrr)}</strong></div></div>
-          <div className="dashboard-metric-panel dashboard-opportunity-panel"><span className="dashboard-eyebrow">Revenue opportunity</span><h3>Opportunity loss</h3><strong className="dashboard-opportunity-value">{formatDashboardAmount(dashboardMetrics.opportunityLoss)}</strong><p>Estimated monthly revenue from currently available capacity.</p></div>
+          <div className="dashboard-metric-panel dashboard-opportunity-panel"><span className="dashboard-eyebrow">Opportunity Loss</span><h3>Opportunity Loss</h3><strong className="dashboard-opportunity-value">{formatDashboardAmount(dashboardMetrics.opportunityLoss)}</strong><p>Estimated monthly revenue from currently available capacity.</p></div>
         </section>
 
       <section className="dashboard-table-card">
@@ -529,5 +570,6 @@ export default function DashboardPage() {
         }
       }
     `}</style>
-  </motion.div></PageShell>;
+  </motion.div>;
+  */
 }

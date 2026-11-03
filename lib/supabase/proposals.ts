@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseProposalRow = {
   id: string;
@@ -171,55 +172,16 @@ export async function fetchSupabaseProposals() {
 }
 
 export async function createSupabaseProposal(input: any) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before creating a proposal.");
-
-  let proposalNumber = suppliedProposalNumber(input.proposalNumber) || await nextProposalNumber();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const { data, error } = await getSupabaseBrowserClient()
-      .from("proposals")
-      .insert({ ...payload(input, userId, proposalNumber), created_by: userId })
-      .select(proposalColumns)
-      .single();
-
-    if (!error) return mapSupabaseProposalToOsProposal(data as unknown as SupabaseProposalRow);
-    if (!isProposalNumberConflict(error) || attempt === 2) throw error;
-    proposalNumber = await nextProposalNumber();
-  }
-
-  throw new Error("A unique proposal number could not be generated. Please try again.");
+  const row = await secureOsMutation<SupabaseProposalRow>("proposal.create", { input });
+  return mapSupabaseProposalToOsProposal(row);
 }
 
 export async function updateSupabaseProposal(id: string, input: any) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before updating a proposal.");
-
-  const proposalNumber = String(input.proposalNumber || "").trim();
-  const updatePayload = payload(input, userId, proposalNumber);
-  delete updatePayload.proposal_number;
-
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("proposals")
-    .update(updatePayload)
-    .eq("id", id)
-    .select(proposalColumns)
-    .single();
-
-  if (error) throw error;
-  return mapSupabaseProposalToOsProposal(data as unknown as SupabaseProposalRow);
+  const row = await secureOsMutation<SupabaseProposalRow>("proposal.update", { id, input });
+  return mapSupabaseProposalToOsProposal(row);
 }
 
 export async function updateSupabaseProposalStatus(id: string, status: string) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before updating a proposal.");
-
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("proposals")
-    .update({ status: statusValue(status), updated_by: userId })
-    .eq("id", id)
-    .select(proposalColumns)
-    .single();
-
-  if (error) throw error;
-  return mapSupabaseProposalToOsProposal(data as unknown as SupabaseProposalRow);
+  const row = await secureOsMutation<SupabaseProposalRow>("proposal.status", { id, status });
+  return mapSupabaseProposalToOsProposal(row);
 }

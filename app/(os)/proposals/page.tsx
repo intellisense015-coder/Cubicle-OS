@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createColumnHelper } from "@tanstack/react-table";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { ChevronDown, Download, FileText, Mail, MessageCircle, Pencil, PlusCircle, ReceiptText, Send, X } from "lucide-react";
 import { motion } from "motion/react";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
 import { Dialog } from "@/components/ui/dialog";
@@ -19,12 +20,14 @@ import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { useToast } from "@/components/ui/toast-provider";
 import { numericField, numericString } from "@/lib/number-input";
 import { getSupabaseBrowserClient, isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
-import { fetchSupabaseMembers, mapSupabaseMemberToOsMember } from "@/lib/supabase/members";
-import { createSupabaseProposal, fetchSupabaseProposals, updateSupabaseProposal, updateSupabaseProposalStatus } from "@/lib/supabase/proposals";
+import { createSupabaseProposal, updateSupabaseProposal, updateSupabaseProposalStatus } from "@/lib/supabase/proposals";
 import { emailTemplates } from "@/features/email-templates/data";
 import { z } from "zod";
 import { useHasPermission } from "@/lib/access-control";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchMembersSnapshot } from "@/lib/member-query";
+import { fetchLeadsSnapshot } from "@/lib/lead-query";
+import { fetchProposalsSnapshot, type ProposalsQuerySnapshot } from "@/lib/proposal-query";
 
 const amountValue = (value: unknown) => Number(String(value ?? 0).replace(/[^0-9.-]/g, "")) || 0;
 const money = (value: number) => `PKR ${value.toLocaleString("en-PK")}`;
@@ -164,7 +167,7 @@ function ProposalForm({ leads, members, initialProposal, onCancel, onSave }: any
   const total = useMemo(() => Math.max(0, amountValue(watch("totalSeats")) * amountValue(watch("pricePerSeat")) - amountValue(watch("discount"))), [watch("totalSeats"), watch("pricePerSeat"), watch("discount")]);
   const error = (field: string) => formState.errors[field]?.message;
   const save = (values: any) => onSave({ ...values, proposalNumber: values.proposalNumber || undefined, total: money(total), selection: selectionForOffice(values.office) });
-  return <div className="dialog-content"><div className="card-heading"><div><span className="seat-details-label">{initialProposal ? "Edit proposal" : "New proposal"}</span><h2>{initialProposal ? "Edit proposal" : "Create proposal"}</h2></div></div><form className="inline-form-grid" onSubmit={handleSubmit(save)}><label className="settings-label">Proposal number<Input {...register("proposalNumber")} placeholder="Generated on save" readOnly /></label><label className="settings-label">Date of proposal<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><label className="settings-label">Title<Input className={error("title") ? "has-error" : ""} {...register("title")} placeholder="Workspace proposal" />{error("title") && <span className="lead-form-error">{error("title")}</span>}</label><label className="settings-label">Subtitle<Input {...register("subtitle")} placeholder="A tailored workspace plan" /></label><ProposalRecipientSelect leads={leads} members={members} value={recipientId} onChange={(recipient: any) => { setRecipientId(recipient.id); setValue("account", recipient.label, { shouldDirty: true }); }} />{error("account") && <span className="lead-form-error">{error("account")}</span>}<label className="settings-label">Office Number<Input {...register("office")} placeholder="Office 11" /></label><label className="settings-label">Total seats<Input className={error("totalSeats") ? "has-error" : ""} type="text" {...numericField(register, "totalSeats", true)} />{error("totalSeats") && <span className="lead-form-error">{error("totalSeats")}</span>}</label><label className="settings-label">Price per seat<Input className={error("pricePerSeat") ? "has-error" : ""} {...numericField(register, "pricePerSeat")} placeholder="0" />{error("pricePerSeat") && <span className="lead-form-error">{error("pricePerSeat")}</span>}</label><label className="settings-label">Total<Input value={money(total)} readOnly /></label><label className="settings-label">Discount<Input {...numericField(register, "discount")} placeholder="0" /></label><label className="settings-label">Monthly membership<Input {...numericField(register, "monthlyMembership")} placeholder="0" /></label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting}><ReceiptText size={15} /> {initialProposal ? "Save changes" : "Create proposal"}</Button></div></form></div>;
+  return <div className="dialog-content"><div className="card-heading"><div><span className="seat-details-label">{initialProposal ? "Edit proposal" : "New proposal"}</span><h2>{initialProposal ? "Edit proposal" : "Create proposal"}</h2></div></div><form className="inline-form-grid" onSubmit={handleSubmit(save)}><label className="settings-label">Proposal number<Input {...register("proposalNumber")} placeholder="Generated on save" readOnly /></label><label className="settings-label">Date of proposal<Input className={error("date") ? "has-error" : ""} type="date" {...register("date")} />{error("date") && <span className="lead-form-error">{error("date")}</span>}</label><label className="settings-label">Title<Input className={error("title") ? "has-error" : ""} {...register("title")} placeholder="Workspace proposal" />{error("title") && <span className="lead-form-error">{error("title")}</span>}</label><label className="settings-label">Subtitle<Input {...register("subtitle")} placeholder="A tailored workspace plan" /></label><ProposalRecipientSelect leads={leads} members={members} value={recipientId} onChange={(recipient: any) => { setRecipientId(recipient.id); setValue("account", recipient.label, { shouldDirty: true }); }} />{error("account") && <span className="lead-form-error">{error("account")}</span>}<label className="settings-label">Office Number<Input {...register("office")} placeholder="Office 11" /></label><label className="settings-label">Total seats<Input className={error("totalSeats") ? "has-error" : ""} type="text" {...numericField(register, "totalSeats", true)} />{error("totalSeats") && <span className="lead-form-error">{error("totalSeats")}</span>}</label><label className="settings-label">Price per seat<Input className={error("pricePerSeat") ? "has-error" : ""} {...numericField(register, "pricePerSeat")} placeholder="0" />{error("pricePerSeat") && <span className="lead-form-error">{error("pricePerSeat")}</span>}</label><label className="settings-label">Total<Input value={money(total)} readOnly /></label><label className="settings-label">Discount<Input {...numericField(register, "discount")} placeholder="0" /></label><label className="settings-label">Monthly membership<Input {...numericField(register, "monthlyMembership")} placeholder="0" /></label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><ReceiptText size={15} /> {initialProposal ? "Save changes" : "Create proposal"}</Button></div></form></div>;
 }
 
 function ProposalTemplatePreview({ proposal, onChange, frameRef }: any) {
@@ -178,6 +181,10 @@ export default function ProposalsPage() {
   const { showToast } = useToast();
   const canView = useHasPermission("proposals.read");
   const canWrite = useHasPermission("proposals.write");
+  const queryClient = useQueryClient();
+  const membersQuery = useQuery({ queryKey: queryKeys.members.all, queryFn: fetchMembersSnapshot, enabled: canView });
+  const leadsQuery = useQuery({ queryKey: queryKeys.leads.all, queryFn: fetchLeadsSnapshot, enabled: canView });
+  const proposalsQuery = useQuery({ queryKey: queryKeys.proposals.all, queryFn: fetchProposalsSnapshot, enabled: canView });
   const [proposals, setProposals] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -190,53 +197,44 @@ export default function ProposalsPage() {
   const [loadError, setLoadError] = useState("");
   const frameRef = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      if (!canView) {
-        if (!cancelled) {
-          setProposals([]);
-          setLeads([]);
-          setMembers([]);
-        }
-        return;
-      }
-      const saved = getDemoValue("proposals");
-      const savedLeads = getDemoValue("leads");
-      const savedMembers = getDemoValue("members");
-      const cachedLeads = Array.isArray(savedLeads) ? savedLeads : [];
-      const cachedMembers = Array.isArray(savedMembers) ? savedMembers : [];
-
-      if (!isSupabaseLeadsEnabled()) {
-        if (cancelled) return;
-        if (Array.isArray(saved)) setProposals(saved);
-        if (cachedLeads.length) setLeads(cachedLeads);
-        if (cachedMembers.length) setMembers(cachedMembers);
-        return;
-      }
-
-      try {
-        const [proposalRows, leadRows, memberRows] = await Promise.all([
-          fetchSupabaseProposals(),
-          fetchSupabaseLeads(),
-          fetchSupabaseMembers(),
-        ]);
-        if (cancelled) return;
-        const normalizedLeads = leadRows.map(mapSupabaseLeadToOsLead).map((lead) => {
-          const cached = cachedLeads.find((item) => item.id === lead.id);
-          return cached ? { ...lead, company: cached.company ?? lead.company } : lead;
-        });
-        setProposals(proposalRows);
-        setLeads(normalizedLeads);
-        setMembers(memberRows);
-        setLoadError("");
-      } catch (error) {
-        if (!cancelled) setLoadError(error?.message || "Proposals could not be loaded from Supabase.");
-      }
-    };
-    void load();
-    return () => { cancelled = true; };
-  }, [canView]);
-  const persist = (next: any[]) => { setProposals(next); saveDemoValue("proposals", next); };
+    if (!canView) {
+      setProposals([]);
+      setLeads([]);
+      setMembers([]);
+      return;
+    }
+    if (!proposalsQuery.data) return;
+    setProposals(proposalsQuery.data.proposals);
+    setLoadError(proposalsQuery.data.errorMessage);
+    if (proposalsQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Proposals could not be refreshed", message: proposalsQuery.data.errorMessage });
+    }
+  }, [canView, proposalsQuery.data, showToast]);
+  useEffect(() => {
+    if (!membersQuery.data) return;
+    setMembers(membersQuery.data.members);
+    if (membersQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Proposal members could not be refreshed", message: membersQuery.data.errorMessage });
+    }
+  }, [membersQuery.data, showToast]);
+  useEffect(() => {
+    if (!leadsQuery.data) return;
+    setLeads(leadsQuery.data.leads);
+    if (leadsQuery.data.errorMessage) {
+      showToast({ variant: "error", title: "Proposal leads could not be refreshed", message: leadsQuery.data.errorMessage });
+    }
+  }, [leadsQuery.data, showToast]);
+  const updateProposalCache = (next: any[], dataSource: "supabase" | "demo") => {
+    setProposals(next);
+    if (dataSource === "demo") saveDemoValue("proposals", next);
+    queryClient.setQueryData<ProposalsQuerySnapshot>(queryKeys.proposals.all, (current) => ({
+      ...(current || { proposals: [], dataSource, errorMessage: "" }),
+      proposals: next,
+      dataSource,
+      errorMessage: "",
+    }));
+  };
+  const persist = (next: any[]) => updateProposalCache(next, "demo");
   const saveProposal = async (form: any) => {
     if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot create or edit proposals." }); return; }
     if (!form?.account?.trim() || !form?.title?.trim()) { showToast({ variant: "error", title: "Proposal was not saved", message: "Choose a recipient and add a proposal title." }); return; }
@@ -268,7 +266,7 @@ export default function ProposalsPage() {
         const next = wasEditing
           ? proposals.map((item) => item.id === savedProposal.id ? savedProposal : item)
           : [savedProposal, ...proposals];
-        setProposals(next);
+        updateProposalCache(next, "supabase");
         setCreating(false); setEditing(null); setSelected(savedProposal);
         showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: `${savedProposal.proposalNumber} was saved to Supabase.` });
         return;
@@ -283,7 +281,7 @@ export default function ProposalsPage() {
     }
   };
   const updatePreview = (payload: any) => { if (!canWrite || !selected || !payload || typeof payload !== "object") return; const seats = Math.max(1, Math.floor(Number(payload.seats) || amountValue(selected.totalSeats) || 1)); const rate = Math.max(0, Number(payload.rate) || amountValue(selected.pricePerSeat)); const discount = Math.min(Math.max(0, Number(payload.discount) || 0), seats * rate); const next = { ...selected, selection: payload.selection, total: money(Math.max(0, seats * rate - discount)), totalSeats: String(seats), pricePerSeat: money(rate), discount: money(discount) }; setSelected(next); persist(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); };
-  const markSelectedAsSent = async () => { if (!selected) return; const next = canWrite && isSupabaseLeadsEnabled() && selected.id ? await updateSupabaseProposalStatus(selected.id, "Sent") : { ...selected, status: "Sent" }; setSelected(next); if (canWrite && isSupabaseLeadsEnabled() && selected.id) setProposals(proposals.map((item) => item.id === selected.id ? next : item)); else persist(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); return next; };
+   const markSelectedAsSent = async () => { if (!selected) return; const synced = canWrite && isSupabaseLeadsEnabled() && selected.id; const next = synced ? await updateSupabaseProposalStatus(selected.id, "Sent") : { ...selected, status: "Sent" }; setSelected(next); if (synced) updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item), "supabase"); else persist(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); return next; };
   const savePdf = () => { frameRef.current?.contentWindow?.postMessage({ type: "proposal-template-action", action: "save-pdf" }, "*"); showToast({ variant: "success", title: "Save as PDF", message: "The print dialog was opened. Choose ‘Save as PDF’ to download the proposal." }); };
   const sendPdf = () => { if (selected) setSendOpen(true); };
   const sendProposal = async (channel: "whatsapp" | "email") => {
@@ -320,7 +318,7 @@ export default function ProposalsPage() {
       if (!response.ok) throw new Error(result.error || "The proposal email could not be delivered.");
       const next = { ...selected, status: "Sent" };
       setSelected(next);
-      setProposals(proposals.map((item) => item.id === selected.id ? next : item));
+       updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item), "supabase");
       setSendOpen(false);
       showToast({ variant: "success", title: "Proposal sent", message: `${selected.proposalNumber} was delivered to ${result.delivery?.recipientEmail || "the recipient"} with a PDF attachment.` });
     } catch (error) {
@@ -330,6 +328,6 @@ export default function ProposalsPage() {
     }
   };
   const filteredProposals = useMemo(() => proposals.filter((proposal) => !monthFilter || String(proposal.date || "").startsWith(monthFilter)), [proposals, monthFilter]);
-  if (!canView) return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Proposals</h1><p className="muted-copy">Proposal records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Proposals — View access.</div></motion.div></PageShell>;
-  return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Proposals</h1><p className="muted-copy">Prepare workspace proposals for leads and members.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canWrite ? <Button onClick={() => setCreating(true)}><PlusCircle size={16} /> Create proposal</Button> : <span className="read-only-label">View only — printing enabled</span>}</div></div><section className="stat-grid finance-stat-grid proposal-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total proposals" value={filteredProposals.length} detail={isSupabaseLeadsEnabled() ? "From Supabase" : "Created in this session"} /></section><div className="section-heading"><div><h2>Proposal register</h2><p className="muted-copy">Select a proposal to preview, print, or send it.</p></div></div><DataTable columns={createProposalColumns(setSelected, setEditing, canWrite)} data={filteredProposals} onRowClick={setSelected} emptyMessage="No proposals created yet." /><Dialog open={creating && canWrite} onClose={() => { setCreating(false); setEditing(null); }} ariaLabel={editing ? "Edit proposal" : "Create proposal"}><ProposalForm leads={leads} members={members} initialProposal={editing} onCancel={() => { setCreating(false); setEditing(null); }} onSave={saveProposal} /></Dialog><Dialog open={Boolean(selected)} onClose={() => { setSelected(null); setSendOpen(false); }} ariaLabel="Proposal preview">{selected ? <div className="dialog-content proposal-preview-dialog"><ProposalTemplatePreview frameRef={frameRef} proposal={selected} onChange={updatePreview} /><div className="dialog-actions invoice-preview-actions proposal-pdf-actions"><Button variant="ghost" onClick={savePdf}><Download size={15} /> Save PDF</Button><Button onClick={sendPdf} disabled={sendingProposal || !canWrite}><Send size={15} /> {sendingProposal ? "Preparing..." : "Send PDF"}</Button><Button variant="ghost" onClick={() => setSelected(null)}><X size={15} /> Close PDF</Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => !sendingProposal && setSendOpen(false)} ariaLabel="Send proposal PDF"><div className="dialog-content proposal-send-dialog"><div className="card-heading"><div><h2>Send proposal PDF</h2><p className="muted-copy">Email sends automatically with the saved template and PDF attachment.</p></div></div>{sendingProposal ? <div className="proposal-send-progress" role="status" aria-live="polite"><span className="proposal-send-spinner" aria-hidden="true" /><strong>Sending proposal…</strong><p>Preparing the PDF and delivering the email. Please keep this window open.</p></div> : <div className="proposal-send-options"><button type="button" className="proposal-send-option" onClick={() => sendProposal("whatsapp")}><MessageCircle size={18} /><span><strong>WhatsApp</strong><small>Download the PDF and open a ready-to-send chat.</small></span></button><button type="button" className="proposal-send-option" onClick={() => sendProposal("email")}><Mail size={18} /><span><strong>Email</strong><small>Send automatically through the registered recipient email.</small></span></button></div>}<div className="dialog-actions proposal-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={sendingProposal}>Cancel</Button></div></div></Dialog></motion.div></PageShell>;
+  if (!canView) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Proposals</h1><p className="muted-copy">Proposal records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Proposals — View access.</div></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Proposals</h1><p className="muted-copy">Prepare workspace proposals for leads and members.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canWrite ? <Button onClick={() => setCreating(true)}><PlusCircle size={16} /> Create proposal</Button> : <span className="read-only-label">View only — printing enabled</span>}</div></div><section className="stat-grid finance-stat-grid proposal-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total proposals" value={filteredProposals.length} detail={isSupabaseLeadsEnabled() ? "From Supabase" : "Created in this session"} /></section><div className="section-heading"><div><h2>Proposal register</h2><p className="muted-copy">Select a proposal to preview, print, or send it.</p></div></div><DataTable columns={createProposalColumns(setSelected, setEditing, canWrite)} data={filteredProposals} onRowClick={setSelected} emptyMessage="No proposals created yet." /><Dialog open={creating && canWrite} onClose={() => { setCreating(false); setEditing(null); }} ariaLabel={editing ? "Edit proposal" : "Create proposal"}><ProposalForm leads={leads} members={members} initialProposal={editing} onCancel={() => { setCreating(false); setEditing(null); }} onSave={saveProposal} /></Dialog><Dialog open={Boolean(selected)} onClose={() => { setSelected(null); setSendOpen(false); }} ariaLabel="Proposal preview">{selected ? <div className="dialog-content proposal-preview-dialog"><ProposalTemplatePreview frameRef={frameRef} proposal={selected} onChange={updatePreview} /><div className="dialog-actions invoice-preview-actions proposal-pdf-actions"><Button variant="ghost" onClick={savePdf}><Download size={15} /> Save PDF</Button><Button onClick={sendPdf} disabled={sendingProposal || !canWrite}><Send size={15} /> {sendingProposal ? "Preparing..." : "Send PDF"}</Button><Button variant="ghost" onClick={() => setSelected(null)}><X size={15} /> Close PDF</Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => !sendingProposal && setSendOpen(false)} ariaLabel="Send proposal PDF"><div className="dialog-content proposal-send-dialog"><div className="card-heading"><div><h2>Send proposal PDF</h2><p className="muted-copy">Email sends automatically with the saved template and PDF attachment.</p></div></div>{sendingProposal ? <div className="proposal-send-progress" role="status" aria-live="polite"><span className="proposal-send-spinner" aria-hidden="true" /><strong>Sending proposal…</strong><p>Preparing the PDF and delivering the email. Please keep this window open.</p></div> : <div className="proposal-send-options"><button type="button" className="proposal-send-option" onClick={() => sendProposal("whatsapp")}><MessageCircle size={18} /><span><strong>WhatsApp</strong><small>Download the PDF and open a ready-to-send chat.</small></span></button><button type="button" className="proposal-send-option" onClick={() => sendProposal("email")}><Mail size={18} /><span><strong>Email</strong><small>Send automatically through the registered recipient email.</small></span></button></div>}<div className="dialog-actions proposal-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={sendingProposal}>Cancel</Button></div></div></Dialog></motion.div>;
 }

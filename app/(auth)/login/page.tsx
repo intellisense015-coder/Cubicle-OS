@@ -49,11 +49,13 @@ export default function SignInPage() {
         return;
       }
 
-      // Keep only the non-sensitive email for existing UI copy. Never store
-      // the password in sessionStorage; Supabase owns the authenticated session.
+      // Keep only the non-sensitive email for existing UI copy. Supabase owns
+      // the authenticated session and password handling.
       saveDemoValue("email", values.email.trim());
       saveDemoValue("mfaVerified", false);
-      router.push("/mfa");
+      const requestedPath = new URLSearchParams(window.location.search).get("next");
+      const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : "/dashboard";
+      router.push(`/mfa?next=${encodeURIComponent(nextPath)}`);
     } catch (error) {
       form.setError("root", {
         type: "server",
@@ -98,7 +100,7 @@ export default function SignInPage() {
         <FormField label="Password" error={form.formState.errors.password?.message}>
           <Input
             {...passwordField}
-            onChange={(event) => { passwordField.onChange(event); saveDemoValue("passwordDraft", event.target.value); }}
+            onChange={passwordField.onChange}
             type="password"
             placeholder="Enter your password"
             autoComplete="current-password"

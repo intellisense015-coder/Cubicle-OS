@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "motion/react";
-import { CalendarDays, CheckCircle2, ChevronDown, Clock3, Plus } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronDown, Clock3, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { TimePicker } from "@/components/ui/time-picker";
 import { LeadJourneyForm } from "@/components/os/lead-journey";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
@@ -18,9 +19,12 @@ import { formatRelativeTime } from "@/lib/relative-time";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLeads, mapSupabaseLeadToOsLead, updateSupabaseLead } from "@/lib/supabase/leads";
-import { createSupabaseVisit, fetchSupabaseVisits, mapSupabaseVisitToOsVisit, updateSupabaseVisitStatus } from "@/lib/supabase/visits";
+import { mapSupabaseLeadToOsLead, updateSupabaseLead } from "@/lib/supabase/leads";
+import { createSupabaseVisit, mapSupabaseVisitToOsVisit, updateSupabaseVisitStatus } from "@/lib/supabase/visits";
 import { useHasPermission } from "@/lib/access-control";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchLeadsSnapshot, type LeadsQuerySnapshot } from "@/lib/lead-query";
+import { fetchVisitsSnapshot, type VisitsQuerySnapshot } from "@/lib/visit-query";
 import { z } from "zod";
 
 function getVisitTimeMinutes(value) {
@@ -145,7 +149,7 @@ function VisitForm({ employees, leads, initialLeadId = "", onCancel, onSave }) {
   const handleTimeChange = (event) => setValue("time", event.target.value, { shouldDirty: true });
   const handleSave = async (form) => { const visit = { ...form, id: `visit-${Date.now()}`, status: "Scheduled" }; const saveError = await onSave(visit); if (saveError) setError("time", { message: saveError }); };
   const error = formState.errors.leadId?.message || formState.errors.date?.message || formState.errors.time?.message || formState.errors.host?.message || formState.errors.purpose?.message;
-  return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><LeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} locked={Boolean(initialLeadId)} /><label className="settings-label">Date<Input type="date" min={today} value={watch("date")} onChange={handleDateChange} /></label><label className="settings-label">Time<TimePicker value={watch("time")} min={watch("date") === today ? currentTime : undefined} onChange={handleTimeChange} /></label><EmployeeSelect value={watch("host")} options={assignOptions} onChange={(value) => setValue("host", value, { shouldDirty: true })} /></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
+  return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><LeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} locked={Boolean(initialLeadId)} /><label className="settings-label">Date<Input type="date" min={today} value={watch("date")} onChange={handleDateChange} /></label><label className="settings-label">Time<TimePicker value={watch("time")} min={watch("date") === today ? currentTime : undefined} onChange={handleTimeChange} /></label><EmployeeSelect value={watch("host")} options={assignOptions} onChange={(value) => setValue("host", value, { shouldDirty: true })} /></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
 }
 
 // TITLE: VISIT STATUS ACTIONS
@@ -158,12 +162,23 @@ function VisitActions({ visit, onStatusChange, onClose, canEdit = true }) {
 }
 
 // TITLE: VISITS PAGE
-export default function VisitsPage() {
+export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming" | "history" } = {}) {
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
   const canWrite = useHasPermission("visits.write");
   const canWriteLeads = useHasPermission("leads.write");
-  const [visits, setVisits] = useState([]);
-  const [leads, setLeads] = useState([]);
+  const visitsQuery = useQuery({
+    queryKey: queryKeys.visits.all,
+    queryFn: fetchVisitsSnapshot,
+  });
+  const leadsQuery = useQuery({
+    queryKey: queryKeys.leads.all,
+    queryFn: fetchLeadsSnapshot,
+  });
+  const visits = visitsQuery.data?.visits ?? [];
+  const leads = leadsQuery.data?.leads ?? [];
+  const visitErrorShown = useRef(false);
+  const leadErrorShown = useRef(false);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -176,31 +191,34 @@ export default function VisitsPage() {
   }, []);
 
   useEffect(() => {
-    const savedVisits = getDemoValue("visits");
-    const localVisits = Array.isArray(savedVisits) ? savedVisits : [];
-    const savedLeads = getDemoValue("leads");
-    const localLeads = Array.isArray(savedLeads) ? savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) })) : [];
-    setVisits(localVisits);
-    setLeads(localLeads);
-
     const pendingLeadId = getDemoValue("pendingVisitLeadId");
-    if (typeof pendingLeadId === "string" && localLeads.some((lead) => lead.id === pendingLeadId)) {
+    if (typeof pendingLeadId === "string" && leads.some((lead) => lead.id === pendingLeadId)) {
       setPendingVisitLeadId(pendingLeadId);
       setShowForm(true);
     }
+  }, [leads]);
 
-    if (!isSupabaseLeadsEnabled()) return;
-    void Promise.all([fetchSupabaseVisits(), fetchSupabaseLeads()]).then(([visitRows, leadRows]) => {
-      const remoteVisits = visitRows.map(mapSupabaseVisitToOsVisit);
-      const remoteLeads = leadRows.map(mapSupabaseLeadToOsLead).map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
-      setVisits(remoteVisits.length ? remoteVisits : localVisits);
-      setLeads(remoteLeads.length ? remoteLeads : localLeads);
-      if (remoteVisits.length) saveDemoValue("visits", remoteVisits, { notify: false });
-      if (remoteLeads.length) saveDemoValue("leads", remoteLeads, { notify: false });
-    }).catch((error) => {
-      showToast({ variant: "error", title: "Visits could not be loaded", message: error?.message || "Supabase did not return the visit records." });
-    });
-  }, [showToast]);
+  useEffect(() => {
+    const errorMessage = visitsQuery.data?.errorMessage || "";
+    if (!errorMessage) {
+      visitErrorShown.current = false;
+      return;
+    }
+    if (visitErrorShown.current) return;
+    visitErrorShown.current = true;
+    showToast({ variant: "error", title: "Visits could not be loaded", message: "Showing the saved visits while Supabase is unavailable." });
+  }, [showToast, visitsQuery.data?.errorMessage]);
+
+  useEffect(() => {
+    const errorMessage = leadsQuery.data?.errorMessage || "";
+    if (!errorMessage) {
+      leadErrorShown.current = false;
+      return;
+    }
+    if (leadErrorShown.current) return;
+    leadErrorShown.current = true;
+    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the saved leads while Supabase is unavailable." });
+  }, [showToast, leadsQuery.data?.errorMessage]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60 * 1000);
@@ -208,7 +226,30 @@ export default function VisitsPage() {
   }, []);
 
   // TITLE: SAVE VISITS
-  const persist = (nextVisits) => { setVisits(nextVisits); saveDemoValue("visits", nextVisits); };
+  const persist = (nextVisits) => {
+    saveDemoValue("visits", nextVisits);
+    queryClient.setQueryData<VisitsQuerySnapshot>(queryKeys.visits.all, (current) => current ? {
+      ...current,
+      visits: nextVisits,
+      errorMessage: "",
+    } : {
+      visits: nextVisits,
+      dataSource: isSupabaseLeadsEnabled() ? "supabase" : "demo",
+      errorMessage: "",
+    });
+  };
+  const persistLeads = (nextLeads) => {
+    saveDemoValue("leads", nextLeads);
+    queryClient.setQueryData<LeadsQuerySnapshot>(queryKeys.leads.all, (current) => current ? {
+      ...current,
+      leads: nextLeads,
+      errorMessage: "",
+    } : {
+      leads: nextLeads,
+      dataSource: isSupabaseLeadsEnabled() ? "supabase" : "demo",
+      errorMessage: "",
+    });
+  };
   const closeVisitForm = () => { setShowForm(false); setPendingVisitLeadId(""); saveDemoValue("pendingVisitLeadId", null); };
   const scheduleVisit = async (visit) => {
     if (!canWrite) { const message = "Your account can view visits but cannot schedule them."; showToast({ variant: "error", title: "View-only access", message }); return message; }
@@ -243,16 +284,13 @@ export default function VisitsPage() {
           const updatedRow = await updateSupabaseLead(visit.leadId, { visitDate: visit.date, visitTime: visit.time });
           const updatedLead = { ...mapSupabaseLeadToOsLead(updatedRow), ...nextLeads.find((lead) => lead.id === visit.leadId), id: updatedRow.id, backend: "supabase", stage: "Visit scheduled", visitDate: visit.date, visitTime: visit.time };
           const persistedLeads = nextLeads.map((lead) => lead.id === visit.leadId ? updatedLead : lead);
-          saveDemoValue("leads", persistedLeads);
-          setLeads(persistedLeads);
+          persistLeads(persistedLeads);
         } catch (error) {
-          saveDemoValue("leads", nextLeads);
-          setLeads(nextLeads);
+          persistLeads(nextLeads);
           showToast({ variant: "error", title: "Visit scheduled with a lead warning", message: error?.message || "The visit was saved, but the lead visit date could not be updated." });
         }
       } else {
-        saveDemoValue("leads", nextLeads);
-        setLeads(nextLeads);
+        persistLeads(nextLeads);
       }
     }
     closeVisitForm();
@@ -280,16 +318,13 @@ export default function VisitsPage() {
           try {
             const updatedRow = await updateSupabaseLead(lead.id, { visitDate: null, visitTime: null });
             const persistedLeads = nextLeads.map((row) => row.id === lead.id ? { ...mapSupabaseLeadToOsLead(updatedRow), ...row, id: updatedRow.id, backend: "supabase", visitDate: "", visitTime: "", nextFollowUp: "Not scheduled" } : row);
-            saveDemoValue("leads", persistedLeads);
-            setLeads(persistedLeads);
+            persistLeads(persistedLeads);
           } catch (error) {
-            saveDemoValue("leads", nextLeads);
-            setLeads(nextLeads);
+            persistLeads(nextLeads);
             showToast({ variant: "error", title: "Visit updated with a lead warning", message: error?.message || "The visit changed, but the lead could not be updated." });
           }
         } else {
-          saveDemoValue("leads", nextLeads);
-          setLeads(nextLeads);
+          persistLeads(nextLeads);
         }
       }
     }
@@ -336,28 +371,40 @@ export default function VisitsPage() {
     const stored = getDemoValue("leads");
     const rows = Array.isArray(stored) ? stored : leads;
     const nextLeads = rows.map((lead) => lead.id === updated.id ? updated : lead);
-    saveDemoValue("leads", nextLeads);
-    setLeads(nextLeads);
+    persistLeads(nextLeads);
     persist(visits.map((visit) => visit.id === journeyVisit.id ? { ...visit, status: "Completed" } : visit));
     setJourneyLead(null);
     setJourneyVisit(null);
     showToast({ variant: "success", title: "Visit completed", message: `${updated.name}'s visit was completed and added to the lead journey.` });
   };
-  const scheduled = useMemo(() => visits.filter((visit) => visit.status === "Scheduled").length, [visits]);
-  const completed = useMemo(() => visits.filter((visit) => visit.status === "Completed").length, [visits]);
-  const nextVisit = useMemo(() => [...visits].filter((visit) => visit.status === "Scheduled").sort((a, b) => getVisitSortValue(a) - getVisitSortValue(b))[0] || null, [visits]);
-  const sortedVisits = useMemo(() => [...visits].sort((a, b) => {
+  const isUpcomingView = view === "upcoming";
+  const isHistoryView = view === "history";
+  const pageTitle = isUpcomingView ? "Upcoming visits" : isHistoryView ? "Visit history" : "Visits";
+  const pageDescription = isUpcomingView
+    ? "See scheduled visits and what needs attention next."
+    : isHistoryView
+      ? "Review completed, cancelled and missed visits."
+      : "Schedule tours, assign a host and capture what happened next.";
+  const visibleVisits = useMemo(() => {
+    if (isUpcomingView) return visits.filter((visit) => visit.status === "Scheduled");
+    if (isHistoryView) return visits.filter((visit) => visit.status !== "Scheduled");
+    return visits;
+  }, [isHistoryView, isUpcomingView, visits]);
+  const scheduled = useMemo(() => visibleVisits.filter((visit) => visit.status === "Scheduled").length, [visibleVisits]);
+  const completed = useMemo(() => visibleVisits.filter((visit) => visit.status === "Completed").length, [visibleVisits]);
+  const nextVisit = useMemo(() => [...visibleVisits].filter((visit) => visit.status === "Scheduled").sort((a, b) => getVisitSortValue(a) - getVisitSortValue(b))[0] || null, [visibleVisits]);
+  const sortedVisits = useMemo(() => [...visibleVisits].sort((a, b) => {
     const urgencyDifference = ["overdue", "urgent", "soon", "later", "inactive"].indexOf(getVisitUrgency(a, currentTime)) - ["overdue", "urgent", "soon", "later", "inactive"].indexOf(getVisitUrgency(b, currentTime));
     if (urgencyDifference) return urgencyDifference;
     const aTime = getVisitSortValue(a);
     const bTime = getVisitSortValue(b);
     return getVisitUrgency(a, currentTime) === "inactive" ? bTime - aTime : aTime - bTime;
-  }), [visits, currentTime]);
+  }), [currentTime, visibleVisits]);
   const availableLeads = useMemo(() => {
     const regularLeads = leads.filter((lead) => !["Follow-up due", "Converted", "Not interested"].includes(normalizeLeadStage(lead.stage, lead)) && !isLeadAlreadyScheduled(lead, visits));
     const pendingLead = leads.find((lead) => lead.id === pendingVisitLeadId && lead.pendingVisit && normalizeLeadStage(lead.stage, lead) === "Follow-up due" && !isLeadAlreadyScheduled(lead, visits));
     return pendingLead ? [pendingLead, ...regularLeads.filter((lead) => lead.id !== pendingLead.id)] : regularLeads;
   }, [leads, visits, pendingVisitLeadId]);
 
-  return <PageShell><motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Visits</h1><p className="muted-copy">Schedule tours, assign a host and capture what happened next.</p></div><Button onClick={() => setShowForm(true)}><Plus size={16} /> Add visit</Button></div><section className="stat-grid module-stats"><KpiCard icon={<CalendarDays size={18} />} label="Scheduled visits" value={scheduled} detail="Upcoming in this demo" /><KpiCard icon={<CheckCircle2 size={18} />} label="Completed visits" value={completed} detail="Ready for conversion" /><KpiCard icon={<Clock3 size={18} />} label="Next visit" value={nextVisit ? formatVisitTime(nextVisit.time) : "—"} detail={nextVisit ? `${formatVisitDate(nextVisit.date)} · ${nextVisit.visitor}` : "No visits scheduled"} /></section><div className="section-heading"><div><h2>Visit schedule</h2><p className="muted-copy">Select a visit to open its details.</p></div></div><div className="visit-list">{sortedVisits.map((visit) => { const urgencyClass = getVisitUrgencyClass(visit, currentTime); return <motion.article key={visit.id} className={`visit-card visit-card-clickable ${urgencyClass}`} layout role="button" tabIndex={0} onClick={() => setSelected(visit)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(visit); }}><div className="visit-grid"><strong className="visit-grid-date">{formatVisitDateTime(visit)}</strong><h3>{visit.visitor}</h3><span className="visit-grid-host">Assigned to: {visit.host}</span><div className="visit-actions">{visit.status === "Scheduled" ? <><button type="button" className="table-action visit-cancel-action" onClick={(event) => { event.stopPropagation(); updateStatus(visit.id, "Cancelled"); }}>Cancel</button><Button size="sm" onClick={(event) => { event.stopPropagation(); completeVisit(visit); }}><CheckCircle2 size={15} /> Complete</Button></> : visit.status === "Completed" ? <span className="visit-grid-status visit-grid-status-completed">Visit Completed</span> : visit.status === "Cancelled" ? <span className="visit-grid-status visit-grid-status-cancelled">Cancelled</span> : null}</div></div></motion.article>; })}</div><Dialog open={showForm} onClose={closeVisitForm} ariaLabel="Add visit"><VisitForm employees={employees} leads={availableLeads} initialLeadId={pendingVisitLeadId} onCancel={closeVisitForm} onSave={scheduleVisit} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Visit details">{selected ? <div className="inline-form-card visit-details-modal"><div className="card-heading"><div><h2>Visit details</h2><p className="muted-copy">Review the visit details and assigned employee.</p></div></div><div className="ledger-summary"><div><span>Date</span><strong>{formatVisitDate(selected.date)}</strong></div><div><span>Time</span><strong>{formatVisitTime(selected.time)}</strong></div><div><span>Assigned to</span><strong>{selected.host}</strong></div></div><VisitActions visit={selected} onStatusChange={(status) => status === "Completed" ? completeVisit(selected) : updateStatus(selected.id, status)} onClose={() => setSelected(null)} /></div> : null}</Dialog><Dialog open={Boolean(journeyLead)} onClose={() => { setJourneyLead(null); setJourneyVisit(null); }} ariaLabel="Record visit in lead journey">{journeyLead ? <LeadJourneyForm lead={journeyLead} initialValues={{ occurredDate: journeyVisit?.date, occurredTime: journeyVisit?.time, purpose: journeyVisit?.purpose || "Workspace tour", communicationMode: "In-person", notes: journeyVisit?.host ? `Hosted by ${journeyVisit.host}` : "" }} onCancel={() => { setJourneyLead(null); setJourneyVisit(null); }} onSave={saveVisitJourney} /> : null}</Dialog></motion.div></PageShell>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription}</p></div><Button onClick={() => setShowForm(true)}><Plus size={16} /> Add visit</Button></div><section className="stat-grid module-stats"><KpiCard icon={<CalendarDays size={18} />} label="Scheduled visits" value={scheduled} detail={isHistoryView ? "Not in the active schedule" : "Upcoming in this demo"} /><KpiCard icon={<CheckCircle2 size={18} />} label="Completed visits" value={completed} detail="Ready for conversion" /><KpiCard icon={<Clock3 size={18} />} label="Next visit" value={nextVisit ? formatVisitTime(nextVisit.time) : "—"} detail={nextVisit ? `${formatVisitDate(nextVisit.date)} · ${nextVisit.visitor}` : "No visits scheduled"} /></section><div className="section-heading"><div><h2>{isUpcomingView ? "Upcoming schedule" : isHistoryView ? "Visit history" : "Visit schedule"}</h2><p className="muted-copy">Select a visit to open its details.</p></div></div><div className="visit-list">{sortedVisits.map((visit) => { const urgencyClass = getVisitUrgencyClass(visit, currentTime); return <motion.article key={visit.id} className={`visit-card visit-card-clickable ${urgencyClass}`} layout role="button" tabIndex={0} onClick={() => setSelected(visit)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(visit); }}><div className="visit-grid"><strong className="visit-grid-date">{formatVisitDateTime(visit)}</strong><h3>{visit.visitor}</h3><span className="visit-grid-host">Assigned to: {visit.host}</span><div className="visit-actions">{visit.status === "Scheduled" ? <><button type="button" className="action-icon-btn visit-cancel-action" onClick={(event) => { event.stopPropagation(); updateStatus(visit.id, "Cancelled"); }} aria-label={`Cancel visit for ${visit.visitor}`} title="Cancel visit"><X size={16} /></button><Button size="sm" onClick={(event) => { event.stopPropagation(); completeVisit(visit); }}><CheckCircle2 size={15} /> Complete</Button></> : visit.status === "Completed" ? <span className="visit-grid-status visit-grid-status-completed">Visit Completed</span> : visit.status === "Cancelled" ? <span className="visit-grid-status visit-grid-status-cancelled">Cancelled</span> : null}</div></div></motion.article>; })}</div><Dialog open={showForm} onClose={closeVisitForm} ariaLabel="Add visit"><VisitForm employees={employees} leads={availableLeads} initialLeadId={pendingVisitLeadId} onCancel={closeVisitForm} onSave={scheduleVisit} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Visit details">{selected ? <div className="inline-form-card visit-details-modal"><div className="card-heading"><div><h2>Visit details</h2><p className="muted-copy">Review the visit details and assigned employee.</p></div></div><div className="ledger-summary"><div><span>Date</span><strong>{formatVisitDate(selected.date)}</strong></div><div><span>Time</span><strong>{formatVisitTime(selected.time)}</strong></div><div><span>Assigned to</span><strong>{selected.host}</strong></div></div><VisitActions visit={selected} onStatusChange={(status) => status === "Completed" ? completeVisit(selected) : updateStatus(selected.id, status)} onClose={() => setSelected(null)} /></div> : null}</Dialog><Dialog open={Boolean(journeyLead)} onClose={() => { setJourneyLead(null); setJourneyVisit(null); }} ariaLabel="Record visit in lead journey">{journeyLead ? <LeadJourneyForm lead={journeyLead} initialValues={{ occurredDate: journeyVisit?.date, occurredTime: journeyVisit?.time, purpose: journeyVisit?.purpose || "Workspace tour", communicationMode: "In-person", notes: journeyVisit?.host ? `Hosted by ${journeyVisit.host}` : "" }} onCancel={() => { setJourneyLead(null); setJourneyVisit(null); }} onSave={saveVisitJourney} /> : null}</Dialog></motion.div>;
 }

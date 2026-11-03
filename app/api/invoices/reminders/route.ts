@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { checkRateLimits, rateLimitResponse, recordSecurityAudit } from "@/lib/server-security";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,17 @@ export async function GET(request: Request) {
   try {
     if (!isAuthorized(request)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     const admin = serviceClient();
+    const rateLimit = await checkRateLimits({
+      client: admin,
+      request,
+      scope: "invoice.reminders",
+      ipLimit: 10,
+      windowSeconds: 60,
+    });
+    if (!rateLimit.allowed) {
+      await recordSecurityAudit(admin, { action: "invoice.reminders", outcome: "rate_limited", request, metadata: { scope: "invoice.reminders" } });
+      return NextResponse.json({ error: "Too many reminder queue requests. Please try again later." }, rateLimitResponse(rateLimit));
+    }
     const targetDueDate = dateAfterDays(5);
     const { data: invoices, error: invoiceError } = await admin
       .from("invoices")
@@ -60,14 +72,13 @@ export async function GET(request: Request) {
       }
 
       const { error: queueError } = await admin.rpc("queue_invoice_email", { p_invoice_id: invoice.id, p_delivery_kind: "reminder_5_days" });
-      if (queueError) failures.push({ invoice: invoice.invoice_number, error: queueError.message });
+      if (queueError) failures.push({ invoice: invoice.invoice_number, error: "The reminder could not be queued." });
       else queued.push(invoice.invoice_number);
     }
 
     return NextResponse.json({ ok: true, targetDueDate, considered: invoices?.length || 0, queued, skipped, failures });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Invoice reminders could not be queued.";
     console.error("Invoice reminder queue failed:", error);
-    return NextResponse.json({ error: message }, { status: message.includes("CRON_SECRET") ? 503 : 502 });
+    return NextResponse.json({ error: "Invoice reminders could not be queued." }, { status: 502 });
   }
 }

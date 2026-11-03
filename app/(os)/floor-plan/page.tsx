@@ -3,55 +3,68 @@
 import { DoorOpen, Filter, Grid2X2, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { FloorPlanViewer } from "@/features/floor-plan/floor-plan-viewer";
 import { floor4 } from "@/features/floor-plan/floor-4";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { PageShell } from "@/components/ui/page-shell";
+
 import { getDemoValue } from "@/lib/demo-session";
-import { applyWorkspaceRecordsToFloor, getWorkspaceRecords, mergeWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
+import { applyWorkspaceRecordsToFloor, mergeWorkspaceRecords, workspaceRecordsToAreaData } from "@/lib/workspace-records";
 import { useToast } from "@/components/ui/toast-provider";
-import { fetchSupabaseMembers, mapSupabaseMemberToOsMember } from "@/lib/supabase/members";
-import { fetchSupabaseWorkspaces, mapSupabaseWorkspaceToOsWorkspace } from "@/lib/supabase/workspaces";
+import { queryKeys } from "@/lib/query-keys";
+import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
+import { fetchMembersSnapshot } from "@/lib/member-query";
 
 export default function FloorPlanPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
+  const workspacesQuery = useQuery({
+    queryKey: queryKeys.workspaces.all,
+    queryFn: fetchWorkspacesSnapshot,
+  });
+  const membersQuery = useQuery({
+    queryKey: queryKeys.members.all,
+    queryFn: fetchMembersSnapshot,
+  });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
   const [members, setMembers] = useState([]);
 
   useEffect(() => {
-    let cancelled = false;
-    const loadBackendData = async () => {
-      try {
-        const [workspaceRows, memberRows] = await Promise.all([fetchSupabaseWorkspaces(), fetchSupabaseMembers()]);
-        if (!cancelled) {
-          setWorkspaces(mergeWorkspaceRecords(workspaceRows.map(mapSupabaseWorkspaceToOsWorkspace)));
-          setMembers(memberRows.map(mapSupabaseMemberToOsMember));
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setWorkspaces([]);
-          setMembers([]);
-          showToast({ variant: "error", title: "Floor plan could not be loaded", message: error?.message || "Supabase did not return the floor-plan data." });
-        }
-      }
-    };
-    void loadBackendData();
     const handleDemoChange = (event) => {
-      if (["workspaces", "members"].includes(event.detail?.key || "")) {
-        void loadBackendData();
+      if (event.detail?.key === "members") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.members.all, refetchType: "active" });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all, refetchType: "active" });
       }
       if (["maintenance", "maintenanceRecords", "maintenanceEvents"].includes(event.detail?.key || "")) {
         const saved = getDemoValue("workspaces");
-        setWorkspaces(mergeWorkspaceRecords(Array.isArray(saved) ? saved : []));
+        const nextWorkspaces = mergeWorkspaceRecords(Array.isArray(saved) ? saved : []);
+        setWorkspaces(nextWorkspaces);
+        queryClient.setQueryData(queryKeys.workspaces.all, (current: any) => ({
+          ...(current || { dataSource: "demo", errorMessage: "" }),
+          workspaces: nextWorkspaces,
+        }));
       }
-      if (event.detail?.key === "maintenanceCategories") setWorkspaces((current) => [...current]);
     };
     window.addEventListener("cubicle-demo-change", handleDemoChange);
-    return () => { cancelled = true; window.removeEventListener("cubicle-demo-change", handleDemoChange); };
-  }, [showToast]);
+    return () => window.removeEventListener("cubicle-demo-change", handleDemoChange);
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (workspacesQuery.data) setWorkspaces(workspacesQuery.data.workspaces);
+    if (workspacesQuery.data?.errorMessage) {
+      showToast({ variant: "error", title: "Floor plan could not be refreshed", message: workspacesQuery.data.errorMessage });
+    }
+  }, [showToast, workspacesQuery.data]);
+
+  useEffect(() => {
+    if (membersQuery.data) setMembers(membersQuery.data.members);
+    if (membersQuery.data?.errorMessage) {
+      showToast({ variant: "error", title: "Floor plan members could not be refreshed", message: membersQuery.data.errorMessage });
+    }
+  }, [membersQuery.data, showToast]);
 
   const floor = useMemo(() => applyWorkspaceRecordsToFloor(workspaces), [workspaces]);
   const data = useMemo(() => workspaceRecordsToAreaData(workspaces, members), [workspaces, members]);
@@ -62,7 +75,6 @@ export default function FloorPlanPage() {
   const occupancyPercentage = rentableAreas.length ? Math.round((occupied / rentableAreas.length) * 100) : 0;
 
   return (
-    <PageShell>
       <div className="module-content floor-plan-page">
         <div className="module-header">
           <div>
@@ -83,6 +95,5 @@ export default function FloorPlanPage() {
 
           <FloorPlanViewer floor={floor} data={data} demo filtersOpen={filtersOpen} onFiltersOpenChange={setFiltersOpen} onMaintenanceAction={(workspaceId) => router.push(`/workspaces?workspaceId=${encodeURIComponent(workspaceId)}`)} />
       </div>
-    </PageShell>
   );
 }

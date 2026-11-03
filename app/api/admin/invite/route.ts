@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
 
 export const runtime = "nodejs";
 
@@ -9,7 +10,7 @@ const inviteSchema = z.object({
   email: z.string().trim().email().max(320),
   phone: z.string().trim().max(30).optional().default(""),
   roleKey: z.string().trim().regex(/^[a-z][a-z0-9_]{1,63}$/),
-});
+}).strict();
 
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -29,7 +30,12 @@ export async function POST(request: Request) {
     return errorResponse("Server-side Supabase invitation is not configured.", 503);
   }
 
-  const parsed = inviteSchema.safeParse(await request.json().catch(() => null));
+  const body = await readJsonBody(request, 16 * 1024);
+  if (!body.ok) {
+    const status = "status" in body ? body.status : 400;
+    return errorResponse(requestBodyError(status), status);
+  }
+  const parsed = inviteSchema.safeParse(body.value);
   if (!parsed.success) return errorResponse("Enter a valid name, email, phone and role.", 400);
 
   const userClient = createClient(supabaseUrl, supabasePublicKey, {
@@ -55,6 +61,21 @@ export async function POST(request: Request) {
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  const rateLimit = await checkRateLimits({
+    client: adminClient,
+    request,
+    scope: "admin.invite",
+    userId: userData.user.id,
+    ipLimit: 10,
+    userLimit: 5,
+    windowSeconds: 60 * 60,
+  });
+  if (!rateLimit.allowed) {
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "rate_limited", actorUserId: userData.user.id, request, metadata: { scope: "admin.invite" } });
+    const response = rateLimitResponse(rateLimit);
+    return NextResponse.json({ error: "Too many invitation requests. Please try again later." }, response);
+  }
 
   const { data: role, error: roleLookupError } = await adminClient
     .from("admin_roles")
@@ -82,7 +103,8 @@ export async function POST(request: Request) {
   });
 
   if (invitationError || !invitation.user) {
-    return errorResponse(invitationError?.message || "Supabase could not send the invitation.", 400);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, request, metadata: { reason: "provider_rejected_invitation" } });
+    return errorResponse("The invitation could not be sent.", 400);
   }
 
   const { data: adminUser, error: adminUserError } = await adminClient
@@ -93,8 +115,11 @@ export async function POST(request: Request) {
 
   if (adminUserError || !adminUser) {
     await adminClient.auth.admin.deleteUser(invitation.user.id);
+    await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "failure", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { reason: "administrator_link_failed" } });
     return errorResponse("The invitation could not be linked to an administrator role.", 500);
   }
+
+  await recordSecurityAudit(adminClient, { action: "admin.invite", outcome: "success", actorUserId: userData.user.id, targetUserId: invitation.user.id, request, metadata: { role: parsed.data.roleKey } });
 
   return NextResponse.json({
     user: { ...adminUser, email: normalizedEmail, full_name: parsed.data.name, last_sign_in_at: null, role_label: role.label },

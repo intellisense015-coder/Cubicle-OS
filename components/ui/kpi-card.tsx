@@ -16,8 +16,17 @@ export interface KpiCardProps {
   onClick?: () => void;
 }
 
+function getKpiValueTone(label: string) {
+  const normalizedLabel = label.toLowerCase();
+  if (/(pending|approval-required|due soon|grace|waiting)/.test(normalizedLabel)) return "warning";
+  if (/(suspended|rejected|overdue|declined|failed)/.test(normalizedLabel)) return "danger";
+  if (/(active|approved|paid|completed|available)/.test(normalizedLabel)) return "success";
+  return "neutral";
+}
+
 /** Canonical KPI card used by the dashboard and every module page. */
 export function KpiCard({ icon, label, value, detail = "", className = "", leftOverlay = false, rightOverlay = false, hideIcon = false, overlayValues, onClick }: KpiCardProps) {
+  const valueTone = getKpiValueTone(label);
   return (
     <motion.div
       className={`stat-card kpi-card ${onClick ? "kpi-card-clickable" : ""} ${className}`.trim()}
@@ -33,7 +42,7 @@ export function KpiCard({ icon, label, value, detail = "", className = "", leftO
       {!hideIcon && icon ? <span className="stat-icon">{icon}</span> : null}
       <span className="stat-label">{label}</span>
       {overlayValues ? <><strong className="kpi-card-overlay-value kpi-card-overlay-left">{overlayValues.left}</strong><strong className="kpi-card-overlay-value kpi-card-overlay-right">{overlayValues.right}</strong></> : null}
-      <strong>{value}</strong>
+      <strong className={`kpi-value-${valueTone}`}>{value}</strong>
       <small>{detail}</small>
     </motion.div>
   );

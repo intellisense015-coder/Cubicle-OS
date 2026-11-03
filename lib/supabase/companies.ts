@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseCompanyRow = {
   id: string;
@@ -35,31 +36,19 @@ export async function createSupabaseCompany(name: string) {
   const normalizedName = String(name || "").trim();
   if (!normalizedName) throw new Error("Company name is required.");
 
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("companies")
-    .insert({ name: normalizedName, status: "active" })
-    .select(companyColumns)
-    .single();
-
-  if (!error) return data as unknown as SupabaseCompanyRow;
-
-  if (error.code === "23505") {
-    const companies = await fetchSupabaseCompanies();
-    const existing = companies.find((company) => company.name.trim().toLowerCase() === normalizedName.toLowerCase());
-    if (existing) return existing;
+  try {
+    return await secureOsMutation<SupabaseCompanyRow>("company.create", { name: normalizedName });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "That record already exists.") {
+      const companies = await fetchSupabaseCompanies();
+      const existing = companies.find((company) => company.name.trim().toLowerCase() === normalizedName.toLowerCase());
+      if (existing) return existing;
+    }
+    throw error;
   }
-
-  throw error;
 }
 
 export async function updateSupabaseCompanyStatus(id: string, status: "active" | "inactive") {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("companies")
-    .update({ status })
-    .eq("id", id)
-    .select(companyColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseCompanyRow;
+  return secureOsMutation<SupabaseCompanyRow>("company.status", { id, status });
 }

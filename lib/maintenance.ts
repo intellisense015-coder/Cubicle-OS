@@ -14,6 +14,7 @@ export type MaintenanceStatus = "active" | "locked" | "blocked" | "deactivated";
 export interface MaintenanceCategory {
   id: string;
   name: string;
+  subtitle?: string;
   active: boolean;
 }
 
@@ -133,10 +134,12 @@ export function isActiveMaintenanceRecord(record?: Partial<MaintenanceRecord> | 
 }
 
 function normalizeCategory(category: any, index: number): MaintenanceCategory {
+  const active = category?.active !== false;
   return {
     id: String(category?.id || `maintenance-category-${index}`),
     name: String(category?.name || "").trim(),
-    active: category?.active !== false,
+    subtitle: String(category?.subtitle || category?.description || (active ? "Available for maintenance requests" : "Deactivated for new requests")).trim(),
+    active,
   };
 }
 

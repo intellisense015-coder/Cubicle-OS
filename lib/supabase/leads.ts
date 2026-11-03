@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseLeadRow = {
   id: string;
@@ -67,7 +68,7 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     visitDate,
     visitTime,
     message: row.message || "",
-    createdAt: row.created_at ? row.created_at.slice(0, 10) : "",
+    createdAt: row.created_at || "",
     visited: Boolean(row.visited),
     journey: [],
   };
@@ -112,21 +113,14 @@ export async function createSupabaseLead(input: {
   const teamSize = parseTeamSize(input.team);
   if (!teamSize) throw new Error("Team size must include a positive number, for example 6 people.");
 
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("leads")
-    .insert({
-      person_name: input.name.trim(),
-      contact_number: input.phone.trim(),
-      email: input.email.trim().toLowerCase(),
-      team_size: teamSize,
-      shift: input.shift.trim() || "Flexible",
-      workspace_option: normalizeWorkspaceOption(input.workspace),
-    })
-    .select(leadColumns)
-    .single();
-
-  if (error) throw error;
-  return data as SupabaseLeadRow;
+  return secureOsMutation<SupabaseLeadRow>("lead.create", {
+    name: input.name.trim(),
+    phone: input.phone.trim(),
+    email: input.email.trim().toLowerCase(),
+    team: input.team.trim(),
+    shift: input.shift.trim() || "Flexible",
+    workspace: input.workspace,
+  });
 }
 
 export async function updateSupabaseLead(id: string, input: { workspace?: string; visited?: boolean; visitDate?: string | null; visitTime?: string | null }) {
@@ -136,13 +130,5 @@ export async function updateSupabaseLead(id: string, input: { workspace?: string
   if (input.visitDate !== undefined) update.visit_date = input.visitDate || null;
   if (input.visitTime !== undefined) update.visit_time = input.visitTime || null;
 
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("leads")
-    .update(update)
-    .eq("id", id)
-    .select(leadColumns)
-    .single();
-
-  if (error) throw error;
-  return data as SupabaseLeadRow;
+  return secureOsMutation<SupabaseLeadRow>("lead.update", { id, ...input });
 }

@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseQuotationRow = {
   id: string;
@@ -211,99 +212,16 @@ export async function fetchSupabaseQuotations() {
 }
 
 export async function createSupabaseQuotation(input: any) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before creating a quotation.");
-
-  const issueDate = dateValue(input.date) || new Date().toISOString().slice(0, 10);
-  const items = normalizeItems(input.items || input.charges);
-  const insertPayload = {
-    quotation_number: await nextQuotationNumber(),
-    lead_id: input.leadId,
-    company_name: String(input.account || "").trim() || null,
-    customer_name: String(input.customerName || "Customer").trim(),
-    customer_email: String(input.customerEmail || "").trim().toLowerCase() || null,
-    customer_phone: String(input.customerPhone || "").trim() || null,
-    issue_date: issueDate,
-    valid_until: dateValue(input.validUntil) || addDays(issueDate, 7),
-    status: statusValue(input.status),
-    subtotal: amount(input.subtotal),
-    wht_enabled: Boolean(input.whtEnabled ?? input.taxEnabled),
-    wht_rate: amount(input.whtRate ?? input.taxRate),
-    wht_amount: amount(input.whtAmount ?? input.taxAmount),
-    sales_tax_enabled: Boolean(input.salesTaxEnabled),
-    sales_tax_rate: amount(input.salesTaxRate),
-    sales_tax_amount: amount(input.salesTaxAmount),
-    total_amount: amount(input.totalAmount ?? input.amount),
-    terms: String(input.terms || "").trim() || null,
-    created_by: userId,
-    updated_by: userId,
-  };
-
-  const client = getSupabaseBrowserClient();
-  const { data, error } = await client.from("quotations").insert(insertPayload).select(quotationColumns).single();
-  if (error) throw error;
-
-  const row = data as unknown as SupabaseQuotationRow;
-  const { data: itemData, error: itemError } = await client
-    .from("quotation_items")
-    .insert(items.map((item) => ({ ...item, quotation_id: row.id })))
-    .select(itemColumns);
-  if (itemError) throw itemError;
-
-  return mapSupabaseQuotationToOsQuotation(row, (itemData || []) as unknown as SupabaseQuotationItemRow[]);
+  const result = await secureOsMutation<{ row: SupabaseQuotationRow; items: SupabaseQuotationItemRow[] }>("quotation.create", { input });
+  return mapSupabaseQuotationToOsQuotation(result.row, result.items);
 }
 
 export async function updateSupabaseQuotation(id: string, input: any) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before updating a quotation.");
-
-  const issueDate = dateValue(input.date) || new Date().toISOString().slice(0, 10);
-  const items = normalizeItems(input.items || input.charges);
-  const updatePayload = {
-    lead_id: input.leadId,
-    company_name: String(input.account || "").trim() || null,
-    customer_name: String(input.customerName || "Customer").trim(),
-    customer_email: String(input.customerEmail || "").trim().toLowerCase() || null,
-    customer_phone: String(input.customerPhone || "").trim() || null,
-    issue_date: issueDate,
-    valid_until: dateValue(input.validUntil) || addDays(issueDate, 7),
-    subtotal: amount(input.subtotal),
-    wht_enabled: Boolean(input.whtEnabled ?? input.taxEnabled),
-    wht_rate: amount(input.whtRate ?? input.taxRate),
-    wht_amount: amount(input.whtAmount ?? input.taxAmount),
-    sales_tax_enabled: Boolean(input.salesTaxEnabled),
-    sales_tax_rate: amount(input.salesTaxRate),
-    sales_tax_amount: amount(input.salesTaxAmount),
-    total_amount: amount(input.totalAmount ?? input.amount),
-    terms: String(input.terms || "").trim() || null,
-    updated_by: userId,
-  };
-
-  const client = getSupabaseBrowserClient();
-  const { data, error } = await client.from("quotations").update(updatePayload).eq("id", id).select(quotationColumns).single();
-  if (error) throw error;
-
-  const { error: deleteError } = await client.from("quotation_items").delete().eq("quotation_id", id);
-  if (deleteError) throw deleteError;
-  const { data: itemData, error: itemError } = await client
-    .from("quotation_items")
-    .insert(items.map((item) => ({ ...item, quotation_id: id })))
-    .select(itemColumns);
-  if (itemError) throw itemError;
-
-  return mapSupabaseQuotationToOsQuotation(data as unknown as SupabaseQuotationRow, (itemData || []) as unknown as SupabaseQuotationItemRow[]);
+  const result = await secureOsMutation<{ row: SupabaseQuotationRow; items: SupabaseQuotationItemRow[] }>("quotation.update", { id, input });
+  return mapSupabaseQuotationToOsQuotation(result.row, result.items);
 }
 
 export async function updateSupabaseQuotationStatus(id: string, status: string) {
-  const userId = await currentUserId();
-  if (!userId) throw new Error("Your session has expired. Sign in again before updating a quotation.");
-
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("quotations")
-    .update({ status: statusValue(status), updated_by: userId })
-    .eq("id", id)
-    .select(quotationColumns)
-    .single();
-  if (error) throw error;
-  return mapSupabaseQuotationToOsQuotation(data as unknown as SupabaseQuotationRow, await fetchQuotationItems([id]));
+  const result = await secureOsMutation<{ row: SupabaseQuotationRow; items: SupabaseQuotationItemRow[] }>("quotation.status", { id, status });
+  return mapSupabaseQuotationToOsQuotation(result.row, result.items);
 }

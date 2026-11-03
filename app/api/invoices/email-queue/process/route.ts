@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { renderInvoiceEmailHtml } from "@/lib/invoice-email-html";
 import { createInvoicePdfAttachment } from "@/lib/server-invoice-pdf";
 import { resolveEmailSender, sendResendEmail, validEmail } from "@/lib/server-email";
+import { checkRateLimits, rateLimitResponse, recordSecurityAudit } from "@/lib/server-security";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,17 @@ export async function GET(request: Request) {
   try {
     if (!isAuthorized(request)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     const admin = serviceClient();
+    const rateLimit = await checkRateLimits({
+      client: admin,
+      request,
+      scope: "invoice.email_queue.process",
+      ipLimit: 10,
+      windowSeconds: 60,
+    });
+    if (!rateLimit.allowed) {
+      await recordSecurityAudit(admin, { action: "invoice.email_queue.process", outcome: "rate_limited", request, metadata: { scope: "invoice.email_queue.process" } });
+      return NextResponse.json({ error: "Too many queue processing requests. Please try again later." }, rateLimitResponse(rateLimit));
+    }
     const now = new Date().toISOString();
     const { data: candidates, error: queueError } = await admin
       .from("invoice_email_queue")
@@ -131,14 +143,13 @@ export async function GET(request: Request) {
           await admin.from("activity_log").update({ delivery_status: "failed", completed_at: new Date().toISOString(), metadata: { error: message } }).eq("id", activityId);
         }
         const terminal = await markFailure(admin, claimed, message);
-        results.push({ invoiceId: claimed.invoice_id, status: terminal ? "failed" : "retry_scheduled", error: message });
+        results.push({ invoiceId: claimed.invoice_id, status: terminal ? "failed" : "retry_scheduled" });
       }
     }
 
     return NextResponse.json({ ok: true, processed: results.length, results });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Invoice email queue processing failed.";
     console.error("Invoice email queue processing failed:", error);
-    return NextResponse.json({ error: message }, { status: message.includes("CRON_SECRET") ? 503 : 502 });
+    return NextResponse.json({ error: "Invoice email queue processing failed." }, { status: 502 });
   }
 }

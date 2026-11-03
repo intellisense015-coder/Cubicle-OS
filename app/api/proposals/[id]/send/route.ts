@@ -2,10 +2,22 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { renderProposalEmailHtml, renderProposalEmailSubject, renderProposalEmailText } from "@/lib/proposal-email-html";
 import { resolveEmailSender, sendResendEmail, validEmail } from "@/lib/server-email";
+import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
 const proposalColumns = "id,proposal_number,recipient_name,recipient_email,title,subtitle,issue_date,office,total_seats,total_amount";
+const proposalSendSchema = z.object({
+  attachment: z.object({
+    filename: z.string().trim().min(1).max(255),
+    content: z.string().trim().min(1).max(34_000_000),
+  }).strict(),
+  template: z.object({
+    subject: z.string().trim().max(200).optional(),
+    body: z.string().max(5_000).optional(),
+  }).strict().optional(),
+}).strict();
 
 function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -28,6 +40,8 @@ function parsePdfAttachment(value: unknown) {
   if (!content) throw new Error("The proposal PDF attachment is required.");
   if (content.length > 25_000_000) throw new Error("The proposal PDF attachment is too large.");
   if (!/^[A-Za-z0-9+/=]+$/.test(content)) throw new Error("The proposal PDF attachment is invalid.");
+  const decoded = Buffer.from(content, "base64");
+  if (decoded.length < 5 || decoded.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("The proposal PDF attachment is invalid.");
   const filename = String(record.filename || "proposal.pdf").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/\.pdf$/i, "") + ".pdf";
   return { filename, content };
 }
@@ -40,10 +54,13 @@ function templateValue(template: unknown, key: "subject" | "body") {
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   let proposalId = "";
+  let actorUserId = "";
+  let admin: ReturnType<typeof serviceClient> | null = null;
   try {
     const { id } = await params;
     proposalId = String(id || "").trim();
     if (!proposalId) return NextResponse.json({ error: "Proposal id is required." }, { status: 400 });
+    if (!z.string().uuid().safeParse(proposalId).success) return NextResponse.json({ error: "Proposal not found." }, { status: 404 });
 
     const authorization = request.headers.get("authorization") || "";
     const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -52,11 +69,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const userClient = authClient(token);
     const { data: userData, error: authError } = await userClient.auth.getUser(token);
     if (authError || !userData.user) return NextResponse.json({ error: "Your session is invalid or expired." }, { status: 401 });
+    actorUserId = userData.user.id;
 
     const { data: allowed, error: permissionError } = await userClient.rpc("is_permission_granted", { p_permission_key: "proposals.write" });
     if (permissionError || allowed !== true) return NextResponse.json({ error: "Proposal sending access required." }, { status: 403 });
 
-    const admin = serviceClient();
+    admin = serviceClient();
+    const rateLimit = await checkRateLimits({
+      client: admin,
+      request,
+      scope: "proposal.send",
+      userId: userData.user.id,
+      ipLimit: 20,
+      userLimit: 20,
+      windowSeconds: 10 * 60,
+    });
+    if (!rateLimit.allowed) {
+      await recordSecurityAudit(admin, { action: "proposal.send", outcome: "rate_limited", actorUserId: userData.user.id, entityType: "proposal", entityId: proposalId, request, metadata: { scope: "proposal.send" } });
+      const response = rateLimitResponse(rateLimit);
+      return NextResponse.json({ error: "Too many proposal delivery requests. Please try again later." }, response);
+    }
+
     const { data: proposal, error: proposalError } = await admin.from("proposals").select(proposalColumns).eq("id", proposalId).maybeSingle();
     if (proposalError) throw proposalError;
     if (!proposal) return NextResponse.json({ error: "Proposal not found." }, { status: 404 });
@@ -64,8 +97,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const recipientEmail = String(proposal.recipient_email || "").trim().toLowerCase();
     if (!validEmail(recipientEmail)) return NextResponse.json({ error: "The proposal recipient does not have a valid email address." }, { status: 422 });
 
-    const requestBody = await request.json().catch(() => ({}));
-    const attachment = parsePdfAttachment(requestBody?.attachment);
+    const body = await readJsonBody(request, 34 * 1024 * 1024, false);
+    if (!body.ok) {
+      const status = "status" in body ? body.status : 400;
+      return NextResponse.json({ error: requestBodyError(status) }, { status });
+    }
+    const parsedBody = proposalSendSchema.safeParse(body.value);
+    if (!parsedBody.success) return NextResponse.json({ error: "The proposal attachment is invalid." }, { status: 400 });
+    let attachment;
+    try {
+      attachment = parsePdfAttachment(parsedBody.data.attachment);
+    } catch {
+      return NextResponse.json({ error: "The proposal attachment is invalid." }, { status: 400 });
+    }
+    const requestBody = parsedBody.data;
     const emailInput = {
       recipientName: proposal.recipient_name,
       proposalNumber: proposal.proposal_number,
@@ -96,11 +141,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { error: statusError } = await admin.from("proposals").update({ status: "sent", updated_by: userData.user.id }).eq("id", proposalId);
     if (statusError) console.error("Proposal was emailed but its status could not be updated:", statusError);
 
+    await recordSecurityAudit(admin, { action: "proposal.send", outcome: "success", actorUserId: userData.user.id, entityType: "proposal", entityId: proposalId, request, metadata: { attachment: true, status_updated: !statusError } });
+
     return NextResponse.json({ ok: true, delivery: { status: "sent", recipientEmail, sender: sender.from, replyTo: sender.replyTo || null, attachmentFilename: attachment.filename, providerMessageId: emailResult?.id || null, statusUpdated: !statusError } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Proposal email delivery failed.";
+    if (admin && proposalId) await recordSecurityAudit(admin, { action: "proposal.send", outcome: "failure", actorUserId: actorUserId || null, entityType: "proposal", entityId: proposalId, request, metadata: { reason: "delivery_failed" } });
     console.error("Proposal email delivery failed:", { proposalId, error });
     const status = message.includes("not configured") ? 503 : 502;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: "Proposal email delivery could not be completed." }, { status });
   }
 }

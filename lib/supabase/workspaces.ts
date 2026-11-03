@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 
 export type SupabaseWorkspaceRow = {
   id: string;
@@ -153,91 +154,18 @@ export async function fetchSupabaseWorkspaces() {
 
 export async function createSupabaseWorkspaces(workspaces: any[]) {
   if (!workspaces.length) return [] as SupabaseWorkspaceRow[];
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("workspaces")
-    .insert(workspaces.map(toSupabaseWorkspaceInput))
-    .select(workspaceColumns);
-
-  if (error) throw error;
-  return (data || []) as unknown as SupabaseWorkspaceRow[];
+  return secureOsMutation<SupabaseWorkspaceRow[]>("workspace.create", {
+    workspaces: workspaces.map(toSupabaseWorkspaceInput),
+  });
 }
 
 export async function updateSupabaseWorkspace(id: string, workspace: any) {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("workspaces")
-    .update(toSupabaseWorkspaceInput({ ...workspace, id, areaId: id }))
-    .eq("id", id)
-    .select(workspaceColumns)
-    .single();
-
-  if (error) throw error;
-  return data as unknown as SupabaseWorkspaceRow;
+  return secureOsMutation<SupabaseWorkspaceRow>("workspace.update", {
+    id,
+    input: toSupabaseWorkspaceInput({ ...workspace, id, areaId: id }),
+  });
 }
 
 export async function assignSupabaseMemberToWorkspace(memberId: string, workspaceId: string | null) {
-  const client = getSupabaseBrowserClient();
-  const { error: rpcError } = await client.rpc("assign_member_to_workspace", {
-    p_member_id: memberId,
-    p_workspace_id: workspaceId,
-  });
-
-  // Older deployments contain an assign_member_to_workspace function whose
-  // UPSERT assigns notice_start_date twice. Even when that RPC reports success,
-  // reconcile through the canonical rows so the member table and floor plan
-  // cannot drift apart.
-  const message = String(rpcError?.message || rpcError || "").toLowerCase();
-  if (rpcError && (!message.includes("multiple assignments") || !message.includes("notice_start_date"))) throw rpcError;
-
-  const { data: member, error: memberError } = await client
-    .from("members")
-    .select("member_name,company_name,monthly_rent,billing_start_date,due_day,status,membership_status,notice_start_date,expected_leaving_date,notice_notes")
-    .eq("id", memberId)
-    .single();
-  if (memberError) throw memberError;
-
-  const clearAssignment = {
-    member_id: null,
-    occupant: "Available",
-    company_name: "Unassigned",
-    status: "available",
-    membership_status: "active",
-    notice_start_date: null,
-    expected_leaving_date: null,
-    notice_notes: null,
-  };
-  let clearQuery = client.from("workspaces").update(clearAssignment).eq("member_id", memberId);
-  if (workspaceId) clearQuery = clearQuery.neq("id", workspaceId);
-  const { error: clearError } = await clearQuery;
-  if (clearError) throw clearError;
-
-  // Also remove legacy ghost occupants that have no member_id. Older
-  // assignment flows could leave the visible name behind after moving a
-  // member, which made one person appear in two places on the floor plan.
-  let staleOccupantQuery = client.from("workspaces").update(clearAssignment).eq("occupant", member.member_name);
-  if (workspaceId) staleOccupantQuery = staleOccupantQuery.neq("id", workspaceId);
-  const { error: staleOccupantError } = await staleOccupantQuery;
-  if (staleOccupantError) throw staleOccupantError;
-
-  if (workspaceId) {
-    const { error: assignError } = await client.from("workspaces").update({
-      member_id: memberId,
-      occupant: member.member_name,
-      company_name: member.company_name || "Unassigned",
-      monthly_rent: member.monthly_rent,
-      billing_start_date: member.billing_start_date,
-      due_day: Number(member.due_day) || 5,
-      status: member.status === "active" ? "occupied" : "available",
-      membership_status: member.membership_status || "active",
-      notice_start_date: member.notice_start_date,
-      expected_leaving_date: member.expected_leaving_date,
-      notice_notes: member.notice_notes,
-    }).eq("id", workspaceId);
-    if (assignError) throw assignError;
-  }
-
-  const { error: memberAssignmentError } = await client
-    .from("members")
-    .update({ assigned_space: workspaceId || null })
-    .eq("id", memberId);
-  if (memberAssignmentError) throw memberAssignmentError;
+  await secureOsMutation<{ assigned: boolean }>("workspace.assign", { memberId, workspaceId });
 }
