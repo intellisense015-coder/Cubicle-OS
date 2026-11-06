@@ -14,6 +14,37 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type InviteState = "loading" | "ready" | "error";
 
+function cleanInvitationUrl() {
+  const url = new URL(window.location.href);
+  ["code", "invite", "email", "access_token", "refresh_token", "expires_at", "expires_in", "token_type", "type"].forEach((key) => url.searchParams.delete(key));
+  url.hash = "";
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+}
+
+async function establishInvitationSession(supabase: ReturnType<typeof getSupabaseBrowserClient>) {
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const accessToken = url.searchParams.get("access_token") || hashParams.get("access_token");
+  const refreshToken = url.searchParams.get("refresh_token") || hashParams.get("refresh_token");
+
+  if (accessToken && refreshToken) {
+    const { data, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    if (error) throw error;
+    cleanInvitationUrl();
+    return data.session;
+  }
+
+  const code = url.searchParams.get("code");
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    cleanInvitationUrl();
+    return data.session;
+  }
+
+  return null;
+}
+
 export default function AcceptInvitePage() {
   const router = useRouter();
   const [state, setState] = useState<InviteState>("loading");
@@ -26,10 +57,18 @@ export default function AcceptInvitePage() {
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     let active = true;
+    let allowAuthEvents = false;
+    const expectedEmail = new URLSearchParams(window.location.search).get("email")?.trim().toLowerCase() || "";
 
     const applySession = (session: { user?: { email?: string | null } } | null) => {
       if (!active) return;
       if (session?.user) {
+        const sessionEmail = String(session.user.email || "").trim().toLowerCase();
+        if (expectedEmail && sessionEmail !== expectedEmail) {
+          setState("error");
+          setError("This invitation belongs to a different email account. Open the invitation from the invited mailbox or ask the owner to send it again.");
+          return;
+        }
         setEmail(session.user.email || "");
         setState("ready");
         setError("");
@@ -39,36 +78,26 @@ export default function AcceptInvitePage() {
       }
     };
 
-    const establishInviteSession = async () => {
-      try {
-        const code = new URLSearchParams(window.location.search).get("code");
-        if (code) {
-          const response = await fetch("/api/admin/invite", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "accept", code }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error || "This invitation link is invalid or has expired.");
-          window.history.replaceState({}, document.title, "/accept-invite");
-        }
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (allowAuthEvents) applySession(session);
+    });
 
+    void (async () => {
+      try {
+        const invitationSession = await establishInvitationSession(supabase);
         const { data, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
-        applySession(data.session);
+        if (active) {
+          allowAuthEvents = true;
+          applySession(invitationSession || data.session);
+        }
       } catch (sessionException) {
         if (active) {
           setState("error");
           setError(sessionException instanceof Error ? sessionException.message : "This invitation link is invalid or has expired.");
         }
       }
-    };
-
-    void establishInviteSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      applySession(session);
-    });
+    })();
 
     return () => {
       active = false;
@@ -92,8 +121,11 @@ export default function AcceptInvitePage() {
     try {
       const { error: updateError } = await getSupabaseBrowserClient().auth.updateUser({ password });
       if (updateError) throw updateError;
-      await getSupabaseBrowserClient().auth.signOut();
-      router.replace("/login?invite=success");
+      const invitationResponse = await fetch("/api/auth/invite/accept", { method: "POST" });
+      const invitationPayload = await invitationResponse.json().catch(() => null);
+      if (!invitationResponse.ok) throw new Error(invitationPayload?.error || "The invitation could not be completed.");
+      const postAuthPath = `/post-auth?next=${encodeURIComponent("/dashboard")}`;
+      router.replace(`/mfa?next=${encodeURIComponent(postAuthPath)}`);
     } catch (updateException) {
       setError(updateException instanceof Error ? updateException.message : "The password could not be saved.");
     } finally {

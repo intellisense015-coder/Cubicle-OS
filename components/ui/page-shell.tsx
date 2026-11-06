@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { OsHeader } from "@/components/os/header";
 import { OsSidebar } from "@/components/os/sidebar";
 import { clearDemoSession, clearSeededBusinessDataOnce } from "@/lib/demo-session";
+import { clearDeviceMaterial } from "@/lib/device-crypto";
 import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AppSkeleton, RouteSkeleton } from "@/components/ui/skeleton";
 
@@ -119,6 +120,12 @@ export function PageShell({ children }) {
           // Ignore storage cleanup failures; the authenticated session remains valid.
         }
 
+        try {
+          window.sessionStorage.removeItem(BROWSER_SESSION_HANDOFF_KEY);
+        } catch {
+          // Ignore storage cleanup failures; the authenticated session remains valid.
+        }
+
         if (!cancelled) {
           setCurrentUserName(getDisplayName(userData.user));
           setCurrentUserRole(formatAdminRole(roleData));
@@ -164,6 +171,7 @@ export function PageShell({ children }) {
 
   const signOut = async () => {
     try {
+      await fetch("/api/auth/device/revoke", { method: "POST", credentials: "include" }).catch(() => undefined);
       await getSupabaseBrowserClient().auth.signOut();
     } finally {
       try {
@@ -171,6 +179,7 @@ export function PageShell({ children }) {
       } catch {
         // Ignore storage cleanup failures during sign-out.
       }
+      await clearDeviceMaterial().catch(() => undefined);
       clearDemoSession();
       router.replace("/splash");
     }

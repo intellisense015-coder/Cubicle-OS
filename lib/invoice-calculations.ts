@@ -3,9 +3,9 @@
  * percentages and decimal amounts do not accumulate JavaScript float error.
  *
  * Business rules:
- * - Sales tax is included in the quoted total. For example, a subtotal of
- *   PKR 85,000 at 15% inclusive Sales Tax produces PKR 15,000 tax and a
- *   PKR 100,000 total.
+ * - Sales tax is added to the subtotal. For example, a subtotal of
+ *   PKR 50,000 at 10% Sales Tax produces PKR 5,000 tax and a
+ *   PKR 55,000 total.
  * - WHT is withheld from the subtotal (not from sales tax).
  * - A disabled tax, a zero rate, or a zero calculated amount is treated as
  *   "Not Included" by the document renderers.
@@ -55,7 +55,7 @@ export function calculateInvoiceTotals(input: InvoiceTaxInput): InvoiceTotals {
   const salesTaxRate = roundMoney(parseAmount(input.salesTaxRate));
   const whtRate = roundMoney(parseAmount(input.whtRate));
   const salesTaxAmountMinorUnits = input.salesTaxEnabled && salesTaxRate > 0 && salesTaxRate < 100
-    ? Math.round((subtotalMinorUnits * salesTaxRate) / (100 - salesTaxRate))
+    ? percentageAmount(subtotalMinorUnits, salesTaxRate)
     : 0;
   const whtAmountMinorUnits = input.whtEnabled && whtRate > 0
     ? percentageAmount(subtotalMinorUnits, whtRate)

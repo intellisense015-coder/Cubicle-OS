@@ -18,6 +18,8 @@ const actionValues = [
   "company.status",
   "lead.create",
   "lead.update",
+  "lead.followup.update",
+  "lead.journey.update",
   "member.create",
   "member.update",
   "visit.create",
@@ -50,7 +52,7 @@ const mutationRequestSchema = z.object({
 }).strict();
 
 const companyColumns = "id,name,status,created_at,updated_at";
-const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option";
+const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
 const memberColumns = [
   "id", "lead_id", "member_name", "phone", "email", "company_name", "team", "assigned_space",
   "monthly_rent", "security_deposit", "billing_start_date", "due_day", "joined_date", "status",
@@ -191,6 +193,28 @@ function normalizeWorkspaceOption(value: unknown) {
   if (normalized) return normalized;
   if (Object.values(workspaceOptionByLabel).includes(result)) return result;
   throw new Error("Invalid mutation payload.");
+}
+
+const leadStageValues = new Set([
+  "New lead",
+  "Follow-up due",
+  "Visit scheduled",
+  "Visited",
+  "Quotation requested",
+  "Quote Sent",
+  "Proposal Sent",
+  "Proposal Approved",
+  "Quotation Approved",
+  "Agreement shared",
+  "Converted",
+  "Not interested",
+]);
+
+function normalizedLeadStage(value: unknown) {
+  const result = text(value, 64, true);
+  const normalized = result === "Closed lost" ? "Not interested" : result;
+  if (!leadStageValues.has(normalized)) throw new Error("Invalid mutation payload.");
+  return normalized;
 }
 
 function normalizedTime(value: unknown) {
@@ -370,6 +394,8 @@ function permissionFor(action: string) {
   if (action.startsWith("admin.")) return "admin_users.manage";
   if (action.startsWith("companyProfile.")) return "settings.read";
   if (action.startsWith("company.")) return "companies.write";
+  if (action === "lead.followup.update") return "leads.followups.write";
+  if (action === "lead.journey.update") return "leads.journey.write";
   if (action.startsWith("lead.")) return "leads.write";
   if (action.startsWith("member.")) return "members.write";
   if (action.startsWith("visit.")) return "visits.write";
@@ -403,6 +429,7 @@ function safeDatabaseMessage(error: any) {
   if (code === "23514" && message.includes("active maintenance ticket")) return "This category cannot be deactivated while it has an active maintenance ticket.";
   if (code === "23505" && message.includes("members_email_unique_idx")) return "A member with this email already exists.";
   if (code === "23505") return "That record already exists.";
+  if (code === "PGRST202") return "The opportunity-loss feature is not configured yet.";
   if (code === "42501") return "You are not allowed to perform this action.";
   return "The requested change could not be saved.";
 }
@@ -434,7 +461,7 @@ function sameMemberCreate(existing: any, input: Record<string, any>) {
     && sameText(existing.notice_notes, input.notice_notes);
 }
 
-async function runMutation(action: string, rawPayload: unknown, client: SupabaseClient, actorUserId: string) {
+async function runMutation(action: string, rawPayload: unknown, client: SupabaseClient, actorUserId: string, requiredPermission: string | null = null) {
   const payload = objectPayload(rawPayload);
 
   if (action === "company.create") {
@@ -461,22 +488,52 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       team_size: teamSize,
       shift: text(payload.shift, 80) || "Flexible",
       workspace_option: normalizeWorkspaceOption(payload.workspace),
+      os_stage: "New lead",
     }).select(leadColumns).single();
     if (error) throw error;
     return data;
   }
-  if (action === "lead.update") {
+  if (["lead.update", "lead.followup.update", "lead.journey.update"].includes(action)) {
     const id = uuid(payload.id);
-    const update: Record<string, unknown> = {};
-    if (payload.workspace !== undefined) update.workspace_option = normalizeWorkspaceOption(payload.workspace);
-    if (payload.visited !== undefined) {
+    const updateEmail = payload.email !== undefined;
+    const updatePhone = payload.phone !== undefined;
+    const email = updateEmail ? emailValue(payload.email, true) : null;
+    const phone = updatePhone ? text(payload.phone, 40, true) : null;
+    const updateWorkspace = payload.workspace !== undefined;
+    const updateVisited = payload.visited !== undefined;
+    const updateVisitDate = payload.visitDate !== undefined;
+    const updateVisitTime = payload.visitTime !== undefined;
+    const workspaceOption = updateWorkspace ? normalizeWorkspaceOption(payload.workspace) : null;
+    let visited: boolean | null = null;
+    if (updateVisited) {
       if (typeof payload.visited !== "boolean") throw new Error("Invalid mutation payload.");
-      update.visited = payload.visited;
+      visited = payload.visited;
     }
-    if (payload.visitDate !== undefined) update.visit_date = dateValue(payload.visitDate);
-    if (payload.visitTime !== undefined) update.visit_time = payload.visitTime ? normalizedTime(payload.visitTime) : null;
-    if (!Object.keys(update).length) throw new Error("Invalid mutation payload.");
-    const { data, error } = await client.from("leads").update(update).eq("id", id).select(leadColumns).single();
+    const visitDate = updateVisitDate ? dateValue(payload.visitDate) : null;
+    const visitTime = updateVisitTime ? (payload.visitTime ? normalizedTime(payload.visitTime) : null) : null;
+    const requestedStage = payload.stage === undefined ? null : normalizedLeadStage(payload.stage);
+    const lostReason = requestedStage === "Not interested" ? text(payload.lostReason, 240, true) : null;
+    const lostMonthlyValue = requestedStage === "Not interested" ? numeric(payload.lostMonthlyValue, 1_000_000_000_000) : null;
+    if (requestedStage === "Not interested" && lostMonthlyValue <= 0) throw new Error("Invalid mutation payload.");
+    if (!updateEmail && !updatePhone && !updateWorkspace && !updateVisited && !updateVisitDate && !updateVisitTime && requestedStage === null) throw new Error("Invalid mutation payload.");
+
+    const { data, error } = await client.rpc("os_update_lead", {
+      p_id: id,
+      p_workspace_option: workspaceOption,
+      p_update_workspace: updateWorkspace,
+      p_visited: visited,
+      p_update_visited: updateVisited,
+      p_visit_date: visitDate,
+      p_update_visit_date: updateVisitDate,
+      p_visit_time: visitTime,
+      p_update_visit_time: updateVisitTime,
+      p_stage: requestedStage,
+      p_lost_reason: lostReason,
+      p_lost_monthly_value: lostMonthlyValue,
+      p_permission_key: requiredPermission || "leads.write",
+      p_email: email,
+      p_contact_number: phone,
+    });
     if (error) throw error;
     return data;
   }
@@ -747,11 +804,15 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     const updatePayload = { ...insertPayload } as Record<string, unknown>;
     delete updatePayload.quotation_number;
     delete updatePayload.created_by;
-    const { data, error } = await client.from("quotations").update(updatePayload).eq("id", id).select(quotationColumns).single();
+    // Updating a quotation replaces its line items. Use the server-side client
+    // for this replacement after the permission check above so RLS cannot
+    // silently leave the old items in place and cause duplicates on re-save.
+    const quotationWriteClient = serviceClient();
+    const { data, error } = await quotationWriteClient.from("quotations").update(updatePayload).eq("id", id).select(quotationColumns).single();
     if (error) throw error;
-    const { error: deleteError } = await client.from("quotation_items").delete().eq("quotation_id", id);
+    const { error: deleteError } = await quotationWriteClient.from("quotation_items").delete().eq("quotation_id", id);
     if (deleteError) throw deleteError;
-    const { data: itemRows, error: itemError } = await client.from("quotation_items").insert(items.map((item) => ({ ...item, quotation_id: id }))).select(quotationItemColumns);
+    const { data: itemRows, error: itemError } = await quotationWriteClient.from("quotation_items").insert(items.map((item) => ({ ...item, quotation_id: id }))).select(quotationItemColumns);
     if (itemError) throw itemError;
     return { row: data, items: itemRows || [] };
   }
@@ -886,7 +947,7 @@ export async function POST(request: Request) {
     }
 
     admin = serviceClient();
-    const sensitive = action.startsWith("admin.") || action.startsWith("invoice.") || action.startsWith("quotation.") || action.startsWith("proposal.") || action === "companyProfile.save";
+    const sensitive = action.startsWith("admin.") || action.startsWith("invoice.") || action.startsWith("quotation.") || action.startsWith("proposal.") || action === "companyProfile.save" || action.startsWith("lead.");
     const rateLimit = await checkRateLimits({
       client: admin,
       request,
@@ -902,7 +963,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Too many requests. Please try again later." }, response);
     }
 
-    const data = await runMutation(action, parsed.data.payload, userClient, actorUserId);
+    const data = await runMutation(action, parsed.data.payload, userClient, actorUserId, permission);
     await recordSecurityAudit(admin, { action, outcome: "success", actorUserId, entityType: entityTypeFor(action), entityId, request });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

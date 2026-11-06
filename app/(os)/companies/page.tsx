@@ -117,7 +117,7 @@ export default function CompaniesPage() {
         setCompanies(nextCompanies);
         saveDemoValue("companies", nextCompanies, { notify: false });
         queryClient.setQueryData(queryKeys.companies.all, (current: any) => ({ ...(current || { dataSource: "supabase", errorMessage: "" }), companies: nextCompanies, errorMessage: "" }));
-      }).catch((error) => showToast({ variant: "error", title: "Companies could not be completed", message: error?.message || "The missing company records could not be created." }));
+      }).catch((error) => showToast({ variant: "error", title: "Companies could not be completed", message: error?.message || "We couldn’t create the missing company records. Please try again." }));
     } else if (!canEdit && missingCompanies.length > 0) {
       setCompanies([...loadedCompanies, ...missingCompanies.map((name, index) => ({ id: `inferred-company-${index}`, name, status: "Active" }))]);
     }
@@ -147,7 +147,7 @@ export default function CompaniesPage() {
       setShowForm(false);
       showToast({ variant: "success", title: "Company added", message: `${nextCompany.name} was added successfully.` });
     } catch (error) {
-      showToast({ variant: "error", title: "Company was not saved", message: error?.message || "The company could not be saved." });
+      showToast({ variant: "error", title: "Company was not saved", message: "We couldn’t save this company. Please try again." });
     }
   };
 
@@ -192,7 +192,7 @@ export default function CompaniesPage() {
           : `${company.name} was updated successfully.`,
       });
     } catch (error) {
-      showToast({ variant: "error", title: "Company status was not changed", message: error?.message || "The company status could not be updated." });
+      showToast({ variant: "error", title: "Company status was not changed", message: "We couldn’t update this company. Please try again." });
     }
   };
 

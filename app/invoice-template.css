@@ -2,6 +2,7 @@
 
 .invoice-page {
   position: relative;
+  box-sizing: border-box;
   width: 210mm;
   max-width: 100%;
   min-height: 297mm;
@@ -50,7 +51,7 @@
 .company-details { margin: 0; font-size: 10.2pt; line-height: 1.55; letter-spacing: .55px; }
 .company-tax { margin-top: 7mm; }
 .invoice-title { width: 34%; text-align: right; }
-.invoice-title h1 { margin: 2mm 0; color: #080808; font-size: 21pt; line-height: 1; font-weight: 700; letter-spacing: .7px; }
+.invoice-title h1 { margin: 2mm 0; color: #080808; font-size: 21pt; line-height: 1; font-weight: 700; letter-spacing: .7px; white-space: nowrap; }
 .invoice-meta { font-size: 11pt; line-height: 1.45; letter-spacing: 1px; }
 .billing-row { gap: 12mm; margin-top: 22mm; padding-bottom: 2.5mm; border-bottom: 1.1px solid #555; }
 .billing-col { flex: 1; }
@@ -142,14 +143,23 @@
     position: relative !important;
     display: block !important;
     width: 210mm !important;
-    height: 297mm !important;
+    box-sizing: border-box !important;
+    height: auto !important;
     min-height: 297mm !important;
-    max-height: 297mm !important;
+    max-height: none !important;
     margin: 0 !important;
-    overflow: hidden !important;
+    overflow: visible !important;
     box-shadow: none !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+
+  .invoice-preview-frame {
+    display: block !important;
+    width: 210mm !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
   }
 }
 
@@ -277,10 +287,19 @@
 /* Quotation layout matched to the supplied The Cubicle A4 quotation. */
 .quotation-page .billing-row {
   margin-top: 22mm;
+  padding-bottom: 0;
 }
 
 .quotation-page .items-table {
-  margin-top: 6mm;
+  margin-top: 2mm;
+}
+
+.quotation-page .section-label {
+  letter-spacing: normal;
+}
+
+.quotation-page .billing-col .customer-line:last-child {
+  margin-bottom: 0;
 }
 
 .quotation-page .items-table tbody tr {
@@ -419,6 +438,57 @@ html[data-theme="dark"] .quotation-create-button,
   color: var(--danger);
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+/* Keep the quotation modal header and close control aligned with the lead modal. */
+.dialog-card:has(.quotation-form) .quotation-form .card-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.dialog-card:has(.quotation-form) .quotation-form .card-heading .muted-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.dialog-card:has(.quotation-form) .dialog-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--muted);
+}
+
+.quotation-form-section-heading {
+  grid-column: 1 / -1;
+  margin: 12px 0 2px;
+  color: var(--ink);
+}
+
+.quotation-form-section-heading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.quotation-monthly-rent-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.quotation-monthly-rent-fields .settings-label {
+  min-width: 0;
+}
+
+html[data-theme="dark"] .dialog-card:has(.quotation-form) .quotation-form .card-heading .muted-copy,
+.dark .dialog-card:has(.quotation-form) .quotation-form .card-heading .muted-copy {
+  color: #fff;
 }
 
 html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .button-primary,
@@ -735,6 +805,14 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   text-align: center;
 }
 
+.quotation-summary-box > div {
+  text-align: left;
+}
+
+.quotation-summary-box > div > :last-child {
+  text-align: right;
+}
+
 .quotation-summary-box .quotation-total,
 .invoice-summary-box .invoice-summary-total {
   margin: 0;
@@ -764,6 +842,33 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   grid-column: 2;
   color: var(--muted);
   font-size: 10px;
+}
+
+.quotation-tax-options {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.quotation-tax-option {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quotation-tax-option .quotation-tax-toggle {
+  min-height: 30px;
+}
+
+.quotation-tax-option .settings-label {
+  gap: 7px;
+}
+
+.quotation-tax-option .text-input:disabled {
+  color: var(--muted);
+  opacity: .55;
+  cursor: not-allowed;
 }
 
 .quotation-live-summary {
@@ -858,6 +963,131 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   grid-column: 1 / -1;
 }
 
+.charge-editor-compact {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.charge-editor-compact .charge-editor-heading .muted-copy {
+  display: none;
+}
+
+.charge-editor-compact .settings-label-title {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+
+.charge-editor-compact .charge-editor-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+  align-items: start;
+}
+
+.charge-editor-compact .charge-editor-columns {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.charge-editor-compact .charge-editor-row .input-wrap {
+  margin-top: 0;
+}
+
+.charge-editor-compact .charge-editor-row .text-input {
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--surface-soft-2);
+  box-shadow: none;
+}
+
+.charge-editor-compact .charge-remove-button {
+  color: #ef4444 !important;
+}
+
+.charge-editor-compact .charge-remove-button:disabled {
+  color: var(--muted) !important;
+}
+
+.charge-editor-compact .charge-editor-row-actions {
+  display: grid;
+  grid-template-rows: 34px 34px;
+  align-content: start;
+  align-items: start;
+  justify-items: center;
+  row-gap: 4px;
+  min-height: 77px;
+  width: 44px;
+  padding-top: 5px;
+}
+
+.charge-editor-compact .charge-editor-row-actions .button {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0;
+  transform: none !important;
+}
+
+.charge-editor-compact .charge-editor-row-actions .charge-remove-button {
+  color: #ef4444 !important;
+  border: 1px solid color-mix(in srgb, #ef4444 42%, var(--control-border));
+  background: color-mix(in srgb, #ef4444 13%, var(--surface-soft-2));
+}
+
+.charge-editor-compact .charge-editor-row-actions .charge-remove-button:hover {
+  color: #dc2626 !important;
+  border-color: #ef4444;
+  background: color-mix(in srgb, #ef4444 20%, var(--surface-soft-2));
+}
+
+.charge-editor-compact .charge-editor-row-actions .charge-remove-button:disabled {
+  color: var(--muted) !important;
+  border-color: var(--control-border);
+  background: var(--surface-soft-2);
+}
+
+.charge-editor-compact .charge-editor-row-actions .charge-add-button {
+  color: var(--brand) !important;
+  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--control-border));
+  background: var(--brand-soft);
+}
+
+.charge-editor-compact .charge-editor-row-actions .charge-add-button:hover {
+  color: var(--brand) !important;
+  border-color: var(--brand);
+  background: var(--surface-soft);
+}
+
+.charge-editor-compact .charge-editor-row-actions .button svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  opacity: 1;
+}
+
+@media screen and (max-width: 560px) {
+  .quotation-monthly-rent-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .quotation-tax-options {
+    grid-template-columns: 1fr;
+  }
+}
+
 .invoice-period-card {
   text-align: right;
 }
@@ -878,6 +1108,10 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   .charge-editor-columns,
   .charge-editor-row {
     grid-template-columns: minmax(0, 1fr) minmax(100px, .48fr) 30px;
+  }
+
+  .charge-editor-compact .charge-editor-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
   }
 
   .charge-editor-heading {

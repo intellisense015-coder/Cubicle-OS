@@ -71,7 +71,7 @@ export default function ProfilePage() {
       });
       if (error) throw error;
     } catch (updateError) {
-      showToast({ variant: "error", title: "Profile was not saved", message: updateError instanceof Error ? updateError.message : "Your profile could not be updated." });
+      showToast({ variant: "error", title: "Profile was not saved", message: "We couldn’t update your profile. Please try again." });
       return;
     }
     saveDemoValue("profileName", values.name.trim());
@@ -140,7 +140,7 @@ export default function ProfilePage() {
 
     <Dialog open={Boolean(securityDialog)} onClose={() => setSecurityDialog(null)} ariaLabel="Security settings">
       {securityDialog === "mfa" ? <MfaManager onClose={() => setSecurityDialog(null)} onStatusChange={setMfaEnabled} /> : <form className="dialog-content" onSubmit={saveSecurityAction}>
-        <div className="card-heading"><div><span className="seat-details-label">Security</span><h2>Change password</h2><p className="muted-copy">Your password is updated securely through Supabase Auth.</p></div></div>
+        <div className="card-heading"><div><span className="seat-details-label">Security</span><h2>Change password</h2><p className="muted-copy">Your password is updated securely.</p></div></div>
         <label className="settings-label">New password<Input type="password" value={securityValue} onChange={(event) => { setSecurityValue(event.target.value); setSecurityError(""); }} /></label>
         <label className="settings-label">Confirm password<Input type="password" value={securityConfirm} onChange={(event) => { setSecurityConfirm(event.target.value); setSecurityError(""); }} /></label>
         {securityError ? <span className="lead-form-error">{securityError}</span> : null}

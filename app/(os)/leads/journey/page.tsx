@@ -12,6 +12,7 @@ import { normalizeLeadStage } from "@/lib/lead-stages";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchLeadsSnapshot } from "@/lib/lead-query";
 import { useToast } from "@/components/ui/toast-provider";
+import { useHasPermission } from "@/lib/access-control";
 
 function formatLeadDate(value: string | undefined) {
   if (!value) return "—";
@@ -30,9 +31,12 @@ function formatLeadDate(value: string | undefined) {
 export default function LeadJourneyIndexPage() {
   const { showToast } = useToast();
   const errorShown = useRef(false);
+  const canViewLeads = useHasPermission("leads.read");
+  const canViewJourney = useHasPermission("leads.journey.read");
   const leadsQuery = useQuery({
     queryKey: queryKeys.leads.all,
     queryFn: fetchLeadsSnapshot,
+    enabled: canViewLeads && canViewJourney,
   });
   const leads = leadsQuery.data?.leads ?? [];
   const loading = leadsQuery.isPending;
@@ -45,8 +49,10 @@ export default function LeadJourneyIndexPage() {
     }
     if (errorShown.current) return;
     errorShown.current = true;
-    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the most recently saved leads." });
+    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing your saved leads while we reconnect." });
   }, [loadError, showToast]);
+
+  if (!canViewLeads || !canViewJourney) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Lead journey</h1><p className="muted-copy">This area is restricted for your account.</p></div></div><div className="table-empty-state">You do not have permission to view lead journeys.</div></motion.div>;
 
   const sortedLeads = useMemo(() => [...leads].sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))), [leads]);
 
