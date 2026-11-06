@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Employee invitation email preview</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px 12px;
+        background: #f4f4f4;
+        color: #10231d;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      .email-container {
+        width: 100%;
+        max-width: 600px;
+        margin: 0 auto;
+        overflow: hidden;
+        background: #ffffff;
+        border-radius: 20px;
+      }
+
+      .hero {
+        position: relative;
+        min-height: 320px;
+        overflow: hidden;
+        box-sizing: border-box;
+        background: #fbfcfb;
+      }
+
+      .cube-field {
+        position: absolute;
+        inset: 0;
+      }
+
+      .coded-mark {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 290px;
+        height: 208px;
+        transform: translate(-50%, -50%);
+      }
+
+      .mark-square,
+      .mark-b-tile {
+        position: absolute;
+        width: 44px;
+        height: 44px;
+        background: #9db493;
+      }
+
+      .mark-square {
+        background: #c8d9cf;
+        border-radius: 9px;
+      }
+
+      .mark-square-left {
+        top: 52px;
+        left: -46px;
+      }
+
+      .mark-square-top-right {
+        top: 0;
+        right: 0;
+      }
+
+      .mark-square-right {
+        top: 104px;
+        right: 0;
+      }
+
+      .mark-b-tile {
+        border-radius: 9px 9px 9px 9px;
+      }
+
+      .mark-b-tile.top-left { top: 0; left: 46px; }
+      .mark-b-tile.top-right { top: 0; left: 98px; }
+      .mark-b-tile.middle-left { top: 52px; left: 46px; }
+      .mark-b-tile.middle-right { top: 52px; left: 144px; border-radius: 0 25px 25px 0; }
+      .mark-b-tile.lower-left { top: 104px; left: 46px; }
+      .mark-b-tile.lower-right { top: 104px; left: 144px; border-radius: 0 25px 25px 0; }
+      .mark-b-tile.bottom-left { top: 156px; left: 46px; border-radius: 9px 9px 9px 25px; }
+      .mark-b-tile.bottom-right { top: 156px; left: 98px; border-radius: 9px 9px 25px 9px; }
+
+      @media (max-width: 480px) {
+        .coded-mark {
+          transform: translate(-50%, -50%) scale(0.82);
+        }
+      }
+
+      h1 {
+        max-width: 480px;
+        margin: 0 0 20px;
+        color: #10231d;
+        font-size: 30px;
+        line-height: 1.15;
+      }
+
+      .content {
+        padding: 36px;
+      }
+
+      .greeting {
+        margin: 0 0 20px;
+        font-size: 20px;
+        line-height: 1.45;
+      }
+
+      .body-copy {
+        margin: 0 0 18px;
+        color: #52645e;
+        font-size: 16px;
+        line-height: 1.65;
+      }
+
+      .cta-wrap {
+        margin: 30px 0 0;
+        text-align: center;
+      }
+
+      .cta {
+        display: inline-block;
+        padding: 14px 24px;
+        border-radius: 10px;
+        background: #005c49;
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .footer {
+        margin: 28px 0 0;
+        padding-top: 20px;
+        border-top: 1px solid #e4ebe8;
+        color: #74847e;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      @media (max-width: 480px) {
+        body {
+          padding: 0;
+        }
+
+        .email-container {
+          border-radius: 0;
+        }
+
+        .hero,
+        .content {
+          padding: 28px 24px;
+        }
+
+        h1 {
+          font-size: 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="email-container">
+      <section class="hero" aria-label="The Cubicle invitation hero">
+        <div class="cube-field" aria-hidden="true">
+          <div class="coded-mark">
+            <span class="mark-square mark-square-left"></span>
+            <span class="mark-square mark-square-top-right"></span>
+            <span class="mark-square mark-square-right"></span>
+            <span class="mark-b-tile top-left"></span>
+            <span class="mark-b-tile top-right"></span>
+            <span class="mark-b-tile middle-left"></span>
+            <span class="mark-b-tile middle-right"></span>
+            <span class="mark-b-tile lower-left"></span>
+            <span class="mark-b-tile lower-right"></span>
+            <span class="mark-b-tile bottom-left"></span>
+            <span class="mark-b-tile bottom-right"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="content">
+        <h1>You’re invited to The Cubicle OS</h1>
+        <p class="greeting">Hello {{employee_name}},</p>
+        <p class="body-copy">
+          You have been invited to access The Cubicle OS. Use the secure button below
+          to create your password and complete your account setup.
+        </p>
+        <p class="body-copy">This invitation was sent by The Cubicle.</p>
+
+        <div class="cta-wrap">
+          <a class="cta" href="{{invitation_link}}">Accept invitation</a>
+        </div>
+
+        <p class="footer">Please use the button above to accept your invitation.</p>
+      </section>
+    </main>
+  </body>
+</html>

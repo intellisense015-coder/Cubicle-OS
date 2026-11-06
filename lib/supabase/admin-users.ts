@@ -1,5 +1,6 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { secureOsMutation } from "@/lib/supabase/secure-mutations";
+import { getDemoValue } from "@/lib/demo-session";
 
 export type SupabaseAdminUserRow = {
   user_id: string;
@@ -8,6 +9,9 @@ export type SupabaseAdminUserRow = {
   full_name?: string | null;
   role: string;
   active: boolean;
+  invitation_status?: string | null;
+  invited_at?: string | null;
+  accepted_at?: string | null;
   created_at: string;
   last_sign_in_at: string | null;
 };
@@ -35,6 +39,16 @@ export type SupabaseAdminInviteInput = {
   phone?: string;
   roleKey: string;
 };
+
+function savedInvitationTemplate() {
+  const value = getDemoValue("email-template-employee-invitation");
+  if (!value || typeof value !== "object") return undefined;
+  const template = value as { subject?: unknown; body?: unknown };
+  return {
+    subject: typeof template.subject === "string" ? template.subject : undefined,
+    body: typeof template.body === "string" ? template.body : undefined,
+  };
+}
 
 export async function fetchSupabaseAdminUsers() {
   const { data, error } = await getSupabaseBrowserClient().rpc("list_visible_admin_users");
@@ -127,7 +141,7 @@ export async function inviteSupabaseAdminUser(input: SupabaseAdminInviteInput) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, template: savedInvitationTemplate() }),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(payload?.error || "Supabase could not send the invitation.");
@@ -165,6 +179,9 @@ export function mapSupabaseAdminUserToOsEmployee(row: SupabaseAdminUserRow) {
     role,
     permissions: role === "Owner" ? "All workspace access" : "Workspace access",
     status: row.active ? "Active" : "Disabled",
-    lastActivity: row.last_sign_in_at || "Not available",
+    invitationStatus: row.invitation_status || "not_applicable",
+    invitedAt: row.invited_at || "",
+    acceptedAt: row.accepted_at || "",
+    lastActivity: row.last_sign_in_at || (row.invitation_status === "pending" ? row.invited_at || "Invitation sent" : "Not available"),
   };
 }

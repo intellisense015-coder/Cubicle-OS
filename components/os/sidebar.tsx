@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, Building2, CalendarClock, CalendarDays, ChevronDown, ClipboardList, DoorOpen, FileText, History, LayoutDashboard, LogOut, Mail, Menu, PanelLeftClose, PanelLeftOpen, ReceiptText, Settings2, ShieldCheck, UserRoundCog, UsersRound, Wrench, X, type LucideIcon } from "lucide-react";
+import { useOsNavigationPermissions } from "@/lib/access-control";
 
 export interface NavSubItem { label: string; href: string; icon?: LucideIcon; }
 export interface NavGroupItem { label: string; href?: string; icon: LucideIcon; items?: NavSubItem[]; }
@@ -90,9 +91,38 @@ export function OsSidebar({ currentPath, onNavigate, onSignOut, mobileOpen = fal
   const [internalMobileOpen, setInternalMobileOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const isOwner = String(userRole).trim().toLowerCase() === "owner";
-  const navigationGroups = DEFAULT_NAV_GROUPS.map((group) => group.label === "Settings"
-    ? { ...group, items: group.items?.filter((item) => item.href !== "/settings" || isOwner) }
-    : group).filter((group) => group.href || group.items?.length);
+  const navigationPermissions = useOsNavigationPermissions();
+  const permissionByHref: Record<string, boolean> = {
+    "/dashboard": navigationPermissions.dashboard,
+    "/leads": navigationPermissions.leads,
+    "/leads/follow-ups": navigationPermissions.leadFollowUps && navigationPermissions.leads,
+    "/leads/activity": navigationPermissions.leadActivity && navigationPermissions.leads,
+    "/leads/journey": navigationPermissions.leadJourney && navigationPermissions.leads,
+    "/visits": navigationPermissions.visits,
+    "/visits/upcoming": navigationPermissions.visits,
+    "/visits/history": navigationPermissions.visits,
+    "/members": navigationPermissions.members,
+    "/companies": navigationPermissions.companies,
+    "/maintenance": navigationPermissions.maintenance,
+    "/maintenance/requests": navigationPermissions.maintenance,
+    "/maintenance/categories": navigationPermissions.maintenance,
+    "/workspaces": navigationPermissions.workspaces,
+    "/floor-plan": navigationPermissions.workspaces,
+    "/invoices": navigationPermissions.invoices,
+    "/quotations": navigationPermissions.quotations,
+    "/proposals": navigationPermissions.proposals,
+    "/employees": navigationPermissions.employees,
+    "/approvals": navigationPermissions.approvals,
+    "/email-templates": navigationPermissions.emailTemplates,
+    "/settings": navigationPermissions.settings && isOwner,
+  };
+  const navigationGroups = DEFAULT_NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items?.filter((item) => !item.href || permissionByHref[item.href] !== false),
+  })).filter((group) => {
+    if (group.href) return permissionByHref[group.href] !== false;
+    return Boolean(group.items?.length);
+  });
   const drawerOpen = mobileOpen || internalMobileOpen;
   const setSidebarCollapsed = (value: boolean) => { setCollapsed(value); onCollapsedChange?.(value); };
 

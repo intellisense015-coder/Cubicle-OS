@@ -15,6 +15,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { SelectField } from "@/components/ui/primitives";
+import { WorkspaceBadge } from "@/components/ui/workspace-badge";
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords } from "@/lib/workspace-records";
 import { useToast } from "@/components/ui/toast-provider";
@@ -56,7 +57,7 @@ function MemberLeadSelect({ leads, value, onChange }) {
 function MemberSpaceSelect({ spaces, value, onChange, currentMemberId = "" }) {
   const [open, setOpen] = useState(false);
   const selected = spaces.find((space) => space.id === value);
-  return <div className="settings-label lead-source-field"><span>Assigned space</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>{selected ? selected.label : "Unassigned"}<ChevronDown size={14} /></button>{open && <div className="lead-source-menu"><button type="button" className={!value ? "is-selected" : ""} onClick={() => { onChange(""); setOpen(false); }}>Unassigned</button>{spaces.filter((space) => isAssignableWorkspace(space) && (space.status === "available" || space.id === value || space.memberId === currentMemberId)).map((space) => <button type="button" key={space.id} className={value === space.id ? "is-selected" : ""} onClick={() => { onChange(space.id, space); setOpen(false); }}>{space.label} · {space.zone}</button>)}</div>}</div></div>;
+  return <div className="settings-label lead-source-field"><span>Assigned space</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}><WorkspaceBadge value={selected ? selected.type || selected.label : "Unassigned"} /><ChevronDown size={14} /></button>{open && <div className="lead-source-menu"><button type="button" className={!value ? "is-selected" : ""} onClick={() => { onChange(""); setOpen(false); }}><WorkspaceBadge value="Unassigned" /></button>{spaces.filter((space) => isAssignableWorkspace(space) && (space.status === "available" || space.id === value || space.memberId === currentMemberId)).map((space) => <button type="button" key={space.id} className={value === space.id ? "is-selected" : ""} onClick={() => { onChange(space.id, space); setOpen(false); }}><WorkspaceBadge value={space.type || space.label} /><span>{space.label} · {space.zone}</span></button>)}</div>}</div></div>;
 }
 
 function MemberForm({ leads, members, spaces, onCancel, onSave, initialMember = null }) {
@@ -92,7 +93,7 @@ function MemberForm({ leads, members, spaces, onCancel, onSave, initialMember = 
 
 function createMemberColumns(onView, onEdit, onToggleStatus, canEdit) {
   const columnHelper = createColumnHelper<any>();
-  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong><span>{row.original.team || "No team recorded"}</span></div> }), columnHelper.accessor("space", { header: "Assigned space" }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("status", { header: "Account status", cell: ({ getValue }) => <span className={`status-tag ${isActiveMember({ status: getValue() }) ? "status-active" : "status-inactive"}`}>{isActiveMember({ status: getValue() }) ? "Active" : "Suspended"}</span> }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: canEdit ? "Action" : "Access", cell: ({ row }) => canEdit ? <div className="member-primary-actions"><button className="action-icon-btn" type="button" onClick={() => onEdit(row.original)} aria-label={`Edit ${row.original.member}`} title="Edit member"><Pencil size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onToggleStatus(row.original)} aria-label={`${isActiveMember(row.original) ? "Suspend" : "Reactivate"} ${row.original.member}`} title={isActiveMember(row.original) ? "Suspend member" : "Reactivate member"}><Power size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onView(row.original)} aria-label={`View ledger for ${row.original.member}`} title="View ledger"><BookOpen size={16} /></button></div> : <span className="read-only-label">Read only</span> })];
+  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong><span>{row.original.team || "No team recorded"}</span></div> }), columnHelper.accessor("space", { header: "Assigned space", cell: ({ getValue, row }) => <WorkspaceBadge value={row.original.spaceType || getValue()} /> }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("status", { header: "Account status", cell: ({ getValue }) => <span className={`status-tag ${isActiveMember({ status: getValue() }) ? "status-active" : "status-inactive"}`}>{isActiveMember({ status: getValue() }) ? "Active" : "Suspended"}</span> }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: canEdit ? "Action" : "Access", cell: ({ row }) => canEdit ? <div className="member-primary-actions"><button className="action-icon-btn" type="button" onClick={() => onEdit(row.original)} aria-label={`Edit ${row.original.member}`} title="Edit member"><Pencil size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onToggleStatus(row.original)} aria-label={`${isActiveMember(row.original) ? "Suspend" : "Reactivate"} ${row.original.member}`} title={isActiveMember(row.original) ? "Suspend member" : "Reactivate member"}><Power size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onView(row.original)} aria-label={`View ledger for ${row.original.member}`} title="View ledger"><BookOpen size={16} /></button></div> : <span className="read-only-label">Read only</span> })];
 }
 
 function updateExistingMember(previous, values) {
@@ -212,7 +213,11 @@ export default function MembersPage() {
       if (savedMember.leadId && !previous && !existing) { const nextLeads = leads.map((lead) => lead.id === savedMember.leadId ? transitionLead(lead, { type: "converted" }) : lead); setLeads(nextLeads); saveDemoValue("leads", nextLeads); }
       closeForm(); showToast({ variant: "success", title: existing ? "Member reactivated" : previous ? "Member updated" : "Member added", message: `${savedMember.member}'s details and workspace assignment are up to date.` });
     } catch (error) {
+<<<<<<< HEAD
       showToast({ variant: "error", title: "Member was not saved", message: error?.message || "The member could not be saved." });
+=======
+      showToast({ variant: "error", title: "Member was not saved", message: "We couldn’t save this member. Please try again." });
+>>>>>>> 65c4630 (Half Bugs fixed)
     }
   };
 
@@ -241,7 +246,11 @@ export default function MembersPage() {
       persistMembers(nextMembers); persistSpaces(nextSpaces); persistCompanies(syncCompanyStatuses(companies, nextMembers));
       showToast({ variant: "success", title: "Member reactivated", message: `${member.member} is active again and the workspace assignment was restored.` });
     } catch (error) {
+<<<<<<< HEAD
       showToast({ variant: "error", title: "Member status was not changed", message: error?.message || "The member status could not be updated." });
+=======
+      showToast({ variant: "error", title: "Member status was not changed", message: "We couldn’t update this member. Please try again." });
+>>>>>>> 65c4630 (Half Bugs fixed)
     }
   };
 

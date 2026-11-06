@@ -1,5 +1,6 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { secureOsMutation } from "@/lib/supabase/secure-mutations";
+import { normalizeLeadStage } from "@/lib/lead-stages";
 
 export type SupabaseLeadRow = {
   id: string;
@@ -14,9 +15,17 @@ export type SupabaseLeadRow = {
   created_at: string;
   visited: boolean;
   workspace_option: string | null;
+  os_stage: string | null;
 };
 
-const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option";
+export type SupabaseLeadOpportunityLossRow = {
+  lead_id: string;
+  monthly_loss: number | string;
+  lost_reason: string;
+  lost_at: string;
+};
+
+const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
 
 const workspaceOptionByLabel: Record<string, string> = {
   "private office": "private-office",
@@ -48,6 +57,8 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
   const teamSize = Number(row.team_size) || 0;
   const visitDate = row.visit_date || "";
   const visitTime = timeValue(row.visit_time);
+  const fallbackStage = row.visited ? "Visited" : visitDate ? "Visit scheduled" : "New lead";
+  const stage = row.os_stage ? normalizeLeadStage(row.os_stage) : fallbackStage;
 
   return {
     id: row.id,
@@ -60,7 +71,8 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     teamSize,
     shift: row.shift,
     source: "Website",
-    stage: row.visited ? "Visited" : visitDate ? "Visit scheduled" : "New lead",
+    stage,
+    osStage: row.os_stage || null,
     nextFollowUp: visitDate ? `${visitDate}${visitTime ? ` · ${visitTime}` : ""}` : "Not scheduled",
     assignedTo: "Unassigned",
     lostReason: "",
@@ -70,6 +82,8 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     message: row.message || "",
     createdAt: row.created_at || "",
     visited: Boolean(row.visited),
+    lostMonthlyValue: null,
+    lostAt: "",
     journey: [],
   };
 }
@@ -89,6 +103,18 @@ export async function fetchSupabaseLeads() {
 
   if (error) throw error;
   return (data || []) as SupabaseLeadRow[];
+}
+
+export async function fetchSupabaseLeadOpportunityLosses() {
+  const { data, error } = await getSupabaseBrowserClient()
+    .from("os_lead_opportunity_losses")
+    .select("lead_id,monthly_loss,lost_reason,lost_at");
+
+  // This keeps the existing leads view readable while the OS-only migration
+  // is being applied. Writes still fail safely until the migration exists.
+  if (error?.code === "PGRST205") return [] as SupabaseLeadOpportunityLossRow[];
+  if (error) throw error;
+  return (data || []) as SupabaseLeadOpportunityLossRow[];
 }
 
 export async function fetchSupabaseLead(id: string) {
@@ -123,12 +149,16 @@ export async function createSupabaseLead(input: {
   });
 }
 
-export async function updateSupabaseLead(id: string, input: { workspace?: string; visited?: boolean; visitDate?: string | null; visitTime?: string | null }) {
-  const update: Record<string, unknown> = {};
-  if (input.workspace !== undefined) update.workspace_option = normalizeWorkspaceOption(input.workspace);
-  if (input.visited !== undefined) update.visited = Boolean(input.visited);
-  if (input.visitDate !== undefined) update.visit_date = input.visitDate || null;
-  if (input.visitTime !== undefined) update.visit_time = input.visitTime || null;
-
-  return secureOsMutation<SupabaseLeadRow>("lead.update", { id, ...input });
+export async function updateSupabaseLead(id: string, input: {
+  email?: string;
+  phone?: string;
+  workspace?: string;
+  visited?: boolean;
+  visitDate?: string | null;
+  visitTime?: string | null;
+  stage?: string;
+  lostReason?: string;
+  lostMonthlyValue?: number | string | null;
+}, action: "lead.update" | "lead.followup.update" | "lead.journey.update" = "lead.update") {
+  return secureOsMutation<SupabaseLeadRow | null>(action, { id, ...input });
 }

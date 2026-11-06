@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { renderInvoiceEmailHtml } from "@/lib/invoice-email-html";
+import { renderInvoiceEmailHtml, renderInvoiceEmailSubject } from "@/lib/invoice-email-html";
 import { createInvoicePdfAttachment } from "@/lib/server-invoice-pdf";
-import { resolveEmailSender, sendResendEmail, validEmail } from "@/lib/server-email";
+import { sendResendEmail, validEmail } from "@/lib/server-email";
+import { resolveOsEmailSender } from "@/lib/server-os-email";
+import { getOsEmailTemplate } from "@/lib/server-os-email-templates";
 import { checkRateLimits, rateLimitResponse, recordSecurityAudit } from "@/lib/server-security";
 
 export const runtime = "nodejs";
@@ -118,13 +120,15 @@ export async function GET(request: Request) {
           totalAmount: invoice.total_amount,
         };
         const attachment = createInvoicePdfAttachment({ ...emailInput, accountName: invoice.account_name, issueDate: invoice.issue_date });
-        const sender = resolveEmailSender({ actorName: "The Cubicle" });
+        const storedTemplate = await getOsEmailTemplate(admin, "payment-reminder");
+        const templatedEmailInput = { ...emailInput, body: storedTemplate.body };
+        const sender = await resolveOsEmailSender({ client: admin, purpose: "payment_reminders" });
         const activity = claimed.created_by
           ? await admin.from("activity_log").insert({ action: "invoice.email_reminder", entity_type: "invoice", entity_id: invoice.id, actor_user_id: claimed.created_by, recipient_email: recipientEmail, delivery_status: "pending", metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, sender: sender.from, attachment_filename: attachment.filename } }).select("id").maybeSingle()
           : { data: null, error: null };
         if (activity.error) throw activity.error;
         activityId = activity.data?.id || null;
-        const emailResult = await sendResendEmail({ from: sender.from, replyTo: sender.replyTo, to: [recipientEmail], subject: `Invoice ${invoice.invoice_number} from The Cubicle`, html: renderInvoiceEmailHtml(emailInput), attachments: [{ filename: attachment.filename, content: attachment.content }] });
+        const emailResult = await sendResendEmail({ from: sender.from, replyTo: sender.replyTo, to: [recipientEmail], subject: renderInvoiceEmailSubject(storedTemplate.subject, templatedEmailInput), html: renderInvoiceEmailHtml(templatedEmailInput), attachments: [{ filename: attachment.filename, content: attachment.content }] });
         const providerMessageId = emailResult.id.trim();
         const activityUpdate = activityId
           ? await admin.from("activity_log").update({ delivery_status: "sent", completed_at: new Date().toISOString(), metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, provider: "resend", provider_message_id: providerMessageId, sender: sender.from, attachment_filename: attachment.filename } }).eq("id", activityId)

@@ -28,11 +28,21 @@ The existing `invoices.tax_*` columns remain in place as the backward-compatible
 
 The Send Invoice action calls `POST /api/invoices/[id]/send`. The route authenticates the caller with the bearer token, reads the invoice and member email server-side, writes a pending activity row, sends a clean HTML invoice summary through Resend, and finalizes both the activity row and `invoices.email_status`. Configure these server-only variables in the deployment environment:
 
+Apply `supabase/migrations/202611040004_os_email_sender_settings.sql` before using the sender selectors. It adds the server-managed `os_email_sender_settings` mapping table; the table has no client access and is only read or written by authenticated OS server routes.
+
 ```text
 RESEND_API_KEY=...
 EMAIL_FROM="The Cubicle <billing@example.com>"
 NEXT_PUBLIC_APP_URL=https://app.example.com
 ```
+
+To offer more than the default sender, add only addresses already verified in Resend:
+
+```text
+EMAIL_SENDER_OPTIONS="The Cubicle Billing <billing@example.com>,The Cubicle Sales <sales@example.com>,The Cubicle Support <support@example.com>"
+```
+
+The owner can then choose a sender for employee invitations, invoices, payment reminders, proposals, quotations, and general notifications under Company settings. The selected address is stored in `os_email_sender_settings`; the server validates every selection against `EMAIL_SENDER_OPTIONS` before sending. If a category has no saved selection, it falls back to `EMAIL_FROM`.
 
 The server route never trusts a recipient email supplied by the browser and never exposes the service-role key to the client. Delivery or audit-finalization failures are returned to the UI and recorded as failed whenever an audit row was created.
 

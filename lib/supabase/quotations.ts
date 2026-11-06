@@ -120,12 +120,21 @@ function normalizeItems(items: any[] = []) {
 
 export function mapSupabaseQuotationToOsQuotation(row: SupabaseQuotationRow, items: SupabaseQuotationItemRow[] = []) {
   const sortedItems = [...items].sort((left, right) => left.sort_order - right.sort_order);
-  const charges = sortedItems.map((item) => ({
+  // Older quotation edits could leave the previous item rows in place when
+  // the delete was subject to RLS. Hide those exact historical duplicates
+  // while the corrected update path cleans them up on the next save.
+  const uniqueItems = sortedItems.filter((item, index, allItems) => {
+    const key = `${item.description.trim().toLowerCase()}|${amount(item.line_total)}|${Number(item.quantity) || 1}`;
+    return allItems.findIndex((candidate) => `${candidate.description.trim().toLowerCase()}|${amount(candidate.line_total)}|${Number(candidate.quantity) || 1}` === key) === index;
+  });
+  const charges = uniqueItems.map((item) => ({
     id: item.id,
     description: item.description,
     amount: String(amount(item.line_total)),
     quantity: Number(item.quantity) || 1,
   }));
+  const monthlyRentLine = charges.find((item) => item.description.trim().toLowerCase() === "monthly rent") || charges[0];
+  const monthlyRent = monthlyRentLine?.amount || "0";
 
   return {
     id: row.id,
@@ -156,6 +165,8 @@ export function mapSupabaseQuotationToOsQuotation(row: SupabaseQuotationRow, ite
     salesTaxRate: String(amount(row.sales_tax_rate)),
     salesTaxAmount: String(amount(row.sales_tax_amount)),
     totalAmount: String(amount(row.total_amount)),
+    monthlyRent,
+    monthlyRentDescription: monthlyRentLine?.description || "Monthly rent",
     terms: row.terms || "",
     charges,
     items: charges.map((item) => ({ description: item.description, price: item.amount, quantity: item.quantity })),

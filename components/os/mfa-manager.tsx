@@ -7,6 +7,7 @@ import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { Button } from "@/components/ui/button";
 import { InputOTP } from "@/components/ui/input-otp";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { enrollSupabaseTotp, removeUnverifiedTotpFactors } from "@/lib/supabase/mfa";
 import { useRouter } from "next/navigation";
 
 type MfaFactor = { id: string; factor_type?: string; status?: string };
@@ -90,19 +91,9 @@ export function MfaManager({ onClose, onStatusChange }: MfaManagerProps) {
     setSuccessMessage("");
     try {
       const supabase = getSupabaseBrowserClient();
-      const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
-      if (factorsError) throw factorsError;
-      const unfinishedFactors = (factorsData?.all || []).filter((factor) => factor.factor_type === "totp" && factor.status === "unverified");
-      for (const factor of unfinishedFactors) {
-        const { error: cleanupError } = await supabase.auth.mfa.unenroll({ factorId: factor.id });
-        if (cleanupError) throw cleanupError;
-      }
+      await removeUnverifiedTotpFactors(supabase);
 
-      const { data: enrollment, error: enrollmentError } = await supabase.auth.mfa.enroll({
-        factorType: "totp",
-        friendlyName: "Cubicle OS Authenticator",
-      });
-      if (enrollmentError) throw enrollmentError;
+      const enrollment = await enrollSupabaseTotp(supabase);
 
       const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: enrollment.id });
       if (challengeError) throw challengeError;

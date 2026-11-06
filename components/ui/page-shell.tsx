@@ -6,7 +6,12 @@ import { AnimatePresence, motion } from "motion/react";
 import { OsHeader } from "@/components/os/header";
 import { OsSidebar } from "@/components/os/sidebar";
 import { clearDemoSession, clearSeededBusinessDataOnce } from "@/lib/demo-session";
+<<<<<<< HEAD
 import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
+=======
+import { clearDeviceMaterial } from "@/lib/device-crypto";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+>>>>>>> 65c4630 (Half Bugs fixed)
 import { AppSkeleton, RouteSkeleton } from "@/components/ui/skeleton";
 
 const PAGE_TITLES = {
@@ -164,13 +169,18 @@ export function PageShell({ children }) {
 
   const signOut = async () => {
     try {
+      await fetch("/api/auth/device/revoke", { method: "POST", credentials: "include" }).catch(() => undefined);
       await getSupabaseBrowserClient().auth.signOut();
     } finally {
+<<<<<<< HEAD
       try {
         window.sessionStorage.removeItem(BROWSER_SESSION_HANDOFF_KEY);
       } catch {
         // Ignore storage cleanup failures during sign-out.
       }
+=======
+      await clearDeviceMaterial().catch(() => undefined);
+>>>>>>> 65c4630 (Half Bugs fixed)
       clearDemoSession();
       router.replace("/splash");
     }

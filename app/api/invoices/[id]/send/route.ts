@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+<<<<<<< HEAD
 import { sendResendEmail, resolveEmailSender, validEmail } from "@/lib/server-email";
 import { invoiceEmailSubject, renderInvoiceEmailHtml, renderInvoiceEmailText } from "@/lib/invoice-email-html";
+=======
+import { sendResendEmail, validEmail } from "@/lib/server-email";
+import { resolveOsEmailSender } from "@/lib/server-os-email";
+import { renderInvoiceEmailHtml, renderInvoiceEmailSubject } from "@/lib/invoice-email-html";
+import { getOsEmailTemplate } from "@/lib/server-os-email-templates";
+>>>>>>> 65c4630 (Half Bugs fixed)
 import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
 import { z } from "zod";
 
@@ -13,7 +20,15 @@ const invoiceSendSchema = z.object({
   attachment: z.object({
     filename: z.string().trim().min(1).max(255),
     content: z.string().trim().min(1).max(34_000_000),
+<<<<<<< HEAD
   }).strict(),
+=======
+  }).strict().optional(),
+  template: z.object({
+    subject: z.string().trim().max(200).optional(),
+    body: z.string().max(5000).optional(),
+  }).strict().optional(),
+>>>>>>> 65c4630 (Half Bugs fixed)
 }).strict();
 
 function isMissingSalesTaxColumn(error: unknown) {
@@ -69,6 +84,12 @@ function parsePdfAttachment(value: unknown) {
   content = pdfBytes.toString("base64");
   const filename = String(record.filename || "invoice.pdf").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/\.pdf$/i, "") + ".pdf";
   return { filename, content };
+}
+
+function templateValue(template: unknown, key: "subject" | "body") {
+  if (!template || typeof template !== "object") return undefined;
+  const value = (template as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -145,9 +166,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       console.error("Invoice PDF attachment rejected:", attachmentError instanceof Error ? attachmentError.message : attachmentError);
       return NextResponse.json({ error: "The invoice attachment is invalid." }, { status: 400 });
     }
+    const storedTemplate = await getOsEmailTemplate(admin, "send-invoice");
     const actorEmail = String(userData.user.email || "").trim().toLowerCase();
-    const actorName = userData.user.user_metadata?.full_name || userData.user.user_metadata?.name || "The Cubicle";
-    const sender = resolveEmailSender({ actorEmail, actorName });
+    const sender = await resolveOsEmailSender({ client: admin, purpose: "invoices", actorEmail });
 
     const { data: activity, error: activityError } = await admin.from("activity_log").insert({
       action: "invoice.email_delivery",
@@ -174,10 +195,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       whtEnabled: invoice.tax_enabled === true,
       whtAmount: invoice.tax_amount,
       totalAmount: invoice.total_amount,
+<<<<<<< HEAD
     };
     const html = renderInvoiceEmailHtml(emailInput);
     const text = renderInvoiceEmailText(emailInput);
     const subject = invoiceEmailSubject.replace("{{invoice_number}}", String(invoice.invoice_number));
+=======
+      body: templateValue(parsedBody.data.template, "body") || storedTemplate.body,
+    };
+    const html = renderInvoiceEmailHtml(emailInput);
+    const subject = renderInvoiceEmailSubject(templateValue(parsedBody.data.template, "subject") || storedTemplate.subject, emailInput);
+>>>>>>> 65c4630 (Half Bugs fixed)
 
     const emailResult = await sendResendEmail({
       from: sender.from,

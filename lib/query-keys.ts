@@ -34,6 +34,7 @@ export const queryKeys = {
   permissions: {
     all: ["permissions"] as const,
     byKey: (permissionKey: string) => ["permissions", permissionKey] as const,
+    byUserAndKey: (userId: string, permissionKey: string) => ["permissions", userId, permissionKey] as const,
   },
   adminRole: {
     all: ["admin-role"] as const,
