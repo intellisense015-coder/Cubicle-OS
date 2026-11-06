@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { renderProposalEmailHtml, renderProposalEmailSubject, renderProposalEmailText } from "@/lib/proposal-email-html";
-import { resolveEmailSender, sendResendEmail, validEmail } from "@/lib/server-email";
+import { sendResendEmail, validEmail } from "@/lib/server-email";
+import { resolveOsEmailSender } from "@/lib/server-os-email";
+import { getOsEmailTemplate } from "@/lib/server-os-email-templates";
 import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
 import { z } from "zod";
 
@@ -111,6 +113,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "The proposal attachment is invalid." }, { status: 400 });
     }
     const requestBody = parsedBody.data;
+    const storedTemplate = await getOsEmailTemplate(admin, "send-proposal");
     const emailInput = {
       recipientName: proposal.recipient_name,
       proposalNumber: proposal.proposal_number,
@@ -120,14 +123,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       office: proposal.office,
       totalSeats: proposal.total_seats,
       totalAmount: proposal.total_amount,
-      body: templateValue(requestBody?.template, "body"),
+      body: templateValue(requestBody?.template, "body") || storedTemplate.body,
     };
-    const subject = renderProposalEmailSubject(templateValue(requestBody?.template, "subject"), emailInput);
+    const subject = renderProposalEmailSubject(templateValue(requestBody?.template, "subject") || storedTemplate.subject, emailInput);
     const html = renderProposalEmailHtml(emailInput);
     const text = renderProposalEmailText(emailInput);
     const actorEmail = String(userData.user.email || "").trim().toLowerCase();
-    const actorName = userData.user.user_metadata?.full_name || userData.user.user_metadata?.name || "The Cubicle";
-    const sender = resolveEmailSender({ actorEmail, actorName });
+    const sender = await resolveOsEmailSender({ client: admin, purpose: "proposals", actorEmail });
     const emailResult = await sendResendEmail({
       from: sender.from,
       replyTo: sender.replyTo,

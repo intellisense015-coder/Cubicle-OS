@@ -31,6 +31,15 @@ const toastCreators = {
   warning: sileo.warning,
 } as const;
 
+function getClientToastMessage(message: unknown) {
+  if (message == null) return undefined;
+  const text = String(message);
+  if (/supabase|postgrest|postgres|row[- ]level security|schema cache|foreign key|violates|duplicate key/i.test(text)) {
+    return "We couldn’t complete that request. Please try again.";
+  }
+  return text;
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback((options: ToastOptions) => {
     const variant = options.variant ?? "info";
@@ -57,7 +66,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
     toastId = toastCreators[variant]({
       title: options.title,
-      description: options.message == null ? undefined : String(options.message),
+      description: getClientToastMessage(options.message),
       duration,
       button: action,
     });

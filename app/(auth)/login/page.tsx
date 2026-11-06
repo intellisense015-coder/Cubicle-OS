@@ -55,7 +55,8 @@ export default function SignInPage() {
       saveDemoValue("mfaVerified", false);
       const requestedPath = new URLSearchParams(window.location.search).get("next");
       const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : "/dashboard";
-      router.push(`/mfa?next=${encodeURIComponent(nextPath)}`);
+      const postAuthPath = `/post-auth?next=${encodeURIComponent(nextPath)}`;
+      router.push(`/mfa?next=${encodeURIComponent(postAuthPath)}`);
     } catch (error) {
       form.setError("root", {
         type: "server",

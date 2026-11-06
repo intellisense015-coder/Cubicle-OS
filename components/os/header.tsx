@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Search,
   Bell,
@@ -30,6 +31,9 @@ import {
 } from "lucide-react";
 import { getSystemNotifications, type SystemNotification } from "@/lib/system-notifications";
 import { getDemoValue } from "@/lib/demo-session";
+import { fetchLeadsSnapshot } from "@/lib/lead-query";
+import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/query-keys";
 
 // ==========================================
 // Types
@@ -187,6 +191,11 @@ export function OsHeader({
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [searchIndex, setSearchIndex] = useState<SearchResultItem[]>(DEFAULT_SEARCH_MODULES);
+  const leadsNotificationQuery = useQuery({
+    queryKey: queryKeys.leads.all,
+    queryFn: fetchLeadsSnapshot,
+    enabled: isSupabaseLeadsEnabled(),
+  });
 
   const headerRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -204,6 +213,10 @@ export function OsHeader({
       window.removeEventListener("focus", refreshNotifications);
     };
   }, []);
+
+  useEffect(() => {
+    if (leadsNotificationQuery.data) setNotifications(getSystemNotifications());
+  }, [leadsNotificationQuery.data]);
 
   useEffect(() => {
     const refreshSearchIndex = () => setSearchIndex(buildGlobalSearchIndex());

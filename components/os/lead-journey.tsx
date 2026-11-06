@@ -7,9 +7,10 @@ import { motion } from "motion/react";
 import { CalendarClock, Clock3, ChevronDown, Plus, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DateField, SelectField, TimeField } from "@/components/ui/primitives";
-import { getDemoValue } from "@/lib/demo-session";
+import { DateField, DatePickerField, SelectField, TimeField, TimePickerField } from "@/components/ui/primitives";
+import { getDemoSession, getDemoValue } from "@/lib/demo-session";
 import { LostReasonSelect } from "@/components/os/lost-reason-select";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { communicationModes, followUpOutcomes, moodOptions, probabilityOptions } from "@/lib/lead-journey";
 import { getLocalDateInputValue, getLocalTimeInputValue, isDateBeforeToday, isTimeBeforeNow } from "@/lib/follow-up-time";
 import { z } from "zod";
@@ -49,7 +50,8 @@ const followUpSchema = z.object({
   outcome: z.string().min(1, "Choose an outcome."),
   nextFollowUpDate: z.string().optional(),
   nextFollowUpTime: z.string().optional(),
-  lostReason: z.string().optional()
+  lostReason: z.string().optional(),
+  lostMonthlyValue: z.string().optional()
 }).superRefine((values, context) => {
   if (isDateBeforeToday(values.nextFollowUpDate)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextFollowUpDate"], message: "Choose today or a future date." });
@@ -63,6 +65,12 @@ const followUpSchema = z.object({
   }
   if (values.outcome === "Not interested" && !values.lostReason) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["lostReason"], message: "Choose a lost reason." });
+  }
+  if (values.outcome === "Not interested") {
+    const amount = Number(String(values.lostMonthlyValue || "").replace(/[^0-9.-]/g, ""));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000_000) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["lostMonthlyValue"], message: "Enter the estimated monthly loss." });
+    }
   }
 });
 
@@ -93,9 +101,21 @@ function getLocalDateTimeDefaults() {
   return { date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, time: `${pad(now.getHours())}:${pad(now.getMinutes())}` };
 }
 
+function leadStageTone(stage) {
+  return stage === "Converted" || stage === "Quotation Approved" ? "success" : stage === "Follow-up due" || stage === "Quote Sent" ? "accent" : "neutral";
+}
+
+function isCurrentUserIdentity(value, ownerName, ownerEmail) {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  return Boolean(normalizedValue) && (normalizedValue === String(ownerName || "").trim().toLowerCase() || normalizedValue === String(ownerEmail || "").trim().toLowerCase());
+}
+
 // TITLE: FOLLOW-UP FORM
 export function LeadFollowUpForm({ lead, onCancel, onSave }) {
-  const formApi = useForm({ resolver: zodResolver(followUpSchema), defaultValues: { followedUpBy: lead.assignedTo || "Only me", occurredDate: "", occurredTime: "", communicationMode: "WhatsApp", conversationSummary: "", outcome: "Interested", nextFollowUpDate: "", nextFollowUpTime: "", lostReason: lead.lostReason || "" }, mode: "onBlur" });
+  const ownerName = String(getDemoValue("profileName") || "").trim();
+  const ownerEmail = String(getDemoSession().email || "").trim();
+  const assignedByOtherUser = lead.assignedTo && !isCurrentUserIdentity(lead.assignedTo, ownerName, ownerEmail) ? lead.assignedTo : "";
+  const formApi = useForm({ resolver: zodResolver(followUpSchema), defaultValues: { followedUpBy: assignedByOtherUser || "Only me", occurredDate: "", occurredTime: "", communicationMode: "WhatsApp", conversationSummary: "", outcome: "Interested", nextFollowUpDate: "", nextFollowUpTime: "", lostReason: lead.lostReason || "", lostMonthlyValue: lead.lostMonthlyValue ? String(lead.lostMonthlyValue) : "" }, mode: "onBlur" });
   const { register, handleSubmit, setValue, watch, formState } = formApi;
   const [employeeOptions, setEmployeeOptions] = useState(["Only me"]);
   const today = getLocalDateInputValue();
@@ -104,13 +124,13 @@ export function LeadFollowUpForm({ lead, onCancel, onSave }) {
   useEffect(() => {
     const defaults = getLocalDateTimeDefaults();
     const savedEmployees = getDemoValue("employees");
-    const names = Array.isArray(savedEmployees) ? savedEmployees.filter((employee) => employee.status !== "Disabled" && employee.name).map((employee) => employee.name) : [];
-    setEmployeeOptions([...new Set(["Only me", lead.assignedTo, ...names].filter(Boolean))]);
+    const names = Array.isArray(savedEmployees) ? savedEmployees.filter((employee) => employee.status !== "Disabled" && employee.name && !isCurrentUserIdentity(employee.name, ownerName, ownerEmail) && !isCurrentUserIdentity(employee.email, ownerName, ownerEmail)).map((employee) => employee.name) : [];
+    setEmployeeOptions([...new Set(["Only me", assignedByOtherUser, ...names].filter(Boolean))]);
     if (!watch("occurredDate")) setValue("occurredDate", defaults.date, { shouldValidate: true });
     if (!watch("occurredTime")) setValue("occurredTime", defaults.time, { shouldValidate: true });
   }, [lead.assignedTo]);
 
-  const save = (form) => {
+  const save = async (form) => {
     const entry = {
       id: `journey-${Date.now()}`,
       entryType: "follow-up",
@@ -131,16 +151,19 @@ export function LeadFollowUpForm({ lead, onCancel, onSave }) {
       conversationSummary: form.conversationSummary.trim(),
       outcome: form.outcome,
       lostReason: form.lostReason || "",
+      lostMonthlyValue: form.outcome === "Not interested" ? form.lostMonthlyValue : "",
       conversionProbability: "",
       conversionReason: "",
       notes: form.conversationSummary.trim()
     };
-    onSave({
+    await onSave({
       entry,
       outcome: form.outcome,
       nextFollowUpDate: form.nextFollowUpDate,
       nextFollowUpTime: form.nextFollowUpTime,
-      nextFollowUp: form.nextFollowUpDate ? `${form.nextFollowUpDate}${form.nextFollowUpTime ? ` · ${form.nextFollowUpTime}` : ""}` : "Not scheduled"
+      nextFollowUp: form.nextFollowUpDate ? `${form.nextFollowUpDate}${form.nextFollowUpTime ? ` · ${form.nextFollowUpTime}` : ""}` : "Not scheduled",
+      lostReason: form.outcome === "Not interested" ? form.lostReason : "",
+      lostMonthlyValue: form.outcome === "Not interested" ? form.lostMonthlyValue : null
     });
   };
 
@@ -148,7 +171,7 @@ export function LeadFollowUpForm({ lead, onCancel, onSave }) {
   const selectedOutcome = watch("outcome");
   const scheduleVisitNext = selectedOutcome === "Schedule a visit";
   const isNextStepOutcome = nextStepOutcomes.includes(selectedOutcome);
-  return <motion.form className="inline-form-card lead-create-form lead-follow-up-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}><div className="card-heading"><div><h2>Log follow-up</h2><p className="muted-copy">Record what happened and decide the lead’s next step.</p></div></div><div className="ledger-summary"><div><span>Lead</span><strong>{lead.name}</strong></div><div><span>Company</span><strong>{lead.company || "—"}</strong></div><div><span>Current stage</span><strong>{lead.stage}</strong></div></div><div className="inline-form-grid"><SelectField label="Followed up by" value={watch("followedUpBy")} hint={error("followedUpBy")} onChange={(event) => setValue("followedUpBy", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><DateField label="Follow-up date" hint={error("occurredDate")} {...register("occurredDate")} /><TimeField label="Follow-up time" hint={error("occurredTime")} {...register("occurredTime")} /><SelectField label="Communication channel" value={watch("communicationMode")} hint={error("communicationMode")} onChange={(event) => setValue("communicationMode", event.target.value, { shouldDirty: true, shouldValidate: true })}>{communicationModes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><SelectField label="Outcome" value={selectedOutcome} hint={error("outcome")} onChange={(event) => { const outcome = event.target.value; setValue("outcome", outcome, { shouldDirty: true, shouldValidate: true }); if (nextStepOutcomes.includes(outcome)) { setValue("nextFollowUpDate", "", { shouldDirty: true, shouldValidate: true }); setValue("nextFollowUpTime", "", { shouldDirty: true, shouldValidate: true }); } }}>{followUpOutcomes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>{selectedOutcome === "Not interested" ? <LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /> : null}<DateField label="Next follow-up date" min={today} disabled={isNextStepOutcome} hint={error("nextFollowUpDate")} {...register("nextFollowUpDate")} /><TimeField label="Next follow-up time" min={watch("nextFollowUpDate") === today ? currentTime : undefined} disabled={isNextStepOutcome} hint={error("nextFollowUpTime")} {...register("nextFollowUpTime")} /><label className="settings-label journey-field-wide"><span>Conversation summary</span><textarea className={`floating-input follow-up-summary ${error("conversationSummary") ? "has-error" : ""}`} {...register("conversationSummary")} placeholder="What was discussed, decided or requested?" />{error("conversationSummary") && <span className="lead-form-error">{error("conversationSummary")}</span>}</label></div>{scheduleVisitNext ? <p className="lead-form-info">Save this follow-up to continue to the visit scheduler.</p> : null}<div className="inline-form-actions"><Button variant="ghost" type="button" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarClock size={15} /> Save follow-up</Button></div></motion.form>;
+  return <motion.form className="inline-form-card lead-create-form lead-follow-up-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}><div className="card-heading"><div><h2>Log follow-up</h2><p className="muted-copy">Record what happened and decide the lead’s next step.</p></div></div><div className="ledger-summary"><div><span>Lead</span><strong>{lead.name}</strong></div><div><span>Company</span><strong>{lead.company || "—"}</strong></div><div><span>Current stage</span><StatusBadge tone={leadStageTone(lead.stage)}>{lead.stage}</StatusBadge></div></div><div className="inline-form-grid"><SelectField label="Followed up by" value={watch("followedUpBy")} hint={error("followedUpBy")} onChange={(event) => setValue("followedUpBy", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><DatePickerField label="Follow-up date" value={watch("occurredDate")} hint={error("occurredDate")} onChange={(value) => setValue("occurredDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Follow-up time" value={watch("occurredTime")} hint={error("occurredTime")} onChange={(value) => setValue("occurredTime", value, { shouldDirty: true, shouldValidate: true })} /><SelectField label="Communication channel" value={watch("communicationMode")} hint={error("communicationMode")} onChange={(event) => setValue("communicationMode", event.target.value, { shouldDirty: true, shouldValidate: true })}>{communicationModes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><SelectField label="Outcome" value={selectedOutcome} hint={error("outcome")} onChange={(event) => { const outcome = event.target.value; setValue("outcome", outcome, { shouldDirty: true, shouldValidate: true }); if (nextStepOutcomes.includes(outcome)) { setValue("nextFollowUpDate", "", { shouldDirty: true, shouldValidate: true }); setValue("nextFollowUpTime", "", { shouldDirty: true, shouldValidate: true }); } }}>{followUpOutcomes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>{selectedOutcome === "Not interested" ? <><LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label"><span>Estimated monthly loss</span><Input type="number" min="0.01" step="0.01" placeholder="e.g. 40000" {...register("lostMonthlyValue")} />{error("lostMonthlyValue") && <span className="lead-form-error">{error("lostMonthlyValue")}</span>}</label></> : null}<DatePickerField label="Next follow-up date" value={watch("nextFollowUpDate")} min={today} disabled={isNextStepOutcome} hint={error("nextFollowUpDate")} onChange={(value) => setValue("nextFollowUpDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Next follow-up time" value={watch("nextFollowUpTime")} min={watch("nextFollowUpDate") === today ? currentTime : undefined} disabled={isNextStepOutcome} hint={error("nextFollowUpTime")} onChange={(value) => setValue("nextFollowUpTime", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label journey-field-wide"><span>Conversation summary</span><textarea className={`floating-input follow-up-summary ${error("conversationSummary") ? "has-error" : ""}`} {...register("conversationSummary")} placeholder="What was discussed, decided or requested?" />{error("conversationSummary") && <span className="lead-form-error">{error("conversationSummary")}</span>}</label></div>{scheduleVisitNext ? <p className="lead-form-info">Save this follow-up to continue to the visit scheduler.</p> : null}<div className="inline-form-actions"><Button variant="ghost" type="button" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarClock size={15} /> Save follow-up</Button></div></motion.form>;
 }
 
 // TITLE: LEAD JOURNEY TIMELINE

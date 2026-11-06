@@ -11,8 +11,28 @@ import { Button } from "@/components/ui/button";
 import { InputOTP } from "@/components/ui/input-otp";
 import { saveDemoValue } from "@/lib/demo-session";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { enrollSupabaseTotp, removeUnverifiedTotpFactors } from "@/lib/supabase/mfa";
 
 type MfaMode = "loading" | "enroll" | "verify" | "error";
+
+function getPostAuthPath(value: string | null) {
+  if (value?.startsWith("/post-auth") && !value.startsWith("//")) return value;
+  const nextPath = value?.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
+  return `/post-auth?next=${encodeURIComponent(nextPath)}`;
+}
+
+function isFactorNotFoundError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { message?: unknown; code?: unknown };
+  return /factor[_ ]not[_ ]found/i.test(String(candidate.message || candidate.code || ""));
+}
+
+async function prepareTotpEnrollment(supabase: ReturnType<typeof getSupabaseBrowserClient>) {
+  await removeUnverifiedTotpFactors(supabase);
+  // Enrollment returns the QR code and secret. The challenge is created only
+  // after the user has scanned the QR code and submits the current code.
+  return { enrollmentData: await enrollSupabaseTotp(supabase) };
+}
 
 // TITLE: MFA PAGE
 export default function MfaPage() {
@@ -32,10 +52,9 @@ export default function MfaPage() {
   useEffect(() => {
     let cancelled = false;
     const requestedPath = new URLSearchParams(window.location.search).get("next");
-    if (requestedPath?.startsWith("/") && !requestedPath.startsWith("//")) {
-      returnPathRef.current = requestedPath;
-      setReturnPath(requestedPath);
-    }
+    const postAuthPath = getPostAuthPath(requestedPath);
+    returnPathRef.current = postAuthPath;
+    setReturnPath(postAuthPath);
 
     const prepareMfa = async () => {
       try {
@@ -61,49 +80,66 @@ export default function MfaPage() {
         const verifiedFactor = factorsData.totp.find((factor) => factor.status === "verified");
 
         if (verifiedFactor) {
-          const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+          let activeVerifiedFactorId = verifiedFactor.id;
+          let { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
             factorId: verifiedFactor.id,
           });
-          if (challengeError) throw challengeError;
+
+          if (challengeError && isFactorNotFoundError(challengeError)) {
+            const { error: removeStaleError } = await supabase.auth.mfa.unenroll({ factorId: activeVerifiedFactorId });
+            if (removeStaleError && !isFactorNotFoundError(removeStaleError)) throw removeStaleError;
+            const enrollment = await prepareTotpEnrollment(supabase);
+            if (!cancelled) {
+              setFactorId(enrollment.enrollmentData.id);
+              setChallengeId("");
+              setQrCode(enrollment.enrollmentData.totp.qr_code);
+              setSecret(enrollment.enrollmentData.totp.secret);
+              setMode("enroll");
+            }
+            return;
+          }
+          if (challengeError || !challengeData) throw challengeError || new Error("The MFA challenge could not be created.");
 
           if (!cancelled) {
-            setFactorId(verifiedFactor.id);
+            setFactorId(activeVerifiedFactorId);
             setChallengeId(challengeData.id);
             setMode("verify");
           }
           return;
         }
 
-        // An unfinished enrollment has no reusable QR secret. Remove it so a
-        // refreshed setup flow does not accumulate orphaned factors.
-        const unfinishedFactor = factorsData.all.find(
-          (factor) => factor.factor_type === "totp" && factor.status === "unverified",
-        );
-        if (unfinishedFactor) {
-          const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId: unfinishedFactor.id });
-          if (unenrollError) throw unenrollError;
-        }
-
-        const { data: enrollmentData, error: enrollmentError } = await supabase.auth.mfa.enroll({
-          factorType: "totp",
-          friendlyName: "Cubicle OS Authenticator",
-        });
-        if (enrollmentError) throw enrollmentError;
-
-        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-          factorId: enrollmentData.id,
-        });
-        if (challengeError) throw challengeError;
+        // Remove every stale unverified factor before starting a fresh setup.
+        const { enrollmentData } = await prepareTotpEnrollment(supabase);
 
         if (!cancelled) {
           setFactorId(enrollmentData.id);
-          setChallengeId(challengeData.id);
+          setChallengeId("");
           setQrCode(enrollmentData.totp.qr_code);
           setSecret(enrollmentData.totp.secret);
           setMode("enroll");
         }
       } catch (prepareError) {
         if (!cancelled) {
+          if (isFactorNotFoundError(prepareError)) {
+            try {
+              const enrollment = await prepareTotpEnrollment(getSupabaseBrowserClient());
+              if (!cancelled) {
+                setFactorId(enrollment.enrollmentData.id);
+                setChallengeId("");
+                setQrCode(enrollment.enrollmentData.totp.qr_code);
+                setSecret(enrollment.enrollmentData.totp.secret);
+                setMode("enroll");
+              }
+              return;
+            } catch (recoveryError) {
+              if (!cancelled) {
+                setError(recoveryError instanceof Error ? recoveryError.message : "Unable to prepare MFA.");
+                setMode("error");
+              }
+              return;
+            }
+          }
+
           setError(prepareError instanceof Error ? prepareError.message : "Unable to prepare MFA.");
           setMode("error");
         }
@@ -123,7 +159,7 @@ export default function MfaPage() {
       return;
     }
 
-    if (!factorId || !challengeId) {
+    if (!factorId || (mode !== "enroll" && !challengeId)) {
       setValidationState("is-error");
       setError("The MFA challenge is not ready. Refresh and try again.");
       return;
@@ -135,9 +171,15 @@ export default function MfaPage() {
 
     try {
       const supabase = getSupabaseBrowserClient();
+      let activeChallengeId = challengeId;
+      if (mode === "enroll") {
+        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({ factorId });
+        if (challengeError || !challengeData) throw challengeError || new Error("The MFA challenge could not be created.");
+        activeChallengeId = challengeData.id;
+      }
       const { error: verifyError } = await supabase.auth.mfa.verify({
         factorId,
-        challengeId,
+        challengeId: activeChallengeId,
         code: submittedCode,
       });
 

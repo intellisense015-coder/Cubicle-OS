@@ -2,7 +2,7 @@ import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { normalizeLeadJourney } from "@/lib/lead-journey";
 import { normalizeLeadStage } from "@/lib/lead-stages";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
+import { fetchSupabaseLeadOpportunityLosses, fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
 
 const workflowMetadataKeys = [
   "company",
@@ -15,6 +15,8 @@ const workflowMetadataKeys = [
   "pendingVisit",
   "stageBeforeVisit",
   "workspace",
+  "lostMonthlyValue",
+  "lostAt",
 ];
 
 export type LeadsQuerySnapshot = {
@@ -36,6 +38,9 @@ function mergeLeadWorkflowMetadata(remoteLead: any, cachedLeads: any[]) {
   if (!cached) return remoteLead;
 
   return workflowMetadataKeys.reduce((lead, key) => {
+    // The OS stage is now persisted on the Supabase lead row. Do not let an
+    // older browser cache overwrite a newer server-side workflow stage.
+    if (key === "stage" && remoteLead.backend === "supabase" && remoteLead.osStage) return lead;
     if (cached[key] !== undefined) lead[key] = cached[key];
     return lead;
   }, { ...remoteLead });
@@ -54,9 +59,24 @@ export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
   }
 
   try {
-    const rows = await fetchSupabaseLeads();
-    const leads = normalizeLeads(rows.map((row) => mergeLeadWorkflowMetadata(mapSupabaseLeadToOsLead(row), cachedLeads)));
-    saveDemoValue("leads", leads, { notify: false });
+    const [rows, lossRows] = await Promise.all([
+      fetchSupabaseLeads(),
+      fetchSupabaseLeadOpportunityLosses(),
+    ]);
+    const losses = new Map(lossRows.map((loss) => [loss.lead_id, loss]));
+    const leads = normalizeLeads(rows.map((row) => {
+      const merged = mergeLeadWorkflowMetadata(mapSupabaseLeadToOsLead(row), cachedLeads);
+      const loss = losses.get(row.id);
+      if (!loss) return merged;
+      return {
+        ...merged,
+        stage: "Not interested",
+        lostReason: loss.lost_reason,
+        lostMonthlyValue: Number(loss.monthly_loss) || 0,
+        lostAt: loss.lost_at || "",
+      };
+    }));
+    saveDemoValue("leads", leads);
     return { leads, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
     const message = error?.message || "Unable to load leads from Supabase.";

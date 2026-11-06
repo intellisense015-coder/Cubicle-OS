@@ -20,8 +20,9 @@ export default function SplashPage() {
           return;
         }
 
+        const postAuthPath = `/post-auth?next=${encodeURIComponent("/dashboard")}`;
         const { data: assuranceData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        router.replace(assuranceData?.currentLevel === "aal2" ? "/dashboard" : "/mfa");
+        router.replace(assuranceData?.currentLevel === "aal2" ? postAuthPath : `/mfa?next=${encodeURIComponent(postAuthPath)}`);
       } catch {
         router.replace("/login");
       }

@@ -7,7 +7,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createColumnHelper } from "@tanstack/react-table";
 import { motion } from "motion/react";
-import { CheckCircle2, ChevronDown, CirclePlus, KeyRound, MailPlus, ShieldAlert, UserRoundCog } from "lucide-react";
+import { CheckCircle2, ChevronDown, CirclePlus, KeyRound, LoaderCircle, MailPlus, ShieldAlert, UserRoundCog } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
@@ -28,6 +28,34 @@ import { fetchApprovalsSnapshot } from "@/lib/approval-query";
 const roleOptions = ["Owner", "Editor", "Front Desk", "Operations", "Finance", "Member support", "Community manager", "Sales", "Facilities", "HR", "Other / custom role"];
 const normalizeEmployeeEmail = (value) => String(value || "").trim().toLowerCase();
 const normalizeEmployeePhone = (value) => { const digits = String(value || "").replace(/\D/g, ""); return digits.length > 10 ? digits.slice(-10) : digits; };
+
+function normalizedEmployeePakistanNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("92")) return digits;
+  if (digits.startsWith("0")) return `92${digits.slice(1)}`;
+  if (digits.startsWith("3")) return `92${digits}`;
+  return digits;
+}
+
+function formatEmployeeContactNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (/^92\d{9,10}$/.test(digits)) return `+92 ${digits.slice(2, 5)} ${digits.slice(5)}`;
+  if (/^0?3\d{8,9}$/.test(digits)) {
+    const local = digits.startsWith("0") ? digits : `0${digits}`;
+    return `${local.slice(0, 4)} ${local.slice(4)}`;
+  }
+  return String(value || "");
+}
+
+function employeeWhatsAppHref(value) {
+  const number = normalizedEmployeePakistanNumber(value);
+  return number ? `https://wa.me/${number}` : "#";
+}
+
+function invitationStatusLabel(value) {
+  return { pending: "Pending", accepted: "Accepted", revoked: "Revoked", expired: "Expired" }[String(value || "").toLowerCase()] || "—";
+}
 
 const employeeInviteSchema = z.object({
   name: z.string().trim().min(1, "Enter the employee's name."),
@@ -51,16 +79,17 @@ function RoleSelect({ value, onChange, options = roleOptions }) {
 }
 
 // TITLE: EMPLOYEE TABLE
-function createEmployeeColumns(onManage, canManage) {
+function createEmployeeColumns(onManage, canManage, managingEmployeeId) {
   const columnHelper = createColumnHelper<any>();
   return [
     columnHelper.accessor("name", { header: "Employee Name", cell: ({ getValue }) => <strong>{getValue()}</strong> }),
     columnHelper.accessor("email", { header: "Email" }),
-    columnHelper.accessor("phone", { header: "Phone Number", cell: ({ getValue }) => getValue() || "—" }),
+    columnHelper.accessor("phone", { header: "Phone Number", cell: ({ getValue }) => { const phone = String(getValue() || "").trim(); return phone ? <a className="lead-phone-link" href={employeeWhatsAppHref(phone)} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open WhatsApp for ${phone}`}>{formatEmployeeContactNumber(phone)}</a> : "—"; } }),
     columnHelper.accessor("role", { header: "Role" }),
     columnHelper.accessor("status", { header: "Account Status", cell: ({ getValue }) => { const status = getValue(); return <span className={`status-tag status-${status.toLowerCase().replaceAll(" ", "-")}`}>{status === "Disabled" ? "Suspended" : status}</span>; } }),
+    columnHelper.accessor("invitationStatus", { header: "Invitation", cell: ({ getValue }) => { const status = String(getValue() || "").toLowerCase(); const label = invitationStatusLabel(status); return label === "—" ? label : <span className={`status-tag status-${status === "pending" ? "pending-invite" : status}`}>{label}</span>; } }),
     columnHelper.accessor("lastActivity", { header: "Last Activity", cell: ({ getValue }) => formatEmployeeLastActivity(getValue()) }),
-    columnHelper.display({ id: "actions", header: "Actions", cell: ({ row }) => canManage ? <button className="action-icon-btn" type="button" onClick={() => onManage(row.original)} aria-label={`Manage access for ${row.original.name}`} title="Manage access"><UserRoundCog size={16} /></button> : <span className="read-only-label">Read only</span> }),
+    columnHelper.display({ id: "actions", header: "Actions", cell: ({ row }) => canManage ? <button className="action-icon-btn" type="button" onClick={() => onManage(row.original)} disabled={Boolean(managingEmployeeId)} aria-label={`Manage access for ${row.original.name}`} title="Manage access">{managingEmployeeId === String(row.original.id) ? <LoaderCircle size={16} className="employee-action-spinner" /> : <UserRoundCog size={16} />}</button> : <span className="read-only-label">Read only</span> }),
   ];
 }
 
@@ -135,7 +164,7 @@ function InviteEmployee({ onCancel, onSave, roleOptions: availableRoleOptions = 
     await onSave({ name: form.name, email, phone, role: selectedRole });
   };
   const error = (field) => formState.errors[field]?.message;
-  return <motion.div className="inline-form-card" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><div className="card-heading"><div><h2>Invite employee</h2><p className="muted-copy">Choose an active access role and send a secure Supabase invitation.</p></div></div><div className="inline-form-grid"><label className="settings-label">Name<Input className={error("name") ? "has-error" : ""} {...register("name")} placeholder="Employee name" />{error("name") && <span className="lead-form-error">{error("name")}</span>}</label><label className="settings-label">Email<Input className={error("email") ? "has-error" : ""} type="email" {...register("email")} placeholder="employee@thecubicle.pk" />{error("email") && <span className="lead-form-error">{error("email")}</span>}</label><label className="settings-label">Phone<Input className={error("phone") ? "has-error" : ""} {...register("phone")} placeholder="+92" />{error("phone") && <span className="lead-form-error">{error("phone")}</span>}</label><RoleSelect options={availableRoleOptions} value={watch("role")} onChange={(role) => setValue("role", role, { shouldDirty: true })} />{watch("role") === "Other / custom role" ? <label className="settings-label">Custom role<Input autoFocus className={error("customRole") ? "has-error" : ""} {...register("customRole")} placeholder="Type a role" />{!selectedRole && <span className="lead-form-error">Enter a custom role.</span>}</label> : null}</div><div className="inline-form-actions"><Button variant="ghost" onClick={onCancel} disabled={formState.isSubmitting}>Cancel</Button><Button loading={formState.isSubmitting} onClick={handleSubmit(handleInvite)}><MailPlus size={15} /> Send invitation</Button></div></motion.div>;
+  return <motion.div className="inline-form-card" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><div className="card-heading"><div><h2>Invite employee</h2><p className="muted-copy">Choose an active access role and send a secure invitation.</p></div></div><div className="inline-form-grid"><label className="settings-label">Name<Input className={error("name") ? "has-error" : ""} {...register("name")} placeholder="Employee name" />{error("name") && <span className="lead-form-error">{error("name")}</span>}</label><label className="settings-label">Email<Input className={error("email") ? "has-error" : ""} type="email" {...register("email")} placeholder="employee@thecubicle.pk" />{error("email") && <span className="lead-form-error">{error("email")}</span>}</label><label className="settings-label">Phone<Input className={error("phone") ? "has-error" : ""} {...register("phone")} placeholder="+92" />{error("phone") && <span className="lead-form-error">{error("phone")}</span>}</label><RoleSelect options={availableRoleOptions} value={watch("role")} onChange={(role) => setValue("role", role, { shouldDirty: true })} />{watch("role") === "Other / custom role" ? <label className="settings-label">Custom role<Input autoFocus className={error("customRole") ? "has-error" : ""} {...register("customRole")} placeholder="Type a role" />{!selectedRole && <span className="lead-form-error">Enter a custom role.</span>}</label> : null}</div><div className="inline-form-actions"><Button variant="ghost" onClick={onCancel} disabled={formState.isSubmitting}>Cancel</Button><Button loading={formState.isSubmitting} onClick={handleSubmit(handleInvite)}><MailPlus size={15} /> Send invitation</Button></div></motion.div>;
 }
 // TITLE: EMPLOYEES AND ACCESS PAGE
 export default function EmployeesPage() {
@@ -153,6 +182,7 @@ export default function EmployeesPage() {
   const [selected, setSelected] = useState(null);
   const [showInvite, setShowInvite] = useState(false);
   const [employeeView, setEmployeeView] = useState("active");
+  const [managingEmployeeId, setManagingEmployeeId] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
   const [currentUserEmail, setCurrentUserEmail] = useState(() => normalizeEmployeeEmail(getDemoSession().email));
 
@@ -212,7 +242,7 @@ export default function EmployeesPage() {
     try {
       if (employee.backend === "supabase") {
         const role = employee.roleKey || adminRoles.find((item) => item.label === employee.role)?.role_key;
-        if (!role) throw new Error("Select a valid Supabase role.");
+        if (!role) throw new Error("Select a valid access role.");
         const userId = employee.userId || employee.id;
         const emailChanged = normalizeEmployeeEmail(employee.email) !== normalizeEmployeeEmail(selected?.email);
         const nameChanged = String(employee.name || "").trim() !== String(selected?.name || "").trim();
@@ -228,23 +258,33 @@ export default function EmployeesPage() {
         const persistedEmployee = { ...mapSupabaseAdminUserToOsEmployee({ ...row, email: profileRow?.email || employee.email || row.email, phone: profileRow?.phone || employee.phone || row.phone, full_name: profileRow?.full_name || row.full_name || employee.name, last_sign_in_at: profileRow?.last_sign_in_at || row.last_sign_in_at }), name: employee.name, phone: normalizeEmployeePhone(employee.phone) };
         persist(employees.map((item) => item.id === employee.id ? persistedEmployee : item));
         setSelected(null);
-        showToast({ variant: "success", title: action === "status" ? "Account access updated" : "User role updated", message: `${persistedEmployee.email} was saved to Supabase.` });
+        if (action === "status") {
+          const statusLabel = employee.status === "Disabled" ? "suspended" : "activated";
+          showToast({ variant: "success", title: `Account ${statusLabel}`, message: `${persistedEmployee.name}'s account was ${statusLabel}.` });
+        } else {
+          showToast({ variant: "success", title: "Employee information updated", message: `${persistedEmployee.name}'s information was updated.` });
+        }
         return;
       }
       persist(employees.map((item) => item.id === employee.id ? employee : item));
       setSelected(null);
-      showToast({ variant: "success", title: action === "status" ? `Account ${employee.status === "Disabled" ? "suspended" : "reactivated"}` : "Employee profile updated", message: action === "status" ? `${employee.name}'s account is ${employee.status === "Disabled" ? "now suspended" : "active again"}.` : `${employee.name}'s profile was saved.` });
+      if (action === "status") {
+        const statusLabel = employee.status === "Disabled" ? "suspended" : "activated";
+        showToast({ variant: "success", title: `Account ${statusLabel}`, message: `${employee.name}'s account was ${statusLabel}.` });
+      } else {
+        showToast({ variant: "success", title: "Employee information updated", message: `${employee.name}'s information was updated.` });
+      }
     } catch (error) {
-      showToast({ variant: "error", title: "User access was not updated", message: error?.message || "Supabase could not save this user." });
+      showToast({ variant: "error", title: "User access was not updated", message: error?.message || "The employee information could not be updated." });
     }
   };
-  const toggleStatus = () => { const next = { ...selected, status: selected.status === "Disabled" ? "Active" : "Disabled", lastActivity: "Just now" }; void saveEmployee(next, "status"); };
+  const toggleStatus = () => { const next = { ...selected, status: selected.status === "Disabled" ? "Active" : "Disabled", lastActivity: "Just now" }; return saveEmployee(next, "status"); };
   const invite = async (form) => {
     const email = normalizeEmployeeEmail(form.email);
     if (supabaseEnabled) {
       const selectedRole = adminRoles.find((role) => role.label === form.role);
       if (!selectedRole) {
-        showToast({ variant: "error", title: "Invitation was not sent", message: "Choose an active Supabase role." });
+        showToast({ variant: "error", title: "Invitation was not sent", message: "Choose an active role." });
         return;
       }
       try {
@@ -252,16 +292,16 @@ export default function EmployeesPage() {
         const persistedEmployee = mapSupabaseAdminUserToOsEmployee(invited);
         persist([persistedEmployee, ...employees.filter((employee) => employee.id !== persistedEmployee.id)]);
         setShowInvite(false);
-        showToast({ variant: "success", title: "Invitation sent", message: `${email} was invited with the ${selectedRole.label} role.` });
+        showToast({ variant: "success", title: "Invitation sent", message: `Invitation sent to ${form.name}.` });
       } catch (error) {
-        showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "Supabase could not send the invitation." });
+        showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "The invitation could not be sent. Please try again." });
       }
       return;
     }
     const next = { ...form, email, id: `employee-${Date.now()}`, permissions: "Workspace access", status: "Pending invite", lastActivity: "Not started" };
     persist([next, ...employees]);
     setShowInvite(false);
-    showToast({ variant: "success", title: "Invitation recorded", message: `The local demo invitation is addressed to ${next.email}.` });
+    showToast({ variant: "success", title: "Invitation sent", message: `Invitation sent to ${next.name}.` });
   };
   const employeesWithoutCurrentUser = useMemo(() => employees.filter((employee) => {
     const employeeId = String(employee.userId || employee.id || "");
@@ -280,5 +320,10 @@ export default function EmployeesPage() {
 
   if (!canView && !canManage) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Employee records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Employees — View access.</div></motion.div>;
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /><KpiCard icon={<KeyRound size={18} />} label="Approval-required" value={approvalRequiredCount} detail="Pending owner approvals" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable columns={createEmployeeColumns(canManage ? (employee) => router.push(`/employees/${encodeURIComponent(employee.id)}/access`) : () => undefined, canManage)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee roleOptions={supabaseEnabled ? adminRoles.map((role) => role.label) : roleOptions} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
+  const openEmployeeAccess = (employee) => {
+    setManagingEmployeeId(String(employee.id));
+    router.push(`/employees/${encodeURIComponent(employee.id)}/access`);
+  };
+
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /><KpiCard icon={<KeyRound size={18} />} label="Approval-required" value={approvalRequiredCount} detail="Pending owner approvals" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable columns={createEmployeeColumns(canManage ? openEmployeeAccess : () => undefined, canManage, managingEmployeeId)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee roleOptions={supabaseEnabled ? adminRoles.map((role) => role.label) : roleOptions} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
 }

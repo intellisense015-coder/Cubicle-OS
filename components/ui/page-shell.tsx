@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { OsHeader } from "@/components/os/header";
 import { OsSidebar } from "@/components/os/sidebar";
 import { clearDemoSession, clearSeededBusinessDataOnce } from "@/lib/demo-session";
+import { clearDeviceMaterial } from "@/lib/device-crypto";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AppSkeleton, RouteSkeleton } from "@/components/ui/skeleton";
 
@@ -158,8 +159,10 @@ export function PageShell({ children }) {
 
   const signOut = async () => {
     try {
+      await fetch("/api/auth/device/revoke", { method: "POST", credentials: "include" }).catch(() => undefined);
       await getSupabaseBrowserClient().auth.signOut();
     } finally {
+      await clearDeviceMaterial().catch(() => undefined);
       clearDemoSession();
       router.replace("/splash");
     }

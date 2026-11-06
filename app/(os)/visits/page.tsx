@@ -5,15 +5,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "motion/react";
-import { CalendarDays, CheckCircle2, ChevronDown, Clock3, Plus, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, Clock3, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
-
-import { TimePicker } from "@/components/ui/time-picker";
+import { DatePickerField, SelectField, TimePickerField } from "@/components/ui/primitives";
 import { LeadJourneyForm } from "@/components/os/lead-journey";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { getDemoSession, getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { employeeRows } from "@/lib/module-d-data";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { useToast } from "@/components/ui/toast-provider";
@@ -124,20 +122,9 @@ function getVisitUrgencyClass(visit, now) {
   return "";
 }
 
-function EmployeeSelect({ value, options, onChange }) {
-  const [open, setOpen] = useState(false);
-  return <div className="settings-label lead-source-field"><span>Assign to</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>{value}<ChevronDown size={14} /></button>{open && <div className="lead-source-menu">{options.map((option) => <button type="button" key={option} className={value === option ? "is-selected" : ""} onClick={() => { onChange(option); setOpen(false); }}>{option}</button>)}</div>}</div></div>;
-}
-
-function LeadSelect({ leads, value, onChange, locked = false }) {
-  const [open, setOpen] = useState(false);
-  const selected = leads.find((lead) => lead.id === value);
-  return <div className="settings-label lead-source-field"><span>Visitor</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => !locked && setOpen((current) => !current)} aria-expanded={locked ? undefined : open} disabled={locked}>{selected ? `${selected.name} - ${selected.company || "No company"}` : "Select a lead"}{!locked ? <ChevronDown size={14} /> : null}</button>{!locked && open && <div className="lead-source-menu">{leads.length ? leads.map((lead) => <button type="button" key={lead.id} className={value === lead.id ? "is-selected" : ""} onClick={() => { onChange(lead); setOpen(false); }}>{lead.name} - {lead.company || "No company"}</button>) : <span className="dropdown-empty">No leads added yet</span>}</div>}</div></div>;
-}
-
 // TITLE: VISIT FORM
 function VisitForm({ employees, leads, initialLeadId = "", onCancel, onSave }) {
-  const assignOptions = [...new Set(["Only me", ...employees, ...leads.map((lead) => lead.assignedTo).filter(Boolean)])];
+  const assignOptions = [...new Set(["Only me", ...employees])];
   const initialDateTime = getLocalDateTimeDefaults();
   const today = getLocalDateTimeDefaults().date;
   const currentTime = getLocalDateTimeDefaults().time;
@@ -145,11 +132,11 @@ function VisitForm({ employees, leads, initialLeadId = "", onCancel, onSave }) {
   const formApi = useForm({ resolver: zodResolver(visitSchema), defaultValues: { leadId: initialLead?.id || "", visitor: initialLead ? `${initialLead.name} - ${initialLead.company || "No company"}` : "", company: initialLead?.company || "", date: initialDateTime.date, time: initialDateTime.time, host: initialLead?.assignedTo || employees[0] || "Only me", purpose: "Workspace tour" }, mode: "onBlur" });
   const { handleSubmit, setError, setValue, watch, formState } = formApi;
   const selectLead = (lead) => { setValue("leadId", lead.id, { shouldDirty: true }); setValue("visitor", `${lead.name} - ${lead.company || "No company"}`, { shouldDirty: true }); setValue("company", lead.company || "", { shouldDirty: true }); setValue("host", lead.assignedTo || "Only me", { shouldDirty: true }); };
-  const handleDateChange = (event) => { const date = event.target.value; const time = watch("time"); setValue("date", date, { shouldDirty: true }); if (date === today && time < currentTime) setValue("time", currentTime, { shouldDirty: true }); };
-  const handleTimeChange = (event) => setValue("time", event.target.value, { shouldDirty: true });
+  const handleDateChange = (date) => { const time = watch("time"); setValue("date", date, { shouldDirty: true, shouldValidate: true }); if (date === today && time < currentTime) setValue("time", currentTime, { shouldDirty: true, shouldValidate: true }); };
+  const handleTimeChange = (time) => setValue("time", time, { shouldDirty: true, shouldValidate: true });
   const handleSave = async (form) => { const visit = { ...form, id: `visit-${Date.now()}`, status: "Scheduled" }; const saveError = await onSave(visit); if (saveError) setError("time", { message: saveError }); };
   const error = formState.errors.leadId?.message || formState.errors.date?.message || formState.errors.time?.message || formState.errors.host?.message || formState.errors.purpose?.message;
-  return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><LeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} locked={Boolean(initialLeadId)} /><label className="settings-label">Date<Input type="date" min={today} value={watch("date")} onChange={handleDateChange} /></label><label className="settings-label">Time<TimePicker value={watch("time")} min={watch("date") === today ? currentTime : undefined} onChange={handleTimeChange} /></label><EmployeeSelect value={watch("host")} options={assignOptions} onChange={(value) => setValue("host", value, { shouldDirty: true })} /></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
+  return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><SelectField label="Visitor" value={watch("leadId")} hint={formState.errors.leadId?.message} disabled={Boolean(initialLeadId) || !leads.length} onChange={(event) => { const lead = leads.find((candidate) => candidate.id === event.target.value); if (lead) selectLead(lead); }}>{<option value="">{leads.length ? "Select a lead" : "No leads added yet"}</option>}{leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.name} - {lead.company || "No company"}</option>)}</SelectField><DatePickerField label="Date" value={watch("date")} min={today} hint={formState.errors.date?.message} onChange={handleDateChange} /><TimePickerField label="Time" value={watch("time")} min={watch("date") === today ? currentTime : undefined} hint={formState.errors.time?.message} onChange={handleTimeChange} /><SelectField label="Assign to" value={watch("host")} hint={formState.errors.host?.message} onChange={(event) => setValue("host", event.target.value, { shouldDirty: true, shouldValidate: true })}>{assignOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting} aria-busy={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
 }
 
 // TITLE: VISIT STATUS ACTIONS
@@ -187,7 +174,15 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
   const [pendingVisitLeadId, setPendingVisitLeadId] = useState("");
   const employees = useMemo(() => {
     const saved = getDemoValue("employees");
-    return Array.isArray(saved) ? saved.filter((employee) => employee.status !== "Disabled").map((employee) => employee.name) : [];
+    const ownerEmail = String(getDemoSession().email || "").trim().toLowerCase();
+    const ownerName = normalizeVisitLookup(getDemoValue("profileName"));
+    return Array.isArray(saved)
+      ? saved
+        .filter((employee) => employee.status !== "Disabled")
+        .filter((employee) => String(employee.email || "").trim().toLowerCase() !== ownerEmail && normalizeVisitLookup(employee.name) !== ownerName)
+        .map((employee) => employee.name)
+        .filter(Boolean)
+      : [];
   }, []);
 
   useEffect(() => {
@@ -206,7 +201,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     }
     if (visitErrorShown.current) return;
     visitErrorShown.current = true;
-    showToast({ variant: "error", title: "Visits could not be loaded", message: "Showing the saved visits while Supabase is unavailable." });
+    showToast({ variant: "error", title: "Visits could not be loaded", message: "Showing your saved visits while we reconnect." });
   }, [showToast, visitsQuery.data?.errorMessage]);
 
   useEffect(() => {
@@ -217,7 +212,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     }
     if (leadErrorShown.current) return;
     leadErrorShown.current = true;
-    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing the saved leads while Supabase is unavailable." });
+    showToast({ variant: "error", title: "Leads could not be loaded", message: "Showing your saved leads while we reconnect." });
   }, [showToast, leadsQuery.data?.errorMessage]);
 
   useEffect(() => {
@@ -261,7 +256,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled()) {
         if (!selectedLead || !isUuid(visit.leadId)) {
-          const message = "Select a lead loaded from Supabase before scheduling a visit.";
+          const message = "Select a saved lead before scheduling a visit.";
           showToast({ variant: "error", title: "Visit was not scheduled", message });
           return message;
         }
@@ -269,7 +264,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
         savedVisit = mapSupabaseVisitToOsVisit(row);
       }
     } catch (error) {
-      const message = error?.code === "23505" ? `${visit.host} is already booked at that time.` : error?.message || "Supabase could not save this visit.";
+      const message = error?.code === "23505" ? `${visit.host} is already booked at that time.` : "We couldn’t save this visit. Please try again.";
       showToast({ variant: "error", title: "Visit was not scheduled", message });
       return message;
     }
@@ -281,7 +276,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
       const nextLeads = rows.map((lead) => lead.id === visit.leadId ? transitionLead(lead, { type: "visit-scheduled", nextFollowUp: `${visit.date} · ${visit.time}` }) : { ...lead, stage: normalizeLeadStage(lead.stage, lead) });
       if (isSupabaseLeadsEnabled() && isUuid(visit.leadId) && canWriteLeads) {
         try {
-          const updatedRow = await updateSupabaseLead(visit.leadId, { visitDate: visit.date, visitTime: visit.time });
+          const updatedRow = await updateSupabaseLead(visit.leadId, { visitDate: visit.date, visitTime: visit.time, stage: "Visit scheduled" });
           const updatedLead = { ...mapSupabaseLeadToOsLead(updatedRow), ...nextLeads.find((lead) => lead.id === visit.leadId), id: updatedRow.id, backend: "supabase", stage: "Visit scheduled", visitDate: visit.date, visitTime: visit.time };
           const persistedLeads = nextLeads.map((lead) => lead.id === visit.leadId ? updatedLead : lead);
           persistLeads(persistedLeads);
@@ -303,7 +298,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled() && isUuid(id)) await updateSupabaseVisitStatus(id, status);
     } catch (error) {
-      showToast({ variant: "error", title: "Visit was not updated", message: error?.message || "Supabase could not update this visit." });
+      showToast({ variant: "error", title: "Visit was not updated", message: "We couldn’t update this visit. Please try again." });
       return;
     }
     const next = visits.map((visit) => visit.id === id ? { ...visit, status } : visit);
@@ -316,7 +311,8 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
         const nextLeads = rows.map((row) => row.id === lead.id ? transitionLead(row, { type: "visit-cancelled" }) : row);
         if (isSupabaseLeadsEnabled() && isUuid(lead.id) && canWriteLeads) {
           try {
-            const updatedRow = await updateSupabaseLead(lead.id, { visitDate: null, visitTime: null });
+            const nextLead = nextLeads.find((row) => row.id === lead.id);
+            const updatedRow = await updateSupabaseLead(lead.id, { visitDate: null, visitTime: null, stage: nextLead?.stage });
             const persistedLeads = nextLeads.map((row) => row.id === lead.id ? { ...mapSupabaseLeadToOsLead(updatedRow), ...row, id: updatedRow.id, backend: "supabase", visitDate: "", visitTime: "", nextFollowUp: "Not scheduled" } : row);
             persistLeads(persistedLeads);
           } catch (error) {
@@ -362,10 +358,10 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled()) {
         if (isUuid(journeyVisit.id)) await updateSupabaseVisitStatus(journeyVisit.id, "Completed");
-        if (canWriteLeads && isUuid(journeyLead.id)) await updateSupabaseLead(journeyLead.id, { visited: true });
+        if (canWriteLeads && isUuid(journeyLead.id)) await updateSupabaseLead(journeyLead.id, { visited: true, stage: updated.stage });
       }
     } catch (error) {
-      showToast({ variant: "error", title: "Visit was not completed", message: error?.message || "Supabase could not complete this visit." });
+      showToast({ variant: "error", title: "Visit was not completed", message: "We couldn’t complete this visit. Please try again." });
       return;
     }
     const stored = getDemoValue("leads");

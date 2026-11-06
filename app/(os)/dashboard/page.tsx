@@ -23,6 +23,7 @@ import { fetchVisitsSnapshot } from "@/lib/visit-query";
 import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
 import { fetchInvoicesSnapshot } from "@/lib/invoice-query";
 import { fetchApprovalsSnapshot } from "@/lib/approval-query";
+import { usePermissionStatus } from "@/lib/access-control";
 
 function formatDashboardFollowUp(value) {
   if (!value || value === "Not scheduled") return value || "Not scheduled";
@@ -188,28 +189,39 @@ function dashboardDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+function DashboardAccessDenied() {
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Dashboard</h1><p className="muted-copy">This area is restricted for your account.</p></div></div><div className="table-empty-state">You do not have permission to view the dashboard.</div></motion.div>;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const dashboardAccess = usePermissionStatus("dashboard.read");
+  const canViewDashboard = dashboardAccess.allowed;
   const leadsQuery = useQuery({
     queryKey: queryKeys.leads.all,
     queryFn: fetchLeadsSnapshot,
+    enabled: canViewDashboard,
   });
   const visitsQuery = useQuery({
     queryKey: queryKeys.visits.all,
     queryFn: fetchVisitsSnapshot,
+    enabled: canViewDashboard,
   });
   const workspacesQuery = useQuery({
     queryKey: queryKeys.workspaces.all,
     queryFn: fetchWorkspacesSnapshot,
+    enabled: canViewDashboard,
   });
   const invoicesQuery = useQuery({
     queryKey: queryKeys.invoices.all,
     queryFn: fetchInvoicesSnapshot,
+    enabled: canViewDashboard,
   });
   const approvalsQuery = useQuery({
     queryKey: queryKeys.approvals.all,
     queryFn: fetchApprovalsSnapshot,
+    enabled: canViewDashboard,
   });
   const [session, setSession] = useState(false);
   const [followUpRows, setFollowUpRows] = useState<any[]>([]);
@@ -219,6 +231,10 @@ export default function DashboardPage() {
   const [approvalRows, setApprovalRows] = useState<any[]>([]);
   const [spaceOccupancy, setSpaceOccupancy] = useState({ occupied: 0, total: 0 });
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!dashboardAccess.isLoading && !canViewDashboard) router.replace("/visits");
+  }, [canViewDashboard, dashboardAccess.isLoading, router]);
 
   useEffect(() => {
     if (!leadsQuery.data) return;
@@ -339,6 +355,9 @@ export default function DashboardPage() {
     const privateAveragePrice = privateOccupied ? privateMrr / privateOccupied : 0;
     const sharedAveragePrice = sharedOccupied ? sharedMrr / sharedOccupied : 0;
     const averagePrice = totalOccupied ? (privateMrr + sharedMrr) / totalOccupied : 0;
+    const opportunityLoss = (leadsQuery.data?.leads || [])
+      .filter((lead) => normalizeLeadStage(lead.stage, lead) === "Not interested")
+      .reduce((total, lead) => total + dashboardAmount(lead.lostMonthlyValue), 0);
     return {
       totalSeats,
       privateSeats,
@@ -354,9 +373,9 @@ export default function DashboardPage() {
       privateAveragePrice,
       sharedAveragePrice,
       averagePrice,
-      opportunityLoss: Math.round(Math.max(0, privateSeats - privateOccupied) * privateAveragePrice + Math.max(0, sharedSeats - sharedOccupied) * sharedAveragePrice),
+      opportunityLoss: Math.round(opportunityLoss),
     };
-  }, [workspaceRows]);
+  }, [workspaceRows, leadsQuery.data?.leads]);
 
   const paymentRows = useMemo(() => [...invoiceRows]
     .sort((a, b) => {
@@ -375,6 +394,7 @@ export default function DashboardPage() {
   const pendingApprovals = useMemo(() => approvalRows.filter((approval) => approval.status === "Pending").length, [approvalRows]);
   const activeMemberCount = useMemo(() => workspaceRows.filter((workspace) => workspace.status === "occupied").length, [workspaceRows]);
 
+  if (dashboardAccess.isLoading || !canViewDashboard) return <AppSkeleton />;
   if (!session) return <AppSkeleton />;
 
   const occupancyPercentage = dashboardMetrics.totalSeats ? Math.round((dashboardMetrics.totalOccupied / dashboardMetrics.totalSeats) * 100) : 0;
@@ -408,7 +428,7 @@ export default function DashboardPage() {
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Sales capacity</span><h3>Seats to sell</h3><div className="dashboard-metric-row"><span>Private office seats</span><strong>{dashboardMetrics.privateAvailable}</strong></div><div className="dashboard-metric-row"><span>Shared seats</span><strong>{dashboardMetrics.sharedAvailable}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total available seats</span><strong>{dashboardMetrics.privateAvailable + dashboardMetrics.sharedAvailable}</strong></div></div>
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Pricing</span><h3>Average price</h3><div className="dashboard-metric-row"><span>Overall average price</span><strong>{formatDashboardAmount(dashboardMetrics.averagePrice)}</strong></div><div className="dashboard-metric-row"><span>Private office</span><strong>{formatDashboardAmount(dashboardMetrics.privateAveragePrice)}</strong></div><div className="dashboard-metric-row"><span>Shared seat</span><strong>{formatDashboardAmount(dashboardMetrics.sharedAveragePrice)}</strong></div></div>
           <div className="dashboard-metric-panel"><span className="dashboard-eyebrow">Revenue</span><h3>Monthly recurring revenue</h3><div className="dashboard-metric-row"><span>Private office MRR</span><strong>{formatDashboardAmount(dashboardMetrics.privateMrr)}</strong></div><div className="dashboard-metric-row"><span>Shared seats MRR</span><strong>{formatDashboardAmount(dashboardMetrics.sharedMrr)}</strong></div><div className="dashboard-metric-row dashboard-metric-row-emphasis"><span>Total MRR</span><strong>{formatDashboardAmount(dashboardMetrics.totalMrr)}</strong></div></div>
-          <div className="dashboard-metric-panel dashboard-opportunity-panel"><span className="dashboard-eyebrow">Opportunity Loss</span><h3>Opportunity Loss</h3><strong className="dashboard-opportunity-value">{formatDashboardAmount(dashboardMetrics.opportunityLoss)}</strong><p>Estimated monthly revenue from currently available capacity.</p></div>
+          <div className="dashboard-metric-panel dashboard-opportunity-panel"><span className="dashboard-eyebrow">Opportunity Loss</span><h3>Opportunity Loss</h3><strong className="dashboard-opportunity-value">{formatDashboardAmount(dashboardMetrics.opportunityLoss)}</strong><p>Recorded monthly value from lost leads.</p></div>
         </section>
 
       <section className="dashboard-table-card">

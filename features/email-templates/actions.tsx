@@ -1,11 +1,6 @@
 import { saveDemoValue } from "@/lib/demo-session";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-// TITLE: SAVE EMAIL TEMPLATE
-export function saveEmailTemplate(template) {
-  saveDemoValue(`email-template-${template.id}`, template);
-}
-
 // TITLE: SEND COMMUNICATION
 export async function sendCommunication({ template, channel, recipient, recipientName = "Recipient" }) {
   const { data: sessionData } = await getSupabaseBrowserClient().auth.getSession();

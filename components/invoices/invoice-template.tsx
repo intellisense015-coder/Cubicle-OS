@@ -51,6 +51,10 @@ export function invoiceFromRecord(invoice) {
     whtEnabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled),
     whtRate: invoice.whtRate ?? invoice.taxRate,
   });
+  const explicitTotal = invoice.netTotal ?? invoice.totalAmount ?? invoice.amount;
+  const total = explicitTotal !== undefined && explicitTotal !== null && String(explicitTotal).trim() !== ""
+    ? chargeAmount(explicitTotal)
+    : totals.total;
   const number = String(invoice.invoice || "").replace(/^(?:INV|QUO)-\d{4}-/, "");
   return {
     company: { name: "THE CUBICLE", address: "89-AC-2, Gulberg 3, Lahore, Pakistan. 54000", phone: "+92 339 2824253", email: "sales@thecubicle.pk", ntn: "D-030195" },
@@ -65,7 +69,7 @@ export function invoiceFromRecord(invoice) {
     payment: { accountTitle: "THECUBICLE", accountNumber: "07380200021208", bank: "Askari Bank: Garden Town Branch Lahore", advice: "Please share payment advice after making the transaction" },
     footer: "Thank you for partnering with The Cubicle. We look forward to creating the perfect space for your team to do its best work.",
     systemNote: "This is a system generated invoice and does not require a signature.",
-    total: totals.total,
+    total,
     subtotal: totals.subtotal,
     taxEnabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled),
     taxRate: totals.whtRate,
