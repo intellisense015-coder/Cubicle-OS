@@ -401,8 +401,7 @@ export default function EmailTemplatesPage() {
         <KpiCard icon={<Edit3 size={18} />} label="Drafts" value={drafts} detail="Templates in progress" />
       </section>
       <div className="leads-toolbar page-search-row"><div className="header-search-wrap page-search-wrap"><Search size={14} className="search-leading-icon" /><input type="text" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" aria-label="Search templates" className="search-input" /><div className="search-kbd-pill"><span>Ctrl K</span></div></div></div>
-      <div className="section-heading"><div><h2>Template library</h2><p className="muted-copy">Select a template to view and edit its current content.</p></div></div>
-      <DataTable columns={createTemplateColumns(openTemplate, canEdit)} data={filtered} emptyMessage="No email templates found." onRowClick={openTemplate} />
+      <DataTable title="Template library" subtitle="Select a template to view and edit its current content." columns={createTemplateColumns(openTemplate, canEdit)} data={filtered} emptyMessage="No email templates found." onRowClick={openTemplate} />
       <Dialog open={Boolean(selected && draft)} onClose={closeTemplate} ariaLabel="Edit email template">
         {draft ? (
           <div className="email-template-editor-shell">

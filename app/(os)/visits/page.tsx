@@ -9,7 +9,12 @@ import { CalendarDays, CheckCircle2, Clock3, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { DataTable } from "@/components/ui/table";
+import { TableActionMenu } from "@/components/ui/table-action-menu";
+import { Input } from "@/components/ui/input";
 import { DatePickerField, SelectField, TimePickerField } from "@/components/ui/primitives";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { createColumnHelper } from "@tanstack/react-table";
 import { LeadJourneyForm } from "@/components/os/lead-journey";
 import { getDemoSession, getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { employeeRows } from "@/lib/module-d-data";
@@ -24,6 +29,13 @@ import { queryKeys } from "@/lib/query-keys";
 import { fetchLeadsSnapshot, type LeadsQuerySnapshot } from "@/lib/lead-query";
 import { fetchVisitsSnapshot, type VisitsQuerySnapshot } from "@/lib/visit-query";
 import { z } from "zod";
+
+const cancellationReasons = [
+  "Client requested cancellation",
+  "Client is unavailable",
+  "Scheduling conflict",
+  "Other",
+];
 
 function getVisitTimeMinutes(value) {
   const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})(?:\s*(am|pm))?$/i);
@@ -66,8 +78,61 @@ function formatVisitRelativeTime(visit) {
 }
 
 function formatVisitDateTime(visit) {
-  const relative = visit.status === "Scheduled" ? formatVisitRelativeTime(visit) : "";
-  return `${formatVisitDate(visit.date)} · ${formatVisitTime(visit.time)}${relative ? ` · ${relative}` : ""}`;
+  return `${formatVisitDate(visit.date)} · ${formatVisitTime(visit.time)}`;
+}
+
+function formatVisitDateTimeCell(date, time) {
+  return <span className="lead-date-time"><span>{formatVisitDate(date)}</span><small>{formatVisitTime(time)}</small></span>;
+}
+
+function formatVisitCancellationTime(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const date = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  const time = `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+  return formatVisitDateTimeCell(date, time);
+}
+
+function getCurrentActorLabel() {
+  return String(getDemoValue("profileName") || getDemoSession().email || "Current user").trim() || "Current user";
+}
+
+function getVisitVisitorName(visit) {
+  const visitor = String(visit?.visitor || "").trim();
+  const company = String(visit?.company || "").trim();
+  const suffix = company ? ` - ${company}` : " - No company";
+  return visitor.endsWith(suffix) ? visitor.slice(0, -suffix.length).trim() : visitor;
+}
+
+function createVisitCancellationJourneyEntry(visit, lead, cancellation) {
+  const occurred = getLocalDateTimeDefaults();
+  const reason = String(cancellation?.reason || "Visit cancelled").trim();
+  const details = String(cancellation?.details || "").trim();
+  const summary = `Visit cancelled: ${reason}${details ? ` — ${details}` : ""}`;
+  return {
+    id: `journey-${Date.now()}`,
+    entryType: "visit",
+    visitorIdentity: lead?.name || getVisitVisitorName(visit),
+    occurredDate: occurred.date,
+    occurredTime: occurred.time,
+    purpose: "Visit cancellation",
+    companions: "None",
+    source: lead?.source || "Website",
+    mood: "",
+    certainty: "Sure",
+    objections: "",
+    nextFollowUpDate: "",
+    nextFollowUpTime: "",
+    communicationMode: "System",
+    communicationChannel: "System",
+    followedUpBy: visit?.host || lead?.assignedTo || "Only me",
+    conversationSummary: summary,
+    outcome: "Visit cancelled",
+    conversionProbability: "",
+    conversionReason: "",
+    notes: summary,
+  };
 }
 
 function isLeadAlreadyScheduled(lead, visits) {
@@ -102,6 +167,11 @@ const visitSchema = z.object({
   purpose: z.string().trim().min(1, "Enter the visit purpose.")
 });
 
+const cancellationSchema = z.object({
+  reason: z.string().trim().min(1, "Choose a cancellation reason."),
+  details: z.string().trim().min(1, "Write the cancellation details.").max(1800, "Keep the details under 1,800 characters."),
+});
+
 function getVisitUrgency(visit, now = Date.now()) {
   if (visit.status !== "Scheduled") return "inactive";
   const difference = getVisitSortValue(visit) - now;
@@ -111,15 +181,42 @@ function getVisitUrgency(visit, now = Date.now()) {
   return "later";
 }
 
-function getVisitUrgencyClass(visit, now) {
+function visitStatusTone(status) {
+  if (status === "Completed") return "success";
+  if (status === "Cancelled" || status === "No-show") return "danger";
+  if (status === "Scheduled") return "accent";
+  return "neutral";
+}
+
+function relativeTimeTone(visit, now = Date.now()) {
   const urgency = getVisitUrgency(visit, now);
-  if (urgency === "overdue") return "visit-card-overdue";
-  if (urgency === "urgent") return "visit-card-urgent";
-  if (urgency === "soon") return "visit-card-soon";
-  if (visit.status === "Completed") return "visit-card-completed";
-  if (visit.status === "Cancelled") return "visit-card-cancelled";
-  if (visit.status === "No-show") return "visit-card-no-show";
-  return "";
+  if (urgency === "overdue" || urgency === "urgent") return "danger";
+  if (urgency === "soon") return "accent";
+  return "success";
+}
+
+function createVisitColumns(onCancel, onComplete, now = Date.now(), historyView = false) {
+  const columnHelper = createColumnHelper<any>();
+  if (historyView) {
+    return [
+      columnHelper.accessor("date", { header: "Scheduled time", cell: ({ row }) => formatVisitDateTimeCell(row.original.date, row.original.time) }),
+      columnHelper.accessor("visitor", { header: "Visitor", cell: ({ row }) => <span className="table-primary"><strong>{getVisitVisitorName(row.original)}</strong><span>{row.original.company || "No company"}</span></span> }),
+      columnHelper.accessor("host", { header: "Assigned to", cell: ({ getValue }) => getValue() || "Unassigned" }),
+      columnHelper.accessor("status", { header: "Status", cell: ({ getValue }) => <StatusBadge tone={visitStatusTone(getValue())}>{getValue()}</StatusBadge> }),
+      columnHelper.display({ id: "cancelledAt", header: "Cancel time", cell: ({ row }) => row.original.status === "Cancelled" ? formatVisitCancellationTime(row.original.cancelledAt) : "—" }),
+      columnHelper.display({ id: "cancelledBy", header: "Cancel by", cell: ({ row }) => row.original.status === "Cancelled" ? row.original.cancelledBy || "—" : "—" }),
+      columnHelper.display({ id: "cancellationReason", header: "Cancel reason", cell: ({ row }) => row.original.status === "Cancelled" ? row.original.cancellationReason || "—" : "—" }),
+      columnHelper.display({ id: "cancellationDetails", header: "Cancel description", cell: ({ row }) => row.original.status === "Cancelled" ? row.original.cancellationDetails || "—" : "—" }),
+    ];
+  }
+  return [
+    columnHelper.accessor("date", { header: "Date & time", cell: ({ row }) => formatVisitDateTime(row.original) }),
+    columnHelper.display({ id: "relativeTime", header: "Relative time", cell: ({ row }) => row.original.status === "Scheduled" ? <StatusBadge tone={relativeTimeTone(row.original, now)}>{formatVisitRelativeTime(row.original)}</StatusBadge> : "—" }),
+    columnHelper.accessor("visitor", { header: "Visitor", cell: ({ row }) => <span className="table-primary"><strong>{getVisitVisitorName(row.original)}</strong><span>{row.original.company || "No company"}</span></span> }),
+    columnHelper.accessor("host", { header: "Assigned to", cell: ({ getValue }) => getValue() || "Unassigned" }),
+    columnHelper.accessor("status", { header: "Status", cell: ({ getValue }) => <StatusBadge tone={visitStatusTone(getValue())}>{getValue()}</StatusBadge> }),
+    columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => row.original.status === "Scheduled" ? <div className="lead-table-actions"><TableActionMenu ariaLabel={`Actions for ${getVisitVisitorName(row.original)}`} items={[{ label: "Complete", icon: <CheckCircle2 size={15} />, onSelect: () => onComplete(row.original) }, { label: "Cancel visit", icon: <X size={15} />, destructive: true, onSelect: () => onCancel(row.original) }]} /></div> : null })
+  ];
 }
 
 // TITLE: VISIT FORM
@@ -139,13 +236,21 @@ function VisitForm({ employees, leads, initialLeadId = "", onCancel, onSave }) {
   return <motion.form className="inline-form-card visit-create-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(handleSave)}><div className="card-heading"><div><h2>Schedule a visit</h2><p className="muted-copy">Create a visit and assign the person who will host it.</p></div></div><div className="inline-form-grid"><SelectField label="Visitor" value={watch("leadId")} hint={formState.errors.leadId?.message} disabled={Boolean(initialLeadId) || !leads.length} onChange={(event) => { const lead = leads.find((candidate) => candidate.id === event.target.value); if (lead) selectLead(lead); }}>{<option value="">{leads.length ? "Select a lead" : "No leads added yet"}</option>}{leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.name} - {lead.company || "No company"}</option>)}</SelectField><DatePickerField label="Date" value={watch("date")} min={today} hint={formState.errors.date?.message} onChange={handleDateChange} /><TimePickerField label="Time" value={watch("time")} min={watch("date") === today ? currentTime : undefined} hint={formState.errors.time?.message} onChange={handleTimeChange} /><SelectField label="Assign to" value={watch("host")} hint={formState.errors.host?.message} onChange={(event) => setValue("host", event.target.value, { shouldDirty: true, shouldValidate: true })}>{assignOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></div>{error && <span className="lead-form-error visit-form-error">{error}</span>}<div className="inline-form-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting} aria-busy={formState.isSubmitting}><CalendarDays size={15} /> {formState.isSubmitting ? "Scheduling..." : "Schedule visit"}</Button></div></motion.form>;
 }
 
+function CancellationForm({ visit, onCancel, onSave }) {
+  const formApi = useForm({ resolver: zodResolver(cancellationSchema), defaultValues: { reason: "", details: "" }, mode: "onBlur" });
+  const { handleSubmit, setValue, watch, formState } = formApi;
+  const error = (field) => formState.errors[field]?.message;
+
+  return <motion.form className="inline-form-card lead-filter-panel visit-cancellation-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(onSave)}><div className="card-heading"><div><h2>Cancel visit</h2><p className="muted-copy">Tell us why {getVisitVisitorName(visit)}’s visit is being cancelled.</p></div></div><div className="inline-form-grid"><SelectField label="Cancellation reason" value={watch("reason")} hint={error("reason")} onChange={(event) => setValue("reason", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">Select a reason</option>{cancellationReasons.map((reason) => <option value={reason} key={reason}>{reason}</option>)}</SelectField><label className="settings-label"><span>Cancellation details</span><Input className={`cancellation-details-input ${error("details") ? "has-error" : ""}`} placeholder="Write the cancellation details" value={watch("details")} onChange={(event) => setValue("details", event.target.value, { shouldDirty: true, shouldValidate: true })} />{error("details") && <span className="lead-form-error">{error("details")}</span>}</label></div><div className="inline-form-actions visit-cancellation-actions"><Button type="button" variant="ghost" onClick={onCancel}>Keep visit</Button><Button type="submit" variant="danger" loading={formState.isSubmitting}>Cancel visit</Button></div></motion.form>;
+}
+
 // TITLE: VISIT STATUS ACTIONS
-function VisitActions({ visit, onStatusChange, onClose, canEdit = true }) {
+function VisitActions({ visit, onStatusChange, onCancel, onClose, canEdit = true }) {
   const permissionCanEdit = useHasPermission("visits.write");
   const effectiveCanEdit = canEdit && permissionCanEdit;
   if (visit.status !== "Scheduled") return null;
   if (!effectiveCanEdit) return <div className="dialog-actions"><span className="read-only-label">View only</span></div>;
-  return <div className="dialog-actions"><Button onClick={() => onStatusChange("Completed")}><CheckCircle2 size={15} /> Complete</Button><Button variant="ghost" onClick={() => onStatusChange("No-show")}>No-show</Button><Button variant="ghost" onClick={() => onStatusChange("Cancelled")}>Cancel visit</Button></div>;
+  return <div className="dialog-actions"><Button onClick={() => onStatusChange("Completed")}><CheckCircle2 size={15} /> Complete</Button><Button variant="ghost" onClick={() => onStatusChange("No-show")}>No-show</Button><Button variant="ghost" onClick={() => onCancel(visit)}>Cancel visit</Button></div>;
 }
 
 // TITLE: VISITS PAGE
@@ -154,6 +259,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
   const queryClient = useQueryClient();
   const canWrite = useHasPermission("visits.write");
   const canWriteLeads = useHasPermission("leads.write");
+  const canWriteJourney = useHasPermission("leads.journey.write");
   const visitsQuery = useQuery({
     queryKey: queryKeys.visits.all,
     queryFn: fetchVisitsSnapshot,
@@ -169,6 +275,7 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [cancellationVisit, setCancellationVisit] = useState(null);
   const [journeyLead, setJourneyLead] = useState(null);
   const [journeyVisit, setJourneyVisit] = useState(null);
   const [pendingVisitLeadId, setPendingVisitLeadId] = useState("");
@@ -291,45 +398,102 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     closeVisitForm();
     showToast({ variant: "success", title: "Visit scheduled", message: `${visit.visitor} was added to the visit schedule.` });
   };
-  const updateStatus = async (id, status) => {
-    if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot change visit status." }); return; }
+  const updateStatus = async (id, status, cancellation = null) => {
+    if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot change visit status." }); return false; }
+    const supabaseEnabled = isSupabaseLeadsEnabled();
+    if (status === "Cancelled" && !supabaseEnabled) {
+      showToast({ variant: "error", title: "Cancellation was not saved", message: "A visit cancellation requires the Supabase connection." });
+      return false;
+    }
     const changedVisit = visits.find((visit) => visit.id === id);
-    if (!changedVisit) return;
+    if (!changedVisit) return false;
+    const updatesLead = ["Cancelled", "No-show"].includes(status);
+    const lead = updatesLead ? findVisitLead(changedVisit) : null;
+    if (supabaseEnabled && !isUuid(id)) {
+      showToast({ variant: "error", title: "Visit was not updated", message: "This visit is not a saved Supabase visit." });
+      return false;
+    }
+    if (supabaseEnabled && status === "Cancelled" && (!lead || !canWriteLeads || !isUuid(lead.id))) {
+      showToast({ variant: "error", title: "Cancellation was not saved", message: "The visit and its lead journey must be saved in Supabase together." });
+      return false;
+    }
+    let savedVisit = null;
     try {
-      if (isSupabaseLeadsEnabled() && isUuid(id)) await updateSupabaseVisitStatus(id, status);
+      if (supabaseEnabled) savedVisit = mapSupabaseVisitToOsVisit(await updateSupabaseVisitStatus(id, status, cancellation));
     } catch (error) {
       showToast({ variant: "error", title: "Visit was not updated", message: "We couldn’t update this visit. Please try again." });
-      return;
+      return false;
     }
-    const next = visits.map((visit) => visit.id === id ? { ...visit, status } : visit);
-    persist(next);
-    if (["Cancelled", "No-show"].includes(status)) {
-      const lead = findVisitLead(changedVisit);
-      if (lead) {
+    const cancellationNotes = cancellation ? `Cancellation reason: ${cancellation.reason}\nCancellation details: ${cancellation.details}` : "";
+    const next = visits.map((visit) => visit.id === id ? savedVisit || {
+      ...visit,
+      status,
+      ...(cancellation ? {
+        notes: cancellationNotes,
+        cancellationReason: cancellation.reason,
+        cancellationDetails: cancellation.details,
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: getCurrentActorLabel(),
+      } : {}),
+    } : visit);
+    let nextLeads = null;
+    if (lead) {
+      const rows = supabaseEnabled ? leads : (() => {
         const stored = getDemoValue("leads");
-        const rows = Array.isArray(stored) ? stored : leads;
-        const nextLeads = rows.map((row) => row.id === lead.id ? transitionLead(row, { type: "visit-cancelled" }) : row);
-        if (isSupabaseLeadsEnabled() && isUuid(lead.id) && canWriteLeads) {
+        return Array.isArray(stored) ? stored : leads;
+      })();
+      const cancellationEntry = status === "Cancelled" ? createVisitCancellationJourneyEntry(changedVisit, lead, cancellation) : null;
+      nextLeads = rows.map((row) => {
+        if (row.id !== lead.id) return row;
+        const transitioned = transitionLead(row, { type: "visit-cancelled" });
+        return cancellationEntry
+          ? { ...transitioned, visited: false, journey: [cancellationEntry, ...(Array.isArray(row.journey) ? row.journey : [])] }
+          : transitioned;
+      });
+      if (supabaseEnabled && isUuid(lead.id) && canWriteLeads) {
+        try {
+          const nextLead = nextLeads.find((row) => row.id === lead.id);
+          const updatedRow = await updateSupabaseLead(lead.id, {
+            visitDate: null,
+            visitTime: null,
+            stage: nextLead?.stage,
+            ...(status === "Cancelled" ? { visited: false } : {}),
+            ...(cancellationEntry ? { journeyEntry: cancellationEntry } : {}),
+          }, cancellationEntry ? "lead.journey.update" : "lead.update");
+          nextLeads = nextLeads.map((row) => row.id === lead.id ? { ...mapSupabaseLeadToOsLead(updatedRow), ...row, id: lead.id, backend: "supabase", visitDate: "", visitTime: "", nextFollowUp: "Not scheduled" } : row);
+        } catch (error) {
           try {
-            const nextLead = nextLeads.find((row) => row.id === lead.id);
-            const updatedRow = await updateSupabaseLead(lead.id, { visitDate: null, visitTime: null, stage: nextLead?.stage });
-            const persistedLeads = nextLeads.map((row) => row.id === lead.id ? { ...mapSupabaseLeadToOsLead(updatedRow), ...row, id: updatedRow.id, backend: "supabase", visitDate: "", visitTime: "", nextFollowUp: "Not scheduled" } : row);
-            persistLeads(persistedLeads);
-          } catch (error) {
-            persistLeads(nextLeads);
-            showToast({ variant: "error", title: "Visit updated with a lead warning", message: error?.message || "The visit changed, but the lead could not be updated." });
+            await updateSupabaseVisitStatus(id, "Scheduled");
+          } catch {
+            // Keep the failure visible; do not create a local fallback record.
           }
-        } else {
-          persistLeads(nextLeads);
+          showToast({ variant: "error", title: "Lead journey was not saved", message: error?.message || "The visit was changed, but the lead journey could not be saved in Supabase." });
+          return false;
         }
+      } else if (!supabaseEnabled) {
+        persistLeads(nextLeads);
       }
+    }
+    if (supabaseEnabled) {
+      queryClient.setQueryData<VisitsQuerySnapshot>(queryKeys.visits.all, (current) => current ? { ...current, visits: next, errorMessage: "" } : current);
+      if (nextLeads) queryClient.setQueryData<LeadsQuerySnapshot>(queryKeys.leads.all, (current) => current ? { ...current, leads: nextLeads, errorMessage: "" } : current);
+    } else {
+      persist(next);
     }
     setSelected((current) => current ? { ...current, status } : null);
     showToast({ variant: status === "Completed" ? "success" : status === "Cancelled" ? "info" : "success", title: status === "Completed" ? "Visit completed" : status === "Cancelled" ? "Visit cancelled" : "Visit updated", message: `${changedVisit.visitor} was updated successfully.` });
+    return true;
+  };
+  const cancelVisit = async ({ reason, details }) => {
+    if (!cancellationVisit) return;
+    const saved = await updateStatus(cancellationVisit.id, "Cancelled", { reason, details });
+    if (saved) setCancellationVisit(null);
   };
   const findVisitLead = (visit) => {
-    const stored = getDemoValue("leads");
-    const rows = Array.isArray(stored) ? [...leads, ...stored] : leads;
+    const rows = isSupabaseLeadsEnabled() ? leads : (() => {
+      const stored = getDemoValue("leads");
+      return Array.isArray(stored) ? [...leads, ...stored] : leads;
+    })();
     const uniqueRows = rows.filter((lead, index, all) => lead?.id && all.findIndex((item) => item?.id === lead.id) === index);
     const visitId = String(visit.leadId || "");
     const visitor = normalizeVisitLookup(visit.visitor);
@@ -340,6 +504,10 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
   const completeVisit = (visit) => { const lead = findVisitLead(visit); if (!lead) { showToast({ variant: "error", title: "Visit was not completed", message: "This visit is missing its lead details." }); return; } setSelected(null); setJourneyVisit(visit); setJourneyLead(lead); };
   const saveVisitJourney = async (entry) => {
     if (!journeyLead || !journeyVisit || !canWrite) return;
+    if (isSupabaseLeadsEnabled() && !canWriteJourney) {
+      showToast({ variant: "error", title: "Visit was not completed", message: "Your account needs lead-journey permission to record the completed visit." });
+      return;
+    }
     const visitEntry = {
       ...entry,
       entryType: "visit",
@@ -358,16 +526,32 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
     try {
       if (isSupabaseLeadsEnabled()) {
         if (isUuid(journeyVisit.id)) await updateSupabaseVisitStatus(journeyVisit.id, "Completed");
-        if (canWriteLeads && isUuid(journeyLead.id)) await updateSupabaseLead(journeyLead.id, { visited: true, stage: updated.stage });
+        if (canWriteJourney && isUuid(journeyLead.id)) {
+          await updateSupabaseLead(journeyLead.id, {
+            visited: true,
+            stage: updated.stage,
+            journeyEntry: visitEntry,
+          }, "lead.journey.update");
+        }
       }
     } catch (error) {
+      if (isSupabaseLeadsEnabled() && isUuid(journeyVisit.id)) {
+        try {
+          await updateSupabaseVisitStatus(journeyVisit.id, "Scheduled");
+        } catch {
+          // Keep the original error visible if the consistency rollback also fails.
+        }
+      }
       showToast({ variant: "error", title: "Visit was not completed", message: "We couldn’t complete this visit. Please try again." });
       return;
     }
     const stored = getDemoValue("leads");
     const rows = Array.isArray(stored) ? stored : leads;
-    const nextLeads = rows.map((lead) => lead.id === updated.id ? updated : lead);
+    const nextLeads = rows.some((lead) => lead.id === updated.id)
+      ? rows.map((lead) => lead.id === updated.id ? updated : lead)
+      : [...rows, updated];
     persistLeads(nextLeads);
+    if (isSupabaseLeadsEnabled()) await queryClient.invalidateQueries({ queryKey: queryKeys.leads.all });
     persist(visits.map((visit) => visit.id === journeyVisit.id ? { ...visit, status: "Completed" } : visit));
     setJourneyLead(null);
     setJourneyVisit(null);
@@ -390,17 +574,17 @@ export default function VisitsPage({ view = "all" }: { view?: "all" | "upcoming"
   const completed = useMemo(() => visibleVisits.filter((visit) => visit.status === "Completed").length, [visibleVisits]);
   const nextVisit = useMemo(() => [...visibleVisits].filter((visit) => visit.status === "Scheduled").sort((a, b) => getVisitSortValue(a) - getVisitSortValue(b))[0] || null, [visibleVisits]);
   const sortedVisits = useMemo(() => [...visibleVisits].sort((a, b) => {
-    const urgencyDifference = ["overdue", "urgent", "soon", "later", "inactive"].indexOf(getVisitUrgency(a, currentTime)) - ["overdue", "urgent", "soon", "later", "inactive"].indexOf(getVisitUrgency(b, currentTime));
-    if (urgencyDifference) return urgencyDifference;
+    const scheduledDifference = Number(b.status === "Scheduled") - Number(a.status === "Scheduled");
+    if (scheduledDifference) return scheduledDifference;
     const aTime = getVisitSortValue(a);
     const bTime = getVisitSortValue(b);
-    return getVisitUrgency(a, currentTime) === "inactive" ? bTime - aTime : aTime - bTime;
-  }), [currentTime, visibleVisits]);
+    return a.status === "Scheduled" ? aTime - bTime : bTime - aTime;
+  }), [visibleVisits]);
   const availableLeads = useMemo(() => {
     const regularLeads = leads.filter((lead) => !["Follow-up due", "Converted", "Not interested"].includes(normalizeLeadStage(lead.stage, lead)) && !isLeadAlreadyScheduled(lead, visits));
     const pendingLead = leads.find((lead) => lead.id === pendingVisitLeadId && lead.pendingVisit && normalizeLeadStage(lead.stage, lead) === "Follow-up due" && !isLeadAlreadyScheduled(lead, visits));
     return pendingLead ? [pendingLead, ...regularLeads.filter((lead) => lead.id !== pendingLead.id)] : regularLeads;
   }, [leads, visits, pendingVisitLeadId]);
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription}</p></div><Button onClick={() => setShowForm(true)}><Plus size={16} /> Add visit</Button></div><section className="stat-grid module-stats"><KpiCard icon={<CalendarDays size={18} />} label="Scheduled visits" value={scheduled} detail={isHistoryView ? "Not in the active schedule" : "Upcoming in this demo"} /><KpiCard icon={<CheckCircle2 size={18} />} label="Completed visits" value={completed} detail="Ready for conversion" /><KpiCard icon={<Clock3 size={18} />} label="Next visit" value={nextVisit ? formatVisitTime(nextVisit.time) : "—"} detail={nextVisit ? `${formatVisitDate(nextVisit.date)} · ${nextVisit.visitor}` : "No visits scheduled"} /></section><div className="section-heading"><div><h2>{isUpcomingView ? "Upcoming schedule" : isHistoryView ? "Visit history" : "Visit schedule"}</h2><p className="muted-copy">Select a visit to open its details.</p></div></div><div className="visit-list">{sortedVisits.map((visit) => { const urgencyClass = getVisitUrgencyClass(visit, currentTime); return <motion.article key={visit.id} className={`visit-card visit-card-clickable ${urgencyClass}`} layout role="button" tabIndex={0} onClick={() => setSelected(visit)} onKeyDown={(event) => { if (event.key === "Enter") setSelected(visit); }}><div className="visit-grid"><strong className="visit-grid-date">{formatVisitDateTime(visit)}</strong><h3>{visit.visitor}</h3><span className="visit-grid-host">Assigned to: {visit.host}</span><div className="visit-actions">{visit.status === "Scheduled" ? <><button type="button" className="action-icon-btn visit-cancel-action" onClick={(event) => { event.stopPropagation(); updateStatus(visit.id, "Cancelled"); }} aria-label={`Cancel visit for ${visit.visitor}`} title="Cancel visit"><X size={16} /></button><Button size="sm" onClick={(event) => { event.stopPropagation(); completeVisit(visit); }}><CheckCircle2 size={15} /> Complete</Button></> : visit.status === "Completed" ? <span className="visit-grid-status visit-grid-status-completed">Visit Completed</span> : visit.status === "Cancelled" ? <span className="visit-grid-status visit-grid-status-cancelled">Cancelled</span> : null}</div></div></motion.article>; })}</div><Dialog open={showForm} onClose={closeVisitForm} ariaLabel="Add visit"><VisitForm employees={employees} leads={availableLeads} initialLeadId={pendingVisitLeadId} onCancel={closeVisitForm} onSave={scheduleVisit} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Visit details">{selected ? <div className="inline-form-card visit-details-modal"><div className="card-heading"><div><h2>Visit details</h2><p className="muted-copy">Review the visit details and assigned employee.</p></div></div><div className="ledger-summary"><div><span>Date</span><strong>{formatVisitDate(selected.date)}</strong></div><div><span>Time</span><strong>{formatVisitTime(selected.time)}</strong></div><div><span>Assigned to</span><strong>{selected.host}</strong></div></div><VisitActions visit={selected} onStatusChange={(status) => status === "Completed" ? completeVisit(selected) : updateStatus(selected.id, status)} onClose={() => setSelected(null)} /></div> : null}</Dialog><Dialog open={Boolean(journeyLead)} onClose={() => { setJourneyLead(null); setJourneyVisit(null); }} ariaLabel="Record visit in lead journey">{journeyLead ? <LeadJourneyForm lead={journeyLead} initialValues={{ occurredDate: journeyVisit?.date, occurredTime: journeyVisit?.time, purpose: journeyVisit?.purpose || "Workspace tour", communicationMode: "In-person", notes: journeyVisit?.host ? `Hosted by ${journeyVisit.host}` : "" }} onCancel={() => { setJourneyLead(null); setJourneyVisit(null); }} onSave={saveVisitJourney} /> : null}</Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription}</p></div>{!isHistoryView && !isUpcomingView ? <Button onClick={() => setShowForm(true)}><Plus size={16} /> Add visit</Button> : null}</div><section className="stat-grid module-stats"><KpiCard icon={<CalendarDays size={18} />} label="Scheduled visits" value={scheduled} detail={isHistoryView ? "Not in the active schedule" : "Upcoming in this demo"} /><KpiCard icon={<CheckCircle2 size={18} />} label="Completed visits" value={completed} detail="Ready for conversion" /><KpiCard icon={<Clock3 size={18} />} label="Next visit" value={nextVisit ? formatVisitTime(nextVisit.time) : "—"} detail={nextVisit ? `${formatVisitDate(nextVisit.date)} · ${nextVisit.visitor}` : "No visits scheduled"} /></section><DataTable className={isHistoryView ? "visit-history-table" : ""} title={isHistoryView ? "Visit history" : isUpcomingView ? "Upcoming schedule" : "Visit schedule"} subtitle={isHistoryView ? "Review scheduled times and cancellation details." : "Use the action menu to update a visit."} columns={createVisitColumns((visit) => setCancellationVisit(visit), completeVisit, currentTime, isHistoryView)} data={sortedVisits} emptyMessage={isHistoryView ? "No visit history yet." : isUpcomingView ? "No upcoming visits." : "No visits scheduled yet."} emptySubtitle="Visits will appear here when they are added." /><Dialog open={showForm} onClose={closeVisitForm} ariaLabel="Add visit"><VisitForm employees={employees} leads={availableLeads} initialLeadId={pendingVisitLeadId} onCancel={closeVisitForm} onSave={scheduleVisit} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Visit details">{selected ? <div className="inline-form-card visit-details-modal"><div className="card-heading"><div><h2>Visit details</h2><p className="muted-copy">Review the visit details and assigned employee.</p></div></div><div className="ledger-summary"><div><span>Date</span><strong>{formatVisitDate(selected.date)}</strong></div><div><span>Time</span><strong>{formatVisitTime(selected.time)}</strong></div><div><span>Assigned to</span><strong>{selected.host}</strong></div></div><VisitActions visit={selected} onStatusChange={(status) => status === "Completed" ? completeVisit(selected) : updateStatus(selected.id, status)} onCancel={(visit) => setCancellationVisit(visit)} onClose={() => setSelected(null)} /></div> : null}</Dialog><Dialog open={Boolean(cancellationVisit)} onClose={() => setCancellationVisit(null)} ariaLabel="Cancel visit">{cancellationVisit ? <CancellationForm visit={cancellationVisit} onCancel={() => setCancellationVisit(null)} onSave={cancelVisit} /> : null}</Dialog><Dialog open={Boolean(journeyLead)} onClose={() => { setJourneyLead(null); setJourneyVisit(null); }} ariaLabel="Record visit in lead journey">{journeyLead ? <LeadJourneyForm lead={journeyLead} initialValues={{ occurredDate: journeyVisit?.date, occurredTime: journeyVisit?.time, purpose: journeyVisit?.purpose || "Workspace tour", communicationMode: "In-person", notes: journeyVisit?.host ? `Hosted by ${journeyVisit.host}` : "" }} onCancel={() => { setJourneyLead(null); setJourneyVisit(null); }} onSave={saveVisitJourney} /> : null}</Dialog></motion.div>;
 }

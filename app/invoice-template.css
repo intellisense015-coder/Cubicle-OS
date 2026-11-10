@@ -298,6 +298,10 @@
   letter-spacing: normal;
 }
 
+.invoice-page:not(.quotation-page) .section-label {
+  letter-spacing: normal;
+}
+
 .quotation-page .billing-col .customer-line:last-child {
   margin-bottom: 0;
 }
@@ -408,6 +412,154 @@ html[data-theme="dark"] .quotation-create-button,
   width: 100%;
   min-height: 44px;
   border-radius: 16px;
+}
+
+/* The invoice editor follows the compact leads/visits modal pattern. */
+.dialog-card:has(.invoice-form) {
+  max-height: min(82vh, 760px);
+  overflow-y: auto;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .card-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .card-heading .muted-copy {
+  margin: 3px 0 0;
+  font-size: 11px;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form {
+  padding-bottom: 78px;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .text-input,
+.dialog-card:has(.invoice-form) .invoice-form .custom-select-trigger,
+.dialog-card:has(.invoice-form) .invoice-form .text-input:focus,
+.dialog-card:has(.invoice-form) .invoice-form .custom-select-trigger:focus {
+  border: 0 !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-editor-heading {
+  grid-template-columns: 1fr auto;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-editor-no-intro .charge-editor-heading > div {
+  min-height: 1px;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-add-button {
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--brand) !important;
+  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--control-border));
+  border-radius: 14px;
+  background: var(--brand-soft);
+  box-shadow: none;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-add-button:hover {
+  color: var(--brand) !important;
+  border-color: var(--brand);
+  background: var(--surface-soft);
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-editor-columns {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .charge-remove-button,
+.dialog-card:has(.invoice-form) .invoice-form .charge-remove-button:disabled {
+  color: #ef4444 !important;
+}
+
+.dialog-card:has(.invoice-form) .invoice-form .invoice-tax-control .text-input:disabled {
+  color: var(--muted) !important;
+  background: color-mix(in srgb, var(--surface-soft-2) 72%, var(--paper)) !important;
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.invoice-form-section-heading,
+.invoice-form-wide {
+  grid-column: 1 / -1;
+}
+
+.invoice-form-section-heading {
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.invoice-form-section-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.invoice-form-section-heading:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.dialog-card:has(.invoice-form) .charge-editor {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.invoice-tax-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.invoice-tax-control {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.invoice-tax-control .invoice-tax-toggle {
+  min-height: 64px;
+}
+
+.invoice-summary-section {
+  display: grid;
+  gap: 12px;
+}
+
+.dialog-card:has(.invoice-form) .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 2px;
+  padding-top: 14px;
+  background: var(--paper);
+}
+
+.dialog-card:has(.invoice-form) .dialog-actions .button-danger {
+  color: #fff;
+  border-color: var(--danger);
+  background: var(--danger);
+  box-shadow: none;
+}
+
+.dialog-card:has(.invoice-form) .dialog-actions .button-danger:hover {
+  color: #fff;
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 86%, var(--ink));
 }
 
 .dialog-card:has(.quotation-form) .quotation-to-select,
@@ -677,6 +829,10 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
     max-height: calc(100vh - 24px);
   }
 
+  .invoice-tax-grid {
+    grid-template-columns: 1fr;
+  }
+
   .quotation-send-options {
     grid-template-columns: 1fr;
   }
@@ -811,6 +967,16 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 
 .quotation-summary-box > div > :last-child {
   text-align: right;
+}
+
+.invoice-summary-box > div {
+  text-align: left;
+  width: 100%;
+}
+
+.invoice-summary-box > div > :last-child {
+  text-align: right;
+  justify-self: end;
 }
 
 .quotation-summary-box .quotation-total,

@@ -34,3 +34,25 @@ export function normalizeLeadJourney(lead, index = 0) {
   const journey = Array.isArray(lead.journey) ? lead.journey : [];
   return journey;
 }
+
+// Keep locally cached and server-backed journey entries together while avoiding
+// duplicate rows when the same entry is present in more than one source.
+export function mergeLeadJourneyEntries(...journeys) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const journey of journeys) {
+    if (!Array.isArray(journey)) continue;
+    for (const entry of journey) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryId = typeof entry.id === "string" && entry.id.trim()
+        ? `id:${entry.id}`
+        : `entry:${JSON.stringify(entry)}`;
+      if (seen.has(entryId)) continue;
+      seen.add(entryId);
+      merged.push(entry);
+    }
+  }
+
+  return merged;
+}

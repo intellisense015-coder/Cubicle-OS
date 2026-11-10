@@ -32,6 +32,7 @@ const actionValues = [
   "workspace.create",
   "workspace.update",
   "workspace.assign",
+  "workspace.assign.shared",
   "quotation.create",
   "quotation.update",
   "quotation.status",
@@ -54,15 +55,22 @@ const mutationRequestSchema = z.object({
 const companyColumns = "id,name,status,created_at,updated_at";
 const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
 const memberColumns = [
-  "id", "lead_id", "member_name", "phone", "email", "company_name", "team", "assigned_space",
+  "id", "lead_id", "member_name", "phone", "email", "cnic", "gender", "vehicle_license_plate", "company_name", "team", "assigned_space",
   "monthly_rent", "security_deposit", "billing_start_date", "due_day", "joined_date", "status",
   "membership_status", "notice_start_date", "expected_leaving_date", "notice_notes", "membership_periods",
   "contact_history", "created_at", "updated_at",
 ].join(",");
 const visitColumns = [
   "id", "lead_id", "visitor_name", "company_name", "visit_date", "visit_time", "host", "purpose",
-  "status", "notes", "created_by", "completed_at", "created_at", "updated_at",
+  "status", "notes", "created_by", "completed_at", "cancelled_at", "cancelled_by", "cancelled_by_name",
+  "cancellation_reason", "cancellation_details", "created_at", "updated_at",
 ].join(",");
+const visitCancellationReasons = new Set([
+  "Client requested cancellation",
+  "Client is unavailable",
+  "Scheduling conflict",
+  "Other",
+]);
 const categoryColumns = "id,name,description,active,created_at,updated_at";
 const maintenanceRecordColumns = [
   "id", "workspace_id", "status", "category", "severity", "title", "description", "reported_by", "reported_at",
@@ -199,6 +207,7 @@ const leadStageValues = new Set([
   "New lead",
   "Follow-up due",
   "Visit scheduled",
+  "Visit cancelled",
   "Visited",
   "Quotation requested",
   "Quote Sent",
@@ -333,16 +342,20 @@ function proposalPayload(input: any, actorUserId: string, proposalNumber: string
 }
 
 function invoiceCreatePayload(input: any, actorUserId: string) {
-  const issueDate = dateOrDefault(input.issueDate);
+  const issueDate = dateOrDefault(input.issueDate || input.billingStartDate);
   const charges = Array.isArray(input.charges) && input.charges.length ? input.charges : [{ description: input.itemDescription || "Workspace monthly rent", amount: input.subtotal || input.amount }];
   const subtotal = parseAmount(input.subtotal || input.amount);
+  const salesTaxEnabled = Boolean(input.salesTaxEnabled);
+  const whtEnabled = Boolean(input.whtEnabled ?? input.taxEnabled);
+  if (salesTaxEnabled && whtEnabled) throw new Error("Only one tax can be added to an invoice.");
   const totals = calculateInvoiceTotals({
     subtotal,
-    salesTaxEnabled: Boolean(input.salesTaxEnabled),
+    salesTaxEnabled,
     salesTaxRate: input.salesTaxRate,
-    whtEnabled: Boolean(input.whtEnabled ?? input.taxEnabled),
+    whtEnabled,
     whtRate: input.whtRate ?? input.taxRate,
   });
+  const persistedTotals = { ...totals, total: parseAmount(input.amount) };
   return {
     invoice: text(input.invoice, 60, true),
     payload: {
@@ -357,13 +370,13 @@ function invoiceCreatePayload(input: any, actorUserId: string) {
       billing_start_date: dateValue(input.billingStartDate),
       due_day: Math.min(31, Math.max(1, Math.floor(numeric(input.dueDay || 5, 31, true)))),
       subtotal: totals.subtotal,
-      tax_enabled: Boolean(input.whtEnabled ?? input.taxEnabled) && totals.whtAmount > 0,
+      tax_enabled: whtEnabled && totals.whtAmount > 0,
       tax_rate: totals.whtRate,
       tax_amount: totals.whtAmount,
-      sales_tax_enabled: Boolean(input.salesTaxEnabled) && totals.salesTaxAmount > 0,
+      sales_tax_enabled: salesTaxEnabled && totals.salesTaxAmount > 0,
       sales_tax_rate: totals.salesTaxRate,
       sales_tax_amount: totals.salesTaxAmount,
-      total_amount: totals.total,
+      total_amount: persistedTotals.total,
       payment_status: statusValue(input.paymentStatus || "due_soon", ["due_soon", "grace", "overdue", "paid", "cancelled", "draft"]),
       email_status: "not_sent",
       grace_until: dateValue(input.graceUntil),
@@ -376,7 +389,7 @@ function invoiceCreatePayload(input: any, actorUserId: string) {
       unit_price: amount(item?.amount ?? item?.price),
       sort_order: index,
     })),
-    totals,
+    totals: persistedTotals,
   };
 }
 
@@ -430,6 +443,8 @@ function safeDatabaseMessage(error: any) {
   if (code === "23505" && message.includes("members_email_unique_idx")) return "A member with this email already exists.";
   if (code === "23505") return "That record already exists.";
   if (code === "PGRST202") return "The opportunity-loss feature is not configured yet.";
+  if (code === "PGRST205" && message.includes("os_lead_journey")) return "The lead journey feature is not configured yet.";
+  if (code === "22023" && message.includes("invalid lead stage")) return "The Supabase lead-stage migration has not been applied yet.";
   if (code === "42501") return "You are not allowed to perform this action.";
   return "The requested change could not be saved.";
 }
@@ -446,6 +461,9 @@ function sameMemberCreate(existing: any, input: Record<string, any>) {
   return sameText(existing.email, input.email)
     && sameText(existing.member_name, input.member_name)
     && sameText(existing.phone, input.phone)
+    && sameText(existing.cnic, input.cnic)
+    && sameText(existing.gender, input.gender)
+    && sameText(existing.vehicle_license_plate, input.vehicle_license_plate)
     && sameText(existing.company_name, input.company_name)
     && sameText(existing.team, input.team)
     && String(existing.lead_id || "") === String(input.lead_id || "")
@@ -461,7 +479,7 @@ function sameMemberCreate(existing: any, input: Record<string, any>) {
     && sameText(existing.notice_notes, input.notice_notes);
 }
 
-async function runMutation(action: string, rawPayload: unknown, client: SupabaseClient, actorUserId: string, requiredPermission: string | null = null) {
+async function runMutation(action: string, rawPayload: unknown, client: SupabaseClient, actorUserId: string, requiredPermission: string | null = null, actorUserName = "") {
   const payload = objectPayload(rawPayload);
 
   if (action === "company.create") {
@@ -481,6 +499,8 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     const teamMatch = text(payload.team, 40, true).match(/\d+/);
     const teamSize = teamMatch ? Number(teamMatch[0]) : 0;
     if (!Number.isInteger(teamSize) || teamSize < 1 || teamSize > 10_000) throw new Error("Invalid mutation payload.");
+    const updateAssignedTo = payload.assignedTo !== undefined;
+    const assignedTo = updateAssignedTo ? optionalText(payload.assignedTo, 160) : null;
     const { data, error } = await client.from("leads").insert({
       person_name: text(payload.name, 160, true),
       contact_number: text(payload.phone, 40, true),
@@ -491,6 +511,15 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       os_stage: "New lead",
     }).select(leadColumns).single();
     if (error) throw error;
+    if (updateAssignedTo) {
+      const { error: assignmentError } = await client.rpc("os_update_lead", {
+        p_id: data.id,
+        p_permission_key: requiredPermission || "leads.write",
+        p_assigned_to: assignedTo,
+        p_update_assigned_to: true,
+      });
+      if (assignmentError) throw assignmentError;
+    }
     return data;
   }
   if (["lead.update", "lead.followup.update", "lead.journey.update"].includes(action)) {
@@ -503,6 +532,8 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     const updateVisited = payload.visited !== undefined;
     const updateVisitDate = payload.visitDate !== undefined;
     const updateVisitTime = payload.visitTime !== undefined;
+    const updateAssignedTo = payload.assignedTo !== undefined;
+    const assignedTo = updateAssignedTo ? optionalText(payload.assignedTo, 160) : null;
     const workspaceOption = updateWorkspace ? normalizeWorkspaceOption(payload.workspace) : null;
     let visited: boolean | null = null;
     if (updateVisited) {
@@ -514,27 +545,59 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     const requestedStage = payload.stage === undefined ? null : normalizedLeadStage(payload.stage);
     const lostReason = requestedStage === "Not interested" ? text(payload.lostReason, 240, true) : null;
     const lostMonthlyValue = requestedStage === "Not interested" ? numeric(payload.lostMonthlyValue, 1_000_000_000_000) : null;
+    const journeyEntry = payload.journeyEntry && typeof payload.journeyEntry === "object" && !Array.isArray(payload.journeyEntry)
+      ? payload.journeyEntry as Record<string, unknown>
+      : null;
+    const hasJourneyEntry = Boolean(journeyEntry);
+    const journeyEntryType = hasJourneyEntry ? text(journeyEntry?.entryType, 80, true) : null;
+    const journeyOccurredDate = hasJourneyEntry ? dateOrDefault(journeyEntry?.occurredDate) : null;
+    const journeyOccurredTime = hasJourneyEntry && journeyEntry?.occurredTime ? normalizedTime(journeyEntry.occurredTime) : null;
+    const journeyClientEntryId = hasJourneyEntry ? optionalText(journeyEntry?.id, 200) : null;
     if (requestedStage === "Not interested" && lostMonthlyValue <= 0) throw new Error("Invalid mutation payload.");
-    if (!updateEmail && !updatePhone && !updateWorkspace && !updateVisited && !updateVisitDate && !updateVisitTime && requestedStage === null) throw new Error("Invalid mutation payload.");
+    const hasLeadUpdate = updateEmail || updatePhone || updateWorkspace || updateVisited || updateVisitDate || updateVisitTime || updateAssignedTo || requestedStage !== null;
+    if (!hasLeadUpdate && !hasJourneyEntry) throw new Error("Invalid mutation payload.");
 
-    const { data, error } = await client.rpc("os_update_lead", {
-      p_id: id,
-      p_workspace_option: workspaceOption,
-      p_update_workspace: updateWorkspace,
-      p_visited: visited,
-      p_update_visited: updateVisited,
-      p_visit_date: visitDate,
-      p_update_visit_date: updateVisitDate,
-      p_visit_time: visitTime,
-      p_update_visit_time: updateVisitTime,
-      p_stage: requestedStage,
-      p_lost_reason: lostReason,
-      p_lost_monthly_value: lostMonthlyValue,
-      p_permission_key: requiredPermission || "leads.write",
-      p_email: email,
-      p_contact_number: phone,
-    });
-    if (error) throw error;
+    let data = null;
+    if (hasLeadUpdate) {
+      const result = await client.rpc("os_update_lead", {
+        p_id: id,
+        p_workspace_option: workspaceOption,
+        p_update_workspace: updateWorkspace,
+        p_visited: visited,
+        p_update_visited: updateVisited,
+        p_visit_date: visitDate,
+        p_update_visit_date: updateVisitDate,
+        p_visit_time: visitTime,
+        p_update_visit_time: updateVisitTime,
+        p_stage: requestedStage,
+        p_lost_reason: lostReason,
+        p_lost_monthly_value: lostMonthlyValue,
+        p_permission_key: requiredPermission || "leads.write",
+        p_email: email,
+        p_contact_number: phone,
+        p_assigned_to: assignedTo,
+        p_update_assigned_to: updateAssignedTo,
+      });
+      if (result.error) throw result.error;
+      data = result.data;
+    }
+
+    if (hasJourneyEntry) {
+      const result = await client.from("os_lead_journey").upsert({
+        lead_id: id,
+        client_entry_id: journeyClientEntryId,
+        entry_type: journeyEntryType,
+        occurred_date: journeyOccurredDate,
+        occurred_time: journeyOccurredTime || null,
+        entry_data: journeyEntry,
+        created_by: actorUserId,
+        updated_by: actorUserId,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "lead_id,client_entry_id" }).select("id,lead_id,client_entry_id,entry_type,occurred_date,occurred_time,entry_data").single();
+      if (result.error) throw result.error;
+      return result.data;
+    }
+
     return data;
   }
   if (action === "member.create" || action === "member.update") {
@@ -545,6 +608,9 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       member_name: text(input.member_name, 160, true),
       phone: optionalText(input.phone, 40),
       email: emailValue(input.email),
+      cnic: optionalText(input.cnic, 40),
+      gender: optionalText(input.gender, 40),
+      vehicle_license_plate: optionalText(input.vehicle_license_plate, 40),
       company_name: optionalText(input.company_name, 160),
       team: optionalText(input.team, 120),
       assigned_space: optionalText(input.assigned_space, 160),
@@ -607,7 +673,20 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
   if (action === "visit.status") {
     const id = uuid(payload.id);
     const status = statusValue(payload.status, ["scheduled", "completed", "cancelled", "no-show"]);
-    const { data, error } = await client.from("visits").update({ status: status === "no_show" ? "No-show" : status[0].toUpperCase() + status.slice(1), completed_at: status === "completed" ? new Date().toISOString() : null }).eq("id", id).select(visitColumns).single();
+    const cancellationReason = status === "cancelled" ? text(payload.cancellationReason, 160, true) : "";
+    const cancellationDetails = status === "cancelled" ? text(payload.cancellationDetails, 1800, true) : "";
+    if (status === "cancelled" && !visitCancellationReasons.has(cancellationReason)) throw new Error("Invalid cancellation reason.");
+    const cancellationNotes = status === "cancelled" ? `Cancellation reason: ${cancellationReason}\nCancellation details: ${cancellationDetails}` : "";
+    const { data, error } = await client.from("visits").update({
+      status: status === "no_show" ? "No-show" : status[0].toUpperCase() + status.slice(1),
+      completed_at: status === "completed" ? new Date().toISOString() : null,
+      cancelled_at: status === "cancelled" ? new Date().toISOString() : null,
+      cancelled_by: status === "cancelled" ? actorUserId : null,
+      cancelled_by_name: status === "cancelled" ? (actorUserName || actorUserId) : null,
+      cancellation_reason: status === "cancelled" ? cancellationReason : null,
+      cancellation_details: status === "cancelled" ? cancellationDetails : null,
+      notes: status === "cancelled" ? cancellationNotes : null,
+    }).eq("id", id).select(visitColumns).single();
     if (error) throw error;
     return data;
   }
@@ -713,9 +792,94 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
     if (error) throw error;
     return data;
   }
+  if (action === "workspace.assign.shared") {
+    const memberId = uuid(payload.memberId);
+    const workspaceId = workspaceIdValue(payload.workspaceId, true);
+    const previousWorkspaceId = workspaceIdValue(payload.previousWorkspaceId);
+    const { data: member, error: memberError } = await client
+      .from("members")
+      .select("id,member_name,company_name,status,assigned_space")
+      .eq("id", memberId)
+      .single();
+    if (memberError) throw memberError;
+    const { data: workspace, error: workspaceError } = await client
+      .from("workspaces")
+      .select("id,kind,capacity,status,operational_status,maintenance_status,member_id,occupant,company_name")
+      .eq("id", workspaceId)
+      .single();
+    if (workspaceError) throw workspaceError;
+    const isAssignableKind = ["office", "seat", "cabin"].includes(String(workspace.kind || "").toLowerCase());
+    const isOperational = workspace.operational_status === "ACTIVE" && workspace.maintenance_status === "deactivated" && !["maintenance", "reserved"].includes(String(workspace.status || "").toLowerCase());
+    if (!isAssignableKind || !isOperational) throw new Error("That workspace is not available for member assignment.");
+
+    const { data: assignedMembers, error: assignedMembersError } = await client
+      .from("members")
+      .select("id,member_name,company_name,status")
+      .eq("assigned_space", workspaceId);
+    if (assignedMembersError) throw assignedMembersError;
+    const activeMembers = (assignedMembers || []).filter((assigned) => String(assigned.status || "").toLowerCase() === "active");
+    const memberIsActive = String(member.status || "").toLowerCase() === "active";
+    const nextActiveMembers = activeMembers.some((assigned) => assigned.id === memberId) || !memberIsActive ? activeMembers : [...activeMembers, member];
+    const capacity = Math.max(1, Number(workspace.capacity) || 1);
+    if (nextActiveMembers.length > capacity) throw new Error("This workspace is already over capacity.");
+    if (nextActiveMembers.length >= capacity && !nextActiveMembers.some((assigned) => assigned.id === memberId)) throw new Error(`This workspace has reached its capacity of ${capacity} member${capacity === 1 ? "" : "s"}.`);
+
+    const representative = nextActiveMembers[0] || member;
+    const occupant = nextActiveMembers.length > 1 ? `${nextActiveMembers.length} members` : representative.member_name;
+    const companyNames = [...new Set(nextActiveMembers.map((assigned) => String(assigned.company_name || "").trim()).filter(Boolean))];
+    if (String(member.assigned_space || "") !== workspaceId) {
+      const { error: memberAssignmentError } = await client.from("members").update({ assigned_space: workspaceId, updated_by: actorUserId }).eq("id", memberId);
+      if (memberAssignmentError) throw memberAssignmentError;
+    }
+    const { error: workspaceUpdateError } = await client
+      .from("workspaces")
+      .update({
+        member_id: representative.id,
+        occupant,
+        company_name: companyNames.length === 1 ? companyNames[0] : companyNames.length > 1 ? "Multiple companies" : "Unassigned",
+        status: nextActiveMembers.length ? "occupied" : "available",
+        updated_by: actorUserId,
+      })
+      .eq("id", workspaceId);
+    if (workspaceUpdateError) throw workspaceUpdateError;
+
+    if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
+      const { data: previousMembers, error: previousMembersError } = await client
+        .from("members")
+        .select("id,member_name,company_name,status")
+        .eq("assigned_space", previousWorkspaceId);
+      if (previousMembersError) throw previousMembersError;
+      const remainingMembers = (previousMembers || []).filter((assigned) => String(assigned.status || "").toLowerCase() === "active");
+      const previousRepresentative = remainingMembers[0] || null;
+      const previousCompanies = [...new Set(remainingMembers.map((assigned) => String(assigned.company_name || "").trim()).filter(Boolean))];
+      const { error: previousWorkspaceError } = await client
+        .from("workspaces")
+        .update({
+          member_id: previousRepresentative?.id || null,
+          occupant: remainingMembers.length > 1 ? `${remainingMembers.length} members` : previousRepresentative?.member_name || "Available",
+          company_name: previousCompanies.length === 1 ? previousCompanies[0] : previousCompanies.length > 1 ? "Multiple companies" : "Unassigned",
+          status: remainingMembers.length ? "occupied" : "available",
+          updated_by: actorUserId,
+        })
+        .eq("id", previousWorkspaceId);
+      if (previousWorkspaceError) throw previousWorkspaceError;
+    }
+    return { assigned: true };
+  }
   if (action === "workspace.assign") {
     const memberId = uuid(payload.memberId);
     const workspaceId = workspaceIdValue(payload.workspaceId);
+    if (workspaceId && payload.requireAvailable === true) {
+      const { data: workspace, error: workspaceError } = await client
+        .from("workspaces")
+        .select("kind,status,operational_status,maintenance_status")
+        .eq("id", workspaceId)
+        .single();
+      if (workspaceError) throw workspaceError;
+      const isAssignableKind = ["office", "seat", "cabin"].includes(String(workspace.kind || "").toLowerCase());
+      const isAvailable = workspace.status === "available" && workspace.operational_status === "ACTIVE" && workspace.maintenance_status === "deactivated";
+      if (!isAssignableKind || !isAvailable) throw new Error("That workspace is no longer available. Refresh and choose another space.");
+    }
     const { error: rpcError } = await client.rpc("assign_member_to_workspace", { p_member_id: memberId, p_workspace_id: workspaceId });
     if (!rpcError) return { assigned: true };
 
@@ -843,6 +1007,15 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
   if (action === "invoice.create") {
     const input = objectPayload(payload.input);
     const built = invoiceCreatePayload(input, actorUserId);
+    if (built.totals.total <= 0) throw new Error("Invoice amount must be greater than zero.");
+    const { data: existingInvoices, error: duplicateCheckError } = await client
+      .from("invoices")
+      .select("id,invoice_number")
+      .eq("member_id", built.payload.member_id)
+      .eq("period_start", built.payload.period_start)
+      .limit(1);
+    if (duplicateCheckError) throw duplicateCheckError;
+    if (existingInvoices?.length) throw new Error("This member already has an invoice for the selected billing month.");
     let { data, error } = await client.from("invoices").insert(built.payload).select(invoiceColumns).single();
     if (error && missingSalesTaxColumn(error)) {
       const { sales_tax_enabled: _enabled, sales_tax_rate: _rate, sales_tax_amount: _amount, ...legacyPayload } = built.payload;
@@ -963,7 +1136,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Too many requests. Please try again later." }, response);
     }
 
-    const data = await runMutation(action, parsed.data.payload, userClient, actorUserId, permission);
+    const actorUserName = String((userData.user.user_metadata as Record<string, unknown> | undefined)?.full_name || (userData.user.user_metadata as Record<string, unknown> | undefined)?.name || userData.user.email || actorUserId).trim();
+    const data = await runMutation(action, parsed.data.payload, userClient, actorUserId, permission, actorUserName);
     await recordSecurityAudit(admin, { action, outcome: "success", actorUserId, entityType: entityTypeFor(action), entityId, request });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

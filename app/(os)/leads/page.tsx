@@ -8,13 +8,14 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper } from "@tanstack/react-table";
 import { motion } from "motion/react";
-import { CalendarClock, ChevronDown, CirclePlus, Eye, History, Pencil, Search, SlidersHorizontal, UsersRound } from "lucide-react";
+import { CalendarClock, ChevronDown, CirclePlus, Eye, History, LoaderCircle, Pencil, Search, SlidersHorizontal, UsersRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
+import { TableActionMenu } from "@/components/ui/table-action-menu";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { DateField, SelectField, TimeField } from "@/components/ui/primitives";
+import { DatePickerField, SelectField, TimePickerField } from "@/components/ui/primitives";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { WorkspaceBadge } from "@/components/ui/workspace-badge";
@@ -23,18 +24,54 @@ import { LeadFollowUpForm } from "@/components/os/lead-journey";
 import { useToast } from "@/components/ui/toast-provider";
 import { getLocalDateInputValue, getLocalTimeInputValue, isDateBeforeToday, isTimeBeforeNow } from "@/lib/follow-up-time";
 import { leadStages, normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
+import { mergeLeadJourneyEntries } from "@/lib/lead-journey";
 import { LostReasonSelect } from "@/components/os/lost-reason-select";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { createSupabaseLead, mapSupabaseLeadToOsLead, parseTeamSize, updateSupabaseLead } from "@/lib/supabase/leads";
 import { useHasPermission } from "@/lib/access-control";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchLeadsSnapshot, type LeadsQuerySnapshot } from "@/lib/lead-query";
+import { fetchEmployeesSnapshot, isAssignableEmployee } from "@/lib/employee-query";
+import { scheduleLeadVisit } from "@/lib/visit-scheduling";
 import { z } from "zod";
 
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
 const normalizeText = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
 const normalizePhone = (value) => { const digits = String(value || "").replace(/\D/g, ""); return digits.length > 10 ? digits.slice(-10) : digits; };
 const leadWorkspaceOptions = ["Private office", "Dedicated desk", "Meeting room", "Event space"];
+
+function createStageChangeJourneyEntry(lead, previousStage, nextStage) {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  const occurredDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const occurredTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const actor = String(getDemoValue("profileName") || getDemoSession().email || "Current user").trim() || "Current user";
+  return {
+    id: `journey-stage-${lead.id}-${Date.now()}`,
+    entryType: "stage-change",
+    visitorIdentity: lead.name,
+    occurredDate,
+    occurredTime,
+    previousStage,
+    stage: nextStage,
+    purpose: "Lead stage updated",
+    companions: "",
+    source: lead.source || "Website",
+    mood: "",
+    certainty: "Sure",
+    objections: "",
+    nextFollowUpDate: "",
+    nextFollowUpTime: "",
+    communicationMode: "System",
+    communicationChannel: "System",
+    followedUpBy: actor,
+    conversationSummary: `Stage changed from ${previousStage} to ${nextStage}.`,
+    outcome: nextStage,
+    conversionProbability: "",
+    conversionReason: "",
+    notes: `Stage changed from ${previousStage} to ${nextStage}.`
+  };
+}
 const leadShiftOptions = [
   { value: "morning", label: "Morning" },
   { value: "evening", label: "Evening" },
@@ -83,8 +120,6 @@ const leadSchema = z.object({
 });
 
 const leadDetailSchema = z.object({
-  email: z.string().trim().email("Enter a valid email address, such as name@example.com."),
-  phone: z.string().trim().min(1, "Enter the lead's phone number."),
   stage: z.string().min(1, "Choose a lead status."),
   workspace: z.string().min(1, "Choose a workspace."),
   lostReason: z.string().optional(),
@@ -143,24 +178,25 @@ function formatLeadDateTime(value) {
 }
 
 // TITLE: LEAD ASSIGNMENT OPTIONS
-function getLeadAssignmentOptions() {
-  const savedEmployees = getDemoValue("employees");
+function getAssignableEmployeeNames(employees: any[] = []) {
   const ownerEmail = normalizeEmail(getDemoSession().email);
   const ownerName = normalizeText(getDemoValue("profileName"));
-  const employees = Array.isArray(savedEmployees) ? savedEmployees : [];
-  const assignableEmployees = employees
-    .filter((employee) => employee.status !== "Disabled")
+  const assignableEmployees = (Array.isArray(employees) ? employees : [])
+    .filter(isAssignableEmployee)
     .filter((employee) => normalizeEmail(employee.email) !== ownerEmail && normalizeText(employee.name) !== ownerName)
-    .map((employee) => employee.name)
+    .map((employee) => String(employee.name).trim())
     .filter(Boolean);
-  return ["Only me", ...new Set(assignableEmployees)];
+  return [...new Set(assignableEmployees)];
+}
+
+function getLeadAssignmentOptions(employees: any[] = []) {
+  return ["Only me", ...getAssignableEmployeeNames(employees)];
 }
 
 // TITLE: LEAD FORM
-function LeadForm({ onCancel, onSave }) {
+function LeadForm({ onCancel, onSave, assignmentOptions = ["Only me"] }) {
   const { showToast } = useToast();
   const sourceOptions = ["Website", "Referral", "Instagram", "Walk-in", "Google Ads", "Social media"];
-  const assignmentOptions = getLeadAssignmentOptions();
   const formApi = useForm({ resolver: zodResolver(leadSchema), defaultValues: { name: "", email: "", phone: "", company: "", team: "1 person", shift: "morning", workspace: "", source: "Website", assignedTo: "Only me" }, mode: "onBlur" });
   const { register, handleSubmit, setError, setValue, watch, formState } = formApi;
   const onSubmit = async (form) => {
@@ -253,9 +289,24 @@ function LeadFilterSelect({ label, value, options, emptyLabel, onChange }) {
 }
 
 // TITLE: LEAD TABLE
-function createLeadColumns(onOpen, onEdit, canEdit) {
+function leadStageTone(stage) {
+  return stage === "Converted" || stage === "Quotation Approved"
+    ? "success"
+    : stage === "Visit cancelled"
+      ? "danger"
+    : stage === "Follow-up due" || stage === "Quote Sent"
+      ? "accent"
+      : "neutral";
+}
+
+function LeadActionMenu({ lead, onOpen, onEdit, canEdit, onJourneyStart, journeyLoadingId }) {
+  const normalizedStage = normalizeLeadStage(lead.stage);
+  return <TableActionMenu ariaLabel={`Actions for ${lead.name}`} items={[{ label: "Journey", icon: journeyLoadingId === lead.id ? <LoaderCircle size={15} className="animate-spin" /> : <History size={15} />, href: `/leads/${lead.id}`, onSelect: () => onJourneyStart(lead.id), keepOpen: true, disabled: journeyLoadingId === lead.id }, { label: ["Follow-up due", "Quote Sent", "Visit scheduled"].includes(normalizedStage) ? "Log follow-up" : "Open", icon: <Eye size={15} />, onSelect: () => onOpen(lead) }, ...(canEdit ? [{ label: "Edit contact details", icon: <Pencil size={15} />, onSelect: () => onEdit(lead) }] : [])]} />;
+}
+
+function createLeadColumns(onOpen, onEdit, canEdit, onJourneyStart, journeyLoadingId) {
   const columnHelper = createColumnHelper<any>();
-  return [columnHelper.accessor("createdAt", { header: "Date & time", cell: ({ getValue }) => formatLeadDateTime(getValue()) }), columnHelper.accessor("name", { header: "Lead", cell: ({ row }) => <Link href={`/leads/${row.original.id}`} className="table-primary" onClick={(event) => event.stopPropagation()} aria-label={`Open journey for ${row.original.name}`}><strong>{row.original.name}</strong><span>{row.original.email}</span></Link> }), columnHelper.accessor("phone", { header: "Phone", cell: ({ getValue }) => { const phone = String(getValue() || "").trim(); return phone ? <a className="lead-phone-link" href={whatsappHref(phone)} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open WhatsApp for ${phone}`}>{formatContactNumber(phone)}</a> : "—"; } }), columnHelper.accessor("workspace", { header: "Workspace", cell: ({ getValue }) => <WorkspaceBadge value={getValue()} /> }), columnHelper.accessor("team", { header: "Team size" }), columnHelper.accessor("assignedTo", { header: "Assigned to", cell: ({ getValue }) => getValue() || "Unassigned" }), columnHelper.accessor("stage", { header: "Lead stage", cell: ({ getValue }) => <StatusBadge tone={getValue() === "Converted" || getValue() === "Quotation Approved" ? "success" : getValue() === "Follow-up due" || getValue() === "Quote Sent" ? "accent" : "neutral"}>{getValue()}</StatusBadge> }), columnHelper.accessor("lostReason", { header: "Lost reason", cell: ({ row, getValue }) => normalizeLeadStage(row.original.stage, row.original) === "Not interested" ? getValue() || "Not categorized" : "—" }), columnHelper.accessor("nextFollowUp", { header: "Next follow-up", cell: ({ getValue }) => formatLeadFollowUp(getValue()) }), columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => <div className="lead-table-actions"><Link className="action-icon-btn" href={`/leads/${row.original.id}`} onClick={(event) => event.stopPropagation()} aria-label={`View journey for ${row.original.name}`} title="Journey"><History size={16} /></Link><button className="action-icon-btn" type="button" onClick={(event) => { event.stopPropagation(); onOpen(row.original); }} aria-label={`Open ${row.original.name}`} title={["Follow-up due", "Quote Sent"].includes(normalizeLeadStage(row.original.stage)) ? "Log follow-up" : "Open"}><Eye size={16} /></button>{canEdit ? <button className="action-icon-btn" type="button" onClick={(event) => { event.stopPropagation(); onEdit(row.original); }} aria-label={`Edit contact details for ${row.original.name}`} title="Edit contact details"><Pencil size={16} /></button> : null}</div> })];
+  return [columnHelper.accessor("createdAt", { header: "Date & time", cell: ({ getValue }) => formatLeadDateTime(getValue()) }), columnHelper.accessor("name", { header: "Lead", cell: ({ row }) => <Link href={`/leads/${row.original.id}`} className="table-primary" onClick={(event) => event.stopPropagation()} aria-label={`Open journey for ${row.original.name}`}><strong>{row.original.name}</strong><span>{row.original.email}</span></Link> }), columnHelper.accessor("phone", { header: "Phone", cell: ({ getValue }) => { const phone = String(getValue() || "").trim(); return phone ? <a className="lead-phone-link" href={whatsappHref(phone)} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} aria-label={`Open WhatsApp for ${phone}`}>{formatContactNumber(phone)}</a> : "—"; } }), columnHelper.accessor("workspace", { header: "Workspace", cell: ({ getValue }) => <WorkspaceBadge value={getValue()} /> }), columnHelper.accessor("team", { header: "Team size" }), columnHelper.accessor("assignedTo", { header: "Assigned to", cell: ({ getValue }) => getValue() || "Unassigned" }), columnHelper.accessor("stage", { header: "Lead stage", cell: ({ getValue }) => <StatusBadge tone={leadStageTone(getValue())}>{getValue()}</StatusBadge> }), columnHelper.accessor("lostReason", { header: "Lost reason", cell: ({ row, getValue }) => normalizeLeadStage(row.original.stage, row.original) === "Not interested" ? getValue() || "Not categorized" : "—" }), columnHelper.accessor("nextFollowUp", { header: "Next follow-up", cell: ({ getValue }) => formatLeadFollowUp(getValue()) }), columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => <div className="lead-table-actions"><LeadActionMenu lead={row.original} onOpen={onOpen} onEdit={onEdit} canEdit={canEdit} onJourneyStart={onJourneyStart} journeyLoadingId={journeyLoadingId} /></div> })];
 }
 
 function LeadContactEdit({ lead, onCancel, onSave }) {
@@ -297,26 +348,28 @@ function createLeadActivityColumns() {
 }
 
 // TITLE: LEAD DETAIL AND JOURNEY
-function LeadDetail({ lead, onUpdate, onLogFollowUp, canEdit = true }) {
+function LeadDetail({ lead, onUpdate, onLogFollowUp, availableEmployees = [], canEdit = true }) {
   const [employees, setEmployees] = useState<any[]>([]);
-  const formApi = useForm({ resolver: zodResolver(leadDetailSchema), defaultValues: { email: lead.email || "", phone: lead.phone || "", stage: normalizeLeadStage(lead.stage, lead), workspace: lead.workspace || "", lostReason: lead.lostReason || "", lostMonthlyValue: lead.lostMonthlyValue ? String(lead.lostMonthlyValue) : "", followUp: lead.nextFollowUp && /^\d{4}-\d{2}-\d{2}/.test(lead.nextFollowUp) ? lead.nextFollowUp.slice(0, 10) : "", followUpTime: lead.nextFollowUp?.match(/ · (\d{2}:\d{2})$/)?.[1] || "", employee: lead.assignedTo || "" }, mode: "onBlur" });
+  const formApi = useForm({ resolver: zodResolver(leadDetailSchema), defaultValues: { stage: normalizeLeadStage(lead.stage, lead), workspace: lead.workspace || "", lostReason: lead.lostReason || "", lostMonthlyValue: lead.lostMonthlyValue ? String(lead.lostMonthlyValue) : "", followUp: lead.nextFollowUp && /^\d{4}-\d{2}-\d{2}/.test(lead.nextFollowUp) ? lead.nextFollowUp.slice(0, 10) : "", followUpTime: lead.nextFollowUp?.match(/ · (\d{2}:\d{2})$/)?.[1] || "", employee: lead.assignedTo || "" }, mode: "onBlur" });
   const { handleSubmit, setValue, watch, formState } = formApi;
   const today = getLocalDateInputValue();
   const currentTime = getLocalTimeInputValue();
   const hasPendingFollowUp = normalizeLeadStage(lead.stage, lead) === "Follow-up due";
   const isTerminal = ["Converted", "Not interested"].includes(normalizeLeadStage(lead.stage, lead));
   useEffect(() => {
-    const savedEmployees = getDemoValue("employees");
-    const activeEmployees = Array.isArray(savedEmployees) ? savedEmployees.filter((item) => item.status !== "Disabled" && item.name).map((item) => item.name) : [];
-    const employeeOptions = [...new Set([lead.assignedTo, ...activeEmployees].filter(Boolean))];
+    const activeEmployees = getAssignableEmployeeNames(availableEmployees);
+    const ownerName = normalizeText(getDemoValue("profileName"));
+    const assignedToCurrentUser = !lead.assignedTo || lead.assignedTo === "Only me" || normalizeText(lead.assignedTo) === ownerName;
+    const currentAssignment = assignedToCurrentUser ? "Only me" : activeEmployees.includes(lead.assignedTo) ? lead.assignedTo : "Unassigned";
+    const employeeOptions = ["Only me", ...activeEmployees];
     setEmployees(employeeOptions);
-    setValue("employee", lead.assignedTo || activeEmployees[0] || "Unassigned", { shouldValidate: true });
-  }, []);
+    setValue("employee", currentAssignment, { shouldValidate: true });
+  }, [availableEmployees, lead.assignedTo, lead.id, setValue]);
   const error = (field) => formState.errors[field]?.message;
-  const save = (values) => onUpdate({ ...lead, email: values.email.trim().toLowerCase(), phone: values.phone.trim(), stage: values.stage, workspace: values.workspace, lostReason: values.stage === "Not interested" ? values.lostReason : "", lostMonthlyValue: values.stage === "Not interested" ? values.lostMonthlyValue : null, nextFollowUp: hasPendingFollowUp ? lead.nextFollowUp : (values.followUp ? (values.followUpTime ? `${values.followUp} · ${values.followUpTime}` : values.followUp) : "Not scheduled"), assignedTo: values.employee });
+  const save = (values) => onUpdate({ ...lead, stage: values.stage, workspace: values.workspace, lostReason: values.stage === "Not interested" ? values.lostReason : "", lostMonthlyValue: values.stage === "Not interested" ? values.lostMonthlyValue : null, nextFollowUp: hasPendingFollowUp ? lead.nextFollowUp : (values.followUp ? (values.followUpTime ? `${values.followUp} · ${values.followUpTime}` : values.followUp) : "Not scheduled"), assignedTo: values.employee });
   const leadSubtitle = lead.company ? `${lead.company} · ${lead.email}` : lead.email;
   if (!canEdit) return <div className="inline-form-card lead-create-form lead-detail-editor"><div className="card-heading"><div><h2>{lead.name}</h2><p className="muted-copy">{leadSubtitle}</p></div></div><div className="ledger-summary"><div><span>Stage</span><strong>{lead.stage}</strong></div><div><span>Interactions</span><strong>{lead.journey.length}</strong></div><div><span>Next follow-up</span><strong>{lead.nextFollowUp || "Not scheduled"}</strong></div></div><div className="inline-form-actions"><span className="read-only-label">View only</span></div></div>;
-  return <motion.form className="inline-form-card lead-create-form lead-detail-editor" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}><div className="card-heading"><div><h2>{lead.name}</h2><p className="muted-copy">{leadSubtitle}</p></div></div><div className="ledger-summary"><div><span>Stage</span><strong>{lead.stage}</strong></div><div><span>Interactions</span><strong>{lead.journey.length}</strong></div></div><div className="inline-form-grid"><label className="settings-label"><span>Email</span><Input type="email" autoComplete="email" {...formApi.register("email")} />{error("email") && <span className="lead-form-error">{error("email")}</span>}</label><label className="settings-label"><span>Phone</span><Input type="tel" autoComplete="tel" {...formApi.register("phone")} />{error("phone") && <span className="lead-form-error">{error("phone")}</span>}</label><SelectField label="Lead status" value={watch("stage")} hint={error("stage")} onChange={(event) => setValue("stage", event.target.value, { shouldDirty: true, shouldValidate: true })}>{leadStages.map((stage) => <option value={stage} key={stage}>{stage}</option>)}</SelectField><SelectField label="Workspace" value={watch("workspace")} hint={error("workspace")} onChange={(event) => setValue("workspace", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">Select a workspace</option>{leadWorkspaceOptions.map((type) => <option value={type} key={type}>{type}</option>)}</SelectField>{watch("stage") === "Not interested" ? <><LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label"><span>Estimated monthly loss</span><Input type="number" min="0.01" step="0.01" placeholder="e.g. 40000" {...formApi.register("lostMonthlyValue")} />{error("lostMonthlyValue") && <span className="lead-form-error">{error("lostMonthlyValue")}</span>}</label></> : null}<DateField label="Next follow-up date" min={today} disabled={hasPendingFollowUp || isTerminal} hint={error("followUp")} {...formApi.register("followUp")} /><TimeField label="Next follow-up time" min={watch("followUp") === today ? currentTime : undefined} disabled={hasPendingFollowUp || isTerminal} hint={error("followUpTime")} {...formApi.register("followUpTime")} /><SelectField label="Assigned employee" value={watch("employee")} hint={error("employee")} onChange={(event) => setValue("employee", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="Unassigned">Unassigned</option>{employees.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></div>{hasPendingFollowUp ? <p className="lead-form-info">A follow-up is already scheduled. Log it before scheduling another.</p> : null}{isTerminal ? <p className="lead-form-info">This lead is closed and cannot receive another follow-up.</p> : null}<div className="inline-form-actions">{!isTerminal ? <Button type="button" variant="ghost" onClick={onLogFollowUp}><CalendarClock size={15} /> Log follow-up</Button> : null}<Button type="submit" variant="brand" loading={formState.isSubmitting}>Save lead update</Button></div></motion.form>;
+  return <motion.form className="inline-form-card lead-create-form lead-detail-editor" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}><div className="card-heading"><div><h2>{lead.name}</h2><p className="muted-copy">{leadSubtitle}</p></div></div><div className="ledger-summary"><div><span>Stage</span><strong>{lead.stage}</strong></div><div><span>Interactions</span><strong>{lead.journey.length}</strong></div></div><div className="inline-form-grid"><SelectField label="Lead status" value={watch("stage")} hint={error("stage")} renderOption={(option) => <StatusBadge tone={leadStageTone(option.value)}>{option.label}</StatusBadge>} onChange={(event) => setValue("stage", event.target.value, { shouldDirty: true, shouldValidate: true })}>{leadStages.map((stage) => <option value={stage} key={stage}>{stage}</option>)}</SelectField><SelectField label="Workspace" value={watch("workspace")} hint={error("workspace")} onChange={(event) => setValue("workspace", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">Select a workspace</option>{leadWorkspaceOptions.map((type) => <option value={type} key={type}>{type}</option>)}</SelectField>{watch("stage") === "Not interested" ? <><LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label"><span>Estimated monthly loss</span><Input type="number" min="0.01" step="0.01" placeholder="e.g. 40000" {...formApi.register("lostMonthlyValue")} />{error("lostMonthlyValue") && <span className="lead-form-error">{error("lostMonthlyValue")}</span>}</label></> : null}<DatePickerField label="Next follow-up date" value={watch("followUp")} min={today} disabled={hasPendingFollowUp || isTerminal} hint={error("followUp")} onChange={(value) => setValue("followUp", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Next follow-up time" value={watch("followUpTime")} min={watch("followUp") === today ? currentTime : undefined} disabled={hasPendingFollowUp || isTerminal} hint={error("followUpTime")} onChange={(value) => setValue("followUpTime", value, { shouldDirty: true, shouldValidate: true })} /><SelectField label="Assigned employee" value={watch("employee")} hint={error("employee")} onChange={(event) => setValue("employee", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="Unassigned">Unassigned</option>{employees.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></div>{hasPendingFollowUp ? <p className="lead-form-info">A follow-up is already scheduled. Log it before scheduling another.</p> : null}{isTerminal ? <p className="lead-form-info">This lead is closed and cannot receive another follow-up.</p> : null}<div className="inline-form-actions">{!isTerminal ? <Button type="button" variant="ghost" onClick={onLogFollowUp}><CalendarClock size={15} /> Log follow-up</Button> : null}<Button type="submit" variant="brand" loading={formState.isSubmitting}>Save lead update</Button></div></motion.form>;
 }
 
 // TITLE: LEADS PAGE
@@ -329,6 +382,7 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
   const canViewActivity = useHasPermission("leads.activity.read");
   const canWriteLeads = useHasPermission("leads.write");
   const canWriteFollowUps = useHasPermission("leads.followups.write");
+  const canWriteVisits = useHasPermission("visits.write");
   const canView = view === "all" ? canViewLeads : canViewLeads && (view === "follow-ups" ? canViewFollowUps : canViewActivity);
   const canWrite = view === "follow-ups" ? canWriteFollowUps : canWriteLeads;
   const initialLeads = [];
@@ -344,6 +398,7 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
   const [employees, setEmployees] = useState<any[]>([]);
   const [dataSource, setDataSource] = useState("loading");
   const [loadError, setLoadError] = useState("");
+  const [journeyLoadingId, setJourneyLoadingId] = useState<string | null>(null);
   const connectionErrorShown = useRef(false);
 
   const leadsQuery = useQuery({
@@ -355,10 +410,21 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
     refetchInterval: 15 * 60_000,
   });
 
+  const employeesQuery = useQuery({
+    queryKey: queryKeys.employees.all,
+    queryFn: fetchEmployeesSnapshot,
+    enabled: canView,
+    refetchInterval: 15 * 60_000,
+  });
+
   useEffect(() => {
+    if (employeesQuery.data) {
+      setEmployees(employeesQuery.data.employees);
+      return;
+    }
     const savedEmployees = getDemoValue("employees");
-    if (Array.isArray(savedEmployees)) setEmployees(savedEmployees.filter((employee) => employee.status !== "Disabled" && employee.name));
-  }, []);
+    if (Array.isArray(savedEmployees)) setEmployees(savedEmployees);
+  }, [employeesQuery.data]);
 
   useEffect(() => {
     const snapshot = leadsQuery.data;
@@ -392,7 +458,7 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
   };
   const openLead = (lead) => {
     const normalizedLead = { ...lead, stage: normalizeLeadStage(lead.stage, lead) };
-    if (["Follow-up due", "Quote Sent"].includes(normalizedLead.stage)) {
+    if (["Follow-up due", "Quote Sent", "Visit scheduled"].includes(normalizedLead.stage)) {
       setSelected(null);
       if (canWrite) {
         setFollowUpLead(normalizedLead);
@@ -410,6 +476,7 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
     setSelected(normalizedLead);
   };
   const openLeadAction = openLead;
+  const startJourneyNavigation = (leadId) => setJourneyLoadingId(leadId);
   const openLeadContactEdit = (lead) => {
     if (!canWrite) {
       showToast({ variant: "error", title: "View-only access", message: "You can view leads, but your account cannot edit them." });
@@ -431,12 +498,16 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
     const baseUpdated = hasNewFollowUp
       ? transitionLead({ ...normalizedCurrent, assignedTo: nextLead.assignedTo, workspace: nextLead.workspace }, { type: "follow-up-scheduled", nextFollowUp: nextLead.nextFollowUp })
       : { ...normalizedCurrent, assignedTo: nextLead.assignedTo, workspace: nextLead.workspace, nextFollowUp: isTerminal || requestedStage !== normalizedCurrent.stage ? "Not scheduled" : nextLead.nextFollowUp, stage: requestedStage };
+    const stageEntry = requestedStage !== normalizedCurrent.stage
+      ? createStageChangeJourneyEntry(normalizedCurrent, normalizedCurrent.stage, requestedStage)
+      : null;
     const updated = {
       ...baseUpdated,
       stage: requestedStage,
       lostReason: requestedStage === "Not interested" ? nextLead.lostReason || "" : "",
       lostMonthlyValue: requestedStage === "Not interested" ? nextLead.lostMonthlyValue : null,
       lostAt: requestedStage === "Not interested" ? nextLead.lostAt || new Date().toISOString() : "",
+      journey: stageEntry ? [stageEntry, ...(Array.isArray(normalizedCurrent.journey) ? normalizedCurrent.journey : [])] : normalizedCurrent.journey,
     };
 
     try {
@@ -451,8 +522,10 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
           workspace: updated.workspace,
           visited,
           stage: requestedStage,
+          assignedTo: updated.assignedTo,
           lostReason: updated.lostReason,
           lostMonthlyValue: updated.lostMonthlyValue,
+          ...(stageEntry ? { journeyEntry: stageEntry } : {}),
         }, view === "follow-ups" ? "lead.followup.update" : "lead.update");
       }
       const next = leads.map((lead) => lead.id === updated.id ? { ...updated, visited } : lead);
@@ -486,38 +559,59 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
       showToast({ variant: "error", title: "Lead contact was not updated", message: error?.message || "The lead contact details could not be updated." });
     }
   };
-  const saveFollowUp = async ({ entry, outcome, lostReason, lostMonthlyValue, nextFollowUpDate, nextFollowUpTime, nextFollowUp }) => {
+  const saveFollowUp = async ({ entry, outcome, lostReason, lostMonthlyValue, nextFollowUpDate, nextFollowUpTime, nextFollowUp, visitDate, visitTime, visitHost }) => {
     if (!followUpLead || !canWrite) return;
-    const transitioned = transitionLead(followUpLead, { type: "follow-up-logged", outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp });
+    const stored = getDemoValue("leads");
+    const cachedRows = Array.isArray(stored) ? stored : [];
+    const cachedLead = cachedRows.find((item) => item.id === followUpLead.id);
+    const currentSnapshot = queryClient.getQueryData<LeadsQuerySnapshot>(queryKeys.leads.all);
+    const snapshotLead = currentSnapshot?.leads?.find((item) => item.id === followUpLead.id);
+    const existingJourney = mergeLeadJourneyEntries(
+      followUpLead.journey,
+      snapshotLead?.journey,
+      cachedLead?.journey,
+    );
+    const transitioned = transitionLead({ ...followUpLead, journey: existingJourney }, { type: "follow-up-logged", outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp });
     const updated = {
       ...transitioned,
       lostReason: outcome === "Not interested" ? lostReason || "" : "",
       lostMonthlyValue: outcome === "Not interested" ? lostMonthlyValue : null,
       lostAt: outcome === "Not interested" ? new Date().toISOString() : "",
     };
-    const next = leads.map((lead) => lead.id === updated.id ? { ...updated, journey: [entry, ...(Array.isArray(followUpLead.journey) ? followUpLead.journey : [])] } : lead);
-    const savedLead = next.find((lead) => lead.id === updated.id);
+    const rows = cachedRows.length ? cachedRows : currentSnapshot?.leads || leads;
+    let scheduledVisit = null;
+    let leadToPersist = { ...updated, journey: [entry, ...existingJourney] };
 
     try {
+      if (outcome === "Schedule a visit") {
+        scheduledVisit = await scheduleLeadVisit({ lead: updated, date: visitDate, time: visitTime, host: visitHost });
+        leadToPersist = transitionLead(leadToPersist, { type: "visit-scheduled", nextFollowUp: "Not scheduled" });
+      }
+      const next = rows.map((lead) => lead.id === leadToPersist.id ? leadToPersist : lead);
+      if (!next.some((lead) => lead.id === leadToPersist.id)) next.push(leadToPersist);
       if (isSupabaseLeadsEnabled() && followUpLead.backend === "supabase") {
-        await updateSupabaseLead(updated.id, {
-          workspace: updated.workspace,
+        await updateSupabaseLead(leadToPersist.id, {
+          workspace: leadToPersist.workspace,
           visited: Boolean(followUpLead.visited),
-          stage: updated.stage,
-          lostReason: updated.lostReason,
-          lostMonthlyValue: updated.lostMonthlyValue,
+          stage: leadToPersist.stage,
+          lostReason: leadToPersist.lostReason,
+          lostMonthlyValue: leadToPersist.lostMonthlyValue,
+          journeyEntry: entry,
+          ...(scheduledVisit ? { visitDate: scheduledVisit.date, visitTime: scheduledVisit.time } : {}),
         }, "lead.followup.update");
       }
       persist(next);
+      if (scheduledVisit) {
+        setFollowUpLead(null);
+        setSelected(null);
+        showToast({ variant: "success", title: "Visit scheduled", message: `${scheduledVisit.visitor} was added to the visit schedule.` });
+        return;
+      }
       setFollowUpLead(null);
       setSelected(null);
-      showToast({ variant: "success", title: "Follow-up logged", message: `${savedLead.name}'s journey was updated successfully.` });
-      if (outcome === "Schedule a visit") {
-        saveDemoValue("pendingVisitLeadId", updated.id);
-        router.push("/visits");
-      }
+      showToast({ variant: "success", title: "Follow-up logged", message: `${leadToPersist.name}'s journey was updated successfully.` });
     } catch (error) {
-      showToast({ variant: "error", title: "Follow-up was not saved", message: error?.message || "The follow-up could not be saved." });
+      showToast({ variant: "error", title: scheduledVisit ? "Visit scheduled with a lead warning" : outcome === "Schedule a visit" ? "Visit was not scheduled" : "Follow-up was not saved", message: error?.message || (scheduledVisit ? "The visit was saved, but the lead could not be updated." : outcome === "Schedule a visit" ? "The visit could not be scheduled." : "The follow-up could not be saved.") });
     }
   };
   const addLead = async (lead) => { if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot add leads." }); return; } try { if (!isSupabaseLeadsEnabled()) { const nextLead = { ...lead, backend: "demo", journey: [] }; persist([nextLead, ...leads]); setShowForm(false); showToast({ variant: "success", title: "Lead added", message: `${nextLead.name} was added successfully.` }); return; } const row = await createSupabaseLead(lead); const nextLead = { ...mapSupabaseLeadToOsLead(row), ...lead, id: row.id, backend: "supabase", createdAt: row.created_at ? row.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10), journey: [] }; persist([nextLead, ...leads]); setShowForm(false); showToast({ variant: "success", title: "Lead added", message: `${nextLead.name} was added successfully.` }); } catch (error) { showToast({ variant: "error", title: "Lead was not saved", message: error?.message || "Lead could not be saved." }); } };
@@ -560,6 +654,7 @@ export default function LeadsPage({ view = "all" }: { view?: "all" | "follow-ups
     }));
   }).sort((left, right) => String(right.occurredAt || "").localeCompare(String(left.occurredAt || "")));
   const activityLeadCount = new Set(activityRows.map((row) => row.leadId)).size;
+  const assignmentOptions = getLeadAssignmentOptions(employees);
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription} {dataSource === "supabase" ? "Connected." : dataSource === "demo" ? "Showing cached demo data." : "Loading…"}</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div></div><section className="stat-grid module-stats leads-kpi-grid"><KpiCard icon={<UsersRound size={18} />} label={isActivityView ? "Leads with activity" : isFollowUpsView ? "Open follow-ups" : "New leads"} value={isActivityView ? activityLeadCount : isFollowUpsView ? leadRowsForView.length : leads.filter((lead) => lead.stage === "New lead").length} detail={isActivityView ? "Leads with recorded activity" : isFollowUpsView ? "Scheduled or due actions" : dataSource === "supabase" ? "Live pipeline data" : "Cached pipeline"} /><KpiCard icon={<CalendarClock size={18} />} label={isActivityView ? "Activities" : isFollowUpsView ? "Due now" : "Follow-ups due"} value={isActivityView ? activityRows.length : isFollowUpsView ? leadRowsForView.filter((lead) => normalizeLeadStage(lead.stage, lead) === "Follow-up due").length : leads.filter((lead) => lead.stage === "Follow-up due").length} detail={isActivityView ? "Interactions and follow-ups" : isFollowUpsView ? "Needs attention" : "Review next actions"} /></section><div className="leads-toolbar page-search-row"><div className="header-search-wrap page-search-wrap"><Search size={14} className="search-leading-icon" /><input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search" aria-label={`Search ${isActivityView ? "lead activity" : "leads"}`} className="search-input" /><div className="search-kbd-pill"><span>Ctrl K</span></div></div><div className="leads-toolbar-actions"><Button variant="ghost" onClick={() => { setFilters(appliedFilters); setShowFilters(true); }}><SlidersHorizontal size={14} /> Filter</Button>{!isFollowUpsView && !isActivityView ? canWrite ? <Button onClick={() => setShowForm(true)}><CirclePlus size={16} /> Add lead</Button> : <span className="read-only-label">View only</span> : null}</div></div><div className="section-heading"><div><h2>{isActivityView ? "Activity timeline" : isFollowUpsView ? "Follow-up queue" : "Lead pipeline"}</h2></div></div>{isActivityView ? <DataTable columns={createLeadActivityColumns()} data={activityRows} emptyMessage="No lead activity yet." emptySubtitle="Interactions and follow-ups will appear here." /> : <DataTable columns={createLeadColumns(openLeadAction, openLeadContactEdit, canWrite)} data={leadRowsForView} onRowClick={openLead} emptyMessage={isFollowUpsView ? "No follow-ups scheduled." : "No leads yet."} emptySubtitle={isFollowUpsView ? "Scheduled lead actions will appear here." : "Leads will appear here when they are added."} />}<Dialog open={showFilters} onClose={discardFilterChanges} ariaLabel="Filter leads"><div className="inline-form-card lead-filter-panel"><div className="card-heading"><div><h2>Filter leads</h2><p className="muted-copy">Filter the lead pipeline by stage, company or assigned employee.</p></div></div><div className="inline-form-grid"><LeadFilterSelect label="Lead stage" value={filters.stage} options={stages} emptyLabel="All stages" onChange={(stage) => setFilters((current) => ({ ...current, stage }))} /><LeadFilterSelect label="Company" value={filters.company} options={companies} emptyLabel="All companies" onChange={(company) => setFilters((current) => ({ ...current, company }))} /><LeadFilterSelect label="Assigned to" value={filters.assignedTo} options={employees.map((employee) => employee.name)} emptyLabel="All employees" onChange={(assignedTo) => setFilters((current) => ({ ...current, assignedTo }))} /><label className="settings-label">From date<Input type="date" value={filters.dateFrom} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} /></label><label className="settings-label">To date<Input type="date" value={filters.dateTo} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} /></label></div><div className="inline-form-actions"><Button variant="ghost" onClick={() => setFilters({ stage: "", company: "", assignedTo: "", dateFrom: "", dateTo: "" })}>Clear</Button><Button onClick={applyFilters}>Apply filters</Button></div></div></Dialog><Dialog open={showForm} onClose={() => setShowForm(false)} ariaLabel="Add lead"><LeadForm onCancel={() => setShowForm(false)} onSave={addLead} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Lead details">{selected ? <LeadDetail canEdit={canWrite} lead={selected} onUpdate={updateLead} onLogFollowUp={() => setFollowUpLead(selected)} /> : null}</Dialog><Dialog open={Boolean(contactEditLead)} onClose={() => setContactEditLead(null)} ariaLabel="Edit lead contact details">{contactEditLead ? <LeadContactEdit lead={contactEditLead} onCancel={() => setContactEditLead(null)} onSave={updateLeadContacts} /> : null}</Dialog><Dialog open={Boolean(followUpLead) && canWrite} onClose={() => setFollowUpLead(null)} ariaLabel="Log follow-up">{followUpLead ? <LeadFollowUpForm lead={followUpLead} onCancel={() => setFollowUpLead(null)} onSave={saveFollowUp} /> : null}</Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription} {dataSource === "supabase" ? "Connected." : dataSource === "demo" ? "Showing cached demo data." : "Loading…"}</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div></div><section className="stat-grid module-stats leads-kpi-grid"><KpiCard icon={<UsersRound size={18} />} label={isActivityView ? "Leads with activity" : isFollowUpsView ? "Open follow-ups" : "New leads"} value={isActivityView ? activityLeadCount : isFollowUpsView ? leadRowsForView.length : leads.filter((lead) => lead.stage === "New lead").length} detail={isActivityView ? "Leads with recorded activity" : isFollowUpsView ? "Scheduled or due actions" : dataSource === "supabase" ? "Live pipeline data" : "Cached pipeline"} /><KpiCard icon={<CalendarClock size={18} />} label={isActivityView ? "Activities" : isFollowUpsView ? "Due now" : "Follow-ups due"} value={isActivityView ? activityRows.length : isFollowUpsView ? leadRowsForView.filter((lead) => normalizeLeadStage(lead.stage, lead) === "Follow-up due").length : leads.filter((lead) => lead.stage === "Follow-up due").length} detail={isActivityView ? "Interactions and follow-ups" : isFollowUpsView ? "Needs attention" : "Review next actions"} /></section><div className="leads-toolbar page-search-row"><div className="header-search-wrap page-search-wrap"><Search size={14} className="search-leading-icon" /><input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search" aria-label={`Search ${isActivityView ? "lead activity" : "leads"}`} className="search-input" /><div className="search-kbd-pill"><span>Ctrl K</span></div></div><div className="leads-toolbar-actions"><Button variant="ghost" onClick={() => { setFilters(appliedFilters); setShowFilters(true); }}><SlidersHorizontal size={14} /> Filter</Button>{!isFollowUpsView && !isActivityView ? canWrite ? <Button onClick={() => setShowForm(true)}><CirclePlus size={16} /> Add lead</Button> : <span className="read-only-label">View only</span> : null}</div></div>{isActivityView ? <DataTable title="Activity timeline" subtitle="Interactions and follow-ups will appear here." columns={createLeadActivityColumns()} data={activityRows} emptyMessage="No lead activity yet." emptySubtitle="Interactions and follow-ups will appear here." /> : <DataTable title={isFollowUpsView ? "Follow-up queue" : "Lead pipeline"} subtitle={isFollowUpsView ? "Scheduled lead actions will appear here." : "Leads will appear here when they are added."} columns={createLeadColumns(openLeadAction, openLeadContactEdit, canWrite, startJourneyNavigation, journeyLoadingId)} data={leadRowsForView} onRowClick={openLead} emptyMessage={isFollowUpsView ? "No follow-ups scheduled." : "No leads yet."} emptySubtitle={isFollowUpsView ? "Scheduled lead actions will appear here." : "Leads will appear here when they are added."} />}<Dialog open={showFilters} onClose={discardFilterChanges} ariaLabel="Filter leads"><div className="inline-form-card lead-filter-panel"><div className="card-heading"><div><h2>Filter leads</h2><p className="muted-copy">Filter the lead pipeline by stage, company or assigned employee.</p></div></div><div className="inline-form-grid"><LeadFilterSelect label="Lead stage" value={filters.stage} options={stages} emptyLabel="All stages" onChange={(stage) => setFilters((current) => ({ ...current, stage }))} /><LeadFilterSelect label="Company" value={filters.company} options={companies} emptyLabel="All companies" onChange={(company) => setFilters((current) => ({ ...current, company }))} /><LeadFilterSelect label="Assigned to" value={filters.assignedTo} options={getAssignableEmployeeNames(employees)} emptyLabel="All employees" onChange={(assignedTo) => setFilters((current) => ({ ...current, assignedTo }))} /><label className="settings-label">From date<Input type="date" value={filters.dateFrom} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} /></label><label className="settings-label">To date<Input type="date" value={filters.dateTo} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} /></label></div><div className="inline-form-actions"><Button variant="ghost" onClick={() => setFilters({ stage: "", company: "", assignedTo: "", dateFrom: "", dateTo: "" })}>Clear</Button><Button onClick={applyFilters}>Apply filters</Button></div></div></Dialog><Dialog open={showForm} onClose={() => setShowForm(false)} ariaLabel="Add lead"><LeadForm assignmentOptions={assignmentOptions} onCancel={() => setShowForm(false)} onSave={addLead} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Lead details">{selected ? <LeadDetail availableEmployees={employees} canEdit={canWrite} lead={selected} onUpdate={updateLead} onLogFollowUp={() => setFollowUpLead(selected)} /> : null}</Dialog><Dialog open={Boolean(contactEditLead)} onClose={() => setContactEditLead(null)} ariaLabel="Edit lead contact details">{contactEditLead ? <LeadContactEdit lead={contactEditLead} onCancel={() => setContactEditLead(null)} onSave={updateLeadContacts} /> : null}</Dialog><Dialog open={Boolean(followUpLead) && canWrite} onClose={() => setFollowUpLead(null)} ariaLabel="Log follow-up">{followUpLead ? <LeadFollowUpForm lead={followUpLead} canScheduleVisit={canWriteVisits} onCancel={() => setFollowUpLead(null)} onSave={saveFollowUp} /> : null}</Dialog></motion.div>;
 }

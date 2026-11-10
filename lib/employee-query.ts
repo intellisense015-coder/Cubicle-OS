@@ -21,6 +21,12 @@ export type EmployeeRolesQuerySnapshot = {
   errorMessage: string;
 };
 
+export function isAssignableEmployee(employee: any) {
+  const status = String(employee?.status || "").trim().toLowerCase();
+  const invitationStatus = String(employee?.invitationStatus ?? employee?.invitation_status ?? "").trim().toLowerCase();
+  return status === "active" && invitationStatus === "accepted" && Boolean(String(employee?.name || "").trim());
+}
+
 export const fallbackAdminRoles: SupabaseAdminRoleRow[] = [
   { role_key: "owner", label: "Owner", description: "" },
   { role_key: "editor", label: "Editor", description: "" },

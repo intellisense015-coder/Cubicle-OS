@@ -84,7 +84,7 @@ const invoiceUpdateKeys = new Set([
   "id", "invoice", "workspaceId", "memberId", "account", "period", "amount", "unitPrice", "qty", "itemDescription",
   "issueDate", "dueDate", "billingStartDate", "dueDay", "manualDateOverride", "subtotal", "charges", "items", "taxEnabled",
   "taxRate", "taxAmount", "taxLabel", "whtEnabled", "whtRate", "whtAmount", "salesTaxEnabled", "salesTaxRate", "salesTaxAmount",
-  "graceUntil", "paymentStatus", "emailStatus",
+  "graceUntil", "paymentStatus", "emailStatus", "manualTotalOverride",
 ]);
 
 function validInvoiceUpdateShape(invoice: Record<string, unknown>) {
@@ -136,7 +136,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
     const invoice = body.value as Record<string, any>;
     if (!validInvoiceUpdateShape(invoice)) return errorResponse("Invoice changes are invalid.", 400);
-    const issueDate = dateKey(invoice.issueDate);
+    const issueDate = dateKey(invoice.issueDate || invoice.billingStartDate);
     const dueDate = dateKey(invoice.dueDate);
     const billingStartDate = dateKey(invoice.billingStartDate);
     const memberId = String(invoice.memberId || "").trim();
@@ -153,13 +153,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         ? invoice.items
         : [{ description: invoice.itemDescription || "Workspace monthly rent", amount: invoice.subtotal || invoice.amount }];
     const subtotal = parseAmount(invoice.subtotal || invoice.amount);
+    const salesTaxEnabled = Boolean(invoice.salesTaxEnabled);
+    const whtEnabled = Boolean(invoice.whtEnabled ?? invoice.taxEnabled);
+    if (salesTaxEnabled && whtEnabled) return errorResponse("Only one tax can be added to an invoice.", 400);
     const totals = calculateInvoiceTotals({
       subtotal,
-      salesTaxEnabled: Boolean(invoice.salesTaxEnabled),
+      salesTaxEnabled,
       salesTaxRate: invoice.salesTaxRate,
-      whtEnabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled),
+      whtEnabled,
       whtRate: invoice.whtRate ?? invoice.taxRate,
     });
+    const persistedTotals = { ...totals, total: parseAmount(invoice.amount) };
 
     admin = serviceClient();
     const rateLimit = await checkRateLimits({
@@ -195,13 +199,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       billing_start_date: billingStartDate || null,
       due_day: Number(invoice.dueDay) || 5,
       subtotal: totals.subtotal,
-      tax_enabled: Boolean(invoice.whtEnabled ?? invoice.taxEnabled) && totals.whtAmount > 0,
+      tax_enabled: whtEnabled && totals.whtAmount > 0,
       tax_rate: totals.whtRate,
       tax_amount: totals.whtAmount,
-      sales_tax_enabled: Boolean(invoice.salesTaxEnabled) && totals.salesTaxAmount > 0,
+      sales_tax_enabled: salesTaxEnabled && totals.salesTaxAmount > 0,
       sales_tax_rate: totals.salesTaxRate,
       sales_tax_amount: totals.salesTaxAmount,
-      total_amount: totals.total,
+      total_amount: persistedTotals.total,
       payment_status: normalizedStatus(invoice.paymentStatus),
       grace_until: dateKey(invoice.graceUntil) || null,
       manual_date_override: invoice.manualDateOverride === true,

@@ -7,32 +7,37 @@ import { useRouter } from "next/navigation";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { BookOpen, Building2, ChevronDown, CirclePlus, CreditCard, Pencil, Power, UserRound } from "lucide-react";
+import { BookOpen, Building2, CirclePlus, CreditCard, Pencil, Power, UserRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { SelectField } from "@/components/ui/primitives";
+import { DatePickerField, SelectField } from "@/components/ui/primitives";
 import { WorkspaceBadge } from "@/components/ui/workspace-badge";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords } from "@/lib/workspace-records";
+import { TableActionMenu } from "@/components/ui/table-action-menu";
+import { getDemoSession, getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { getWorkspaceRecords, isAssignableWorkspace, mergeWorkspaceRecords, workspaceHasCapacity } from "@/lib/workspace-records";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
-import { closeCurrentMembership, createMembershipPeriod, findMemberIdentityMatch, isActiveMember, memberCompanyKey, MEMBERSHIP_STATUS_OPTIONS, normalizeMembershipStatus, normalizePhone, reactivateMember, syncCompanyStatuses } from "@/lib/member-lifecycle";
+import { closeCurrentMembership, createMembershipPeriod, findMemberIdentityMatch, isActiveMember, memberCompanyKey, normalizeMembershipStatus, normalizePhone, reactivateMember, syncCompanyStatuses } from "@/lib/member-lifecycle";
 import { numericField, numericString } from "@/lib/number-input";
 import { useHasPermission } from "@/lib/access-control";
+import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
+import { createSupabaseCompany, mapSupabaseCompanyToOsCompany } from "@/lib/supabase/companies";
+import { updateSupabaseLead } from "@/lib/supabase/leads";
 import { createSupabaseMember, mapSupabaseMemberToOsMember, updateSupabaseMember } from "@/lib/supabase/members";
-import { assignSupabaseMemberToWorkspace } from "@/lib/supabase/workspaces";
+import { assignSupabaseMemberToSharedWorkspace, assignSupabaseMemberToWorkspace } from "@/lib/supabase/workspaces";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchMembersSnapshot } from "@/lib/member-query";
 import { fetchCompaniesSnapshot } from "@/lib/company-query";
 import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
+import { fetchQuotationsSnapshot } from "@/lib/quotation-query";
 import { z } from "zod";
 
 const memberSchema = z.object({
-  leadId: z.string().optional(), member: z.string().trim().min(1, "Enter the member's name."), phone: z.string().optional(), email: z.string().optional(), company: z.string().optional(), team: z.string().optional(), space: z.string().optional(), rent: z.string().regex(/^\d+(\.\d+)?$/, "Enter a valid numeric rent."), deposit: z.string().optional().refine((value) => !value || /^\d+(\.\d+)?$/.test(value), "Enter a valid numeric deposit."), billingStartDate: z.string().min(1, "Choose a billing start date."), dueDay: z.string().regex(/^\d+$/, "Enter a whole-number due day.").refine((value) => Number(value) >= 1 && Number(value) <= 31, "Due day must be between 1 and 31."), joined: z.string().min(1, "Choose a joining date."), membershipStatus: z.enum(["Active", "Notice period"]), noticeStartDate: z.string().optional(), expectedLeavingDate: z.string().optional(), noticeNotes: z.string().optional(), reactivateMemberId: z.string().optional(),
+  leadId: z.string().optional(), member: z.string().trim().min(1, "Enter the member's name."), phone: z.string().optional(), email: z.string().optional(), cnic: z.string().optional(), gender: z.string().optional(), vehicleLicensePlate: z.string().optional(), company: z.string().optional(), team: z.string().optional(), space: z.string().optional(), rent: z.string().regex(/^\d+(\.\d+)?$/, "Enter a valid numeric rent."), deposit: z.string().optional().refine((value) => !value || /^\d+(\.\d+)?$/.test(value), "Enter a valid numeric deposit."), billingStartDate: z.string().min(1, "Choose a billing start date."), dueDay: z.string().regex(/^\d+$/, "Enter a whole-number due day.").refine((value) => Number(value) >= 1 && Number(value) <= 31, "Due day must be between 1 and 31."), joined: z.string().min(1, "Choose a joining date."), membershipStatus: z.enum(["Active", "Notice period"]), noticeStartDate: z.string().optional(), expectedLeavingDate: z.string().optional(), noticeNotes: z.string().optional(), reactivateMemberId: z.string().optional(),
 }).superRefine((values, context) => {
   if (values.membershipStatus === "Notice period" && !values.noticeStartDate) context.addIssue({ code: z.ZodIssueCode.custom, path: ["noticeStartDate"], message: "Choose the notice start date." });
   if (values.membershipStatus === "Notice period" && !values.expectedLeavingDate) context.addIssue({ code: z.ZodIssueCode.custom, path: ["expectedLeavingDate"], message: "Choose the expected leaving date." });
@@ -47,39 +52,98 @@ function addOneMonth(value: string) {
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
 }
 
+function isSupabaseId(value: unknown) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function createMemberConversionJourneyEntry(lead: any) {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const occurredDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const occurredTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const session = getDemoSession();
+  const actor = String(getDemoValue("profileName") || session.email || "Current user").trim() || "Current user";
+  const previousStage = normalizeLeadStage(lead.stage, lead);
+  const nextStage = "Converted";
+
+  return {
+    id: `journey-stage-${lead.id}-${Date.now()}`,
+    entryType: "stage-change",
+    visitorIdentity: lead.name,
+    occurredDate,
+    occurredTime,
+    previousStage,
+    stage: nextStage,
+    purpose: "Lead converted to member",
+    companions: "",
+    source: lead.source || "Website",
+    mood: "",
+    certainty: "Sure",
+    objections: "",
+    nextFollowUpDate: "",
+    nextFollowUpTime: "",
+    communicationMode: "System",
+    communicationChannel: "System",
+    followedUpBy: actor,
+    conversationSummary: `Lead converted to member. Stage changed from ${previousStage} to ${nextStage}.`,
+    outcome: nextStage,
+    conversionProbability: "",
+    conversionReason: "Member added",
+    notes: `Stage changed from ${previousStage} to ${nextStage}.`,
+  };
+}
+
 function MemberLeadSelect({ leads, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const selected = leads.find((lead) => lead.id === value);
   const conversionLeads = leads.filter((lead) => ["Converted", "Quotation Approved", "Proposal Approved"].includes(normalizeLeadStage(lead.stage, lead)));
-  return <div className="settings-label lead-source-field"><span>Member from converted lead</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>{selected ? selected.name : "Create manually"}<ChevronDown size={14} /></button>{open && <div className="lead-source-menu"><button type="button" className={!value ? "is-selected" : ""} onClick={() => { onChange(""); setOpen(false); }}>Create manually</button>{conversionLeads.length ? conversionLeads.map((lead) => <button type="button" key={lead.id} className={value === lead.id ? "is-selected" : ""} onClick={() => { onChange(lead.id); setOpen(false); }}>{lead.name} · {lead.company || "No company"}</button>) : <span className="dropdown-empty">No converted leads available</span>}</div>}</div></div>;
+  return <div className="lead-source-field"><SelectField label="Member from converted lead" value={value} onChange={(event) => onChange(event.target.value)}><option value="">Create manually</option>{conversionLeads.length ? conversionLeads.map((lead) => <option value={lead.id} key={lead.id}>{lead.name} · {lead.company || "No company"}</option>) : null}</SelectField></div>;
 }
 
-function MemberSpaceSelect({ spaces, value, onChange, currentMemberId = "" }) {
-  const [open, setOpen] = useState(false);
-  const selected = spaces.find((space) => space.id === value);
-  return <div className="settings-label lead-source-field"><span>Assigned space</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}><WorkspaceBadge value={selected ? selected.type || selected.label : "Unassigned"} /><ChevronDown size={14} /></button>{open && <div className="lead-source-menu"><button type="button" className={!value ? "is-selected" : ""} onClick={() => { onChange(""); setOpen(false); }}><WorkspaceBadge value="Unassigned" /></button>{spaces.filter((space) => isAssignableWorkspace(space) && (space.status === "available" || space.id === value || space.memberId === currentMemberId)).map((space) => <button type="button" key={space.id} className={value === space.id ? "is-selected" : ""} onClick={() => { onChange(space.id, space); setOpen(false); }}><WorkspaceBadge value={space.type || space.label} /><span>{space.label} · {space.zone}</span></button>)}</div>}</div></div>;
+function findLeadQuotation(quotations, leadId) {
+  const matches = quotations.filter((quotation) => String(quotation?.leadId || "") === String(leadId || ""));
+  return matches.sort((left, right) => {
+    const leftAccepted = String(left?.status || "").toLowerCase() === "accepted" ? 1 : 0;
+    const rightAccepted = String(right?.status || "").toLowerCase() === "accepted" ? 1 : 0;
+    if (leftAccepted !== rightAccepted) return rightAccepted - leftAccepted;
+    return new Date(String(right?.updatedAt || right?.createdAt || "")).getTime() - new Date(String(left?.updatedAt || left?.createdAt || "")).getTime();
+  })[0] || null;
 }
 
-function MemberForm({ leads, members, spaces, onCancel, onSave, initialMember = null }) {
+function quotationSecurityDeposit(quotation) {
+  const directDeposit = quotation?.securityDeposit ?? quotation?.deposit;
+  if (directDeposit !== undefined && directDeposit !== null && String(directDeposit).trim() !== "") return numericString(directDeposit, "0");
+  const lines = [...(Array.isArray(quotation?.charges) ? quotation.charges : []), ...(Array.isArray(quotation?.items) ? quotation.items : [])];
+  const depositLine = lines.find((line) => /security\s*deposit|deposit/i.test(String(line?.description || line?.itemDescription || line?.name || "")));
+  return numericString(depositLine?.amount ?? depositLine?.price ?? depositLine?.lineTotal ?? depositLine?.line_total, "0");
+}
+
+function MemberSpaceSelect({ spaces, members, value, onChange, currentMemberId = "" }) {
+  const allSpaces = spaces.filter((space) => isAssignableWorkspace(space));
+  const isSelectable = (space) => workspaceHasCapacity(space, members, currentMemberId);
+  return <div className="lead-source-field"><SelectField label="Assigned space" value={value} onChange={(event) => { const nextSpace = allSpaces.find((space) => space.id === event.target.value); onChange(event.target.value, nextSpace); }} renderOption={(option) => { const space = allSpaces.find((item) => item.id === option.value); return option.value ? <span className="member-space-option"><WorkspaceBadge value={space?.type || space?.label || String(option.label)} /><span>{space?.label || String(option.label)}{space?.zone ? ` · ${space.zone}` : ""}</span></span> : <WorkspaceBadge value="Unassigned" />; }}><option value="">Unassigned</option>{allSpaces.map((space) => <option value={space.id} disabled={!isSelectable(space)} key={space.id}>{space.label} · {space.zone}{space.status !== "available" ? " · Occupied" : ""}</option>)}</SelectField></div>;
+}
+
+function MemberForm({ leads, companies, members, spaces, quotations = [], onCancel, onSave, initialMember = null }) {
   const initialMembershipStatus = normalizeMembershipStatus(initialMember?.membershipStatus);
   const initialNoticeStartDate = initialMember?.noticeStartDate || (initialMembershipStatus === "Notice period" ? initialMember?.billingStartDate || initialMember?.joined || "" : "");
   const initialExpectedLeavingDate = initialMember?.expectedLeavingDate || (initialMembershipStatus === "Notice period" ? addOneMonth(initialNoticeStartDate) : "");
-  const formApi = useForm({ resolver: zodResolver(memberSchema), defaultValues: { leadId: initialMember?.leadId || "", member: initialMember?.member || "", phone: initialMember?.phone || "", email: initialMember?.email || "", company: initialMember?.company || "", team: initialMember?.team || "", space: initialMember?.spaceId || "", rent: numericString(initialMember?.rent, "0"), deposit: numericString(initialMember?.deposit, "0"), joined: initialMember?.joined || "2026-10-05", billingStartDate: initialMember?.billingStartDate || initialMember?.joined || "2026-10-05", dueDay: numericString(initialMember?.dueDay, "5"), membershipStatus: initialMembershipStatus, noticeStartDate: initialNoticeStartDate, expectedLeavingDate: initialExpectedLeavingDate, noticeNotes: initialMember?.noticeNotes || "", reactivateMemberId: "" }, mode: "onBlur" });
+  const formApi = useForm({ resolver: zodResolver(memberSchema), defaultValues: { leadId: initialMember?.leadId || "", member: initialMember?.member || "", phone: initialMember?.phone || "", email: initialMember?.email || "", cnic: initialMember?.cnic || "", gender: initialMember?.gender || "", vehicleLicensePlate: initialMember?.vehicleLicensePlate || "", company: initialMember?.company || "", team: initialMember?.team || "", space: initialMember?.spaceId || "", rent: numericString(initialMember?.rent, "0"), deposit: numericString(initialMember?.deposit, "0"), joined: initialMember?.joined || "2026-10-05", billingStartDate: initialMember?.billingStartDate || initialMember?.joined || "2026-10-05", dueDay: numericString(initialMember?.dueDay, "5"), membershipStatus: initialMembershipStatus, noticeStartDate: initialNoticeStartDate, expectedLeavingDate: initialExpectedLeavingDate, noticeNotes: initialMember?.noticeNotes || "", reactivateMemberId: "" }, mode: "onBlur" });
   const { register, handleSubmit, setValue, watch, formState } = formApi;
   const saveInFlightRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [reactivationId, setReactivationId] = useState("");
   const error = (field) => formState.errors[field]?.message;
-  const selectLead = (leadId) => { const lead = leads.find((item) => item.id === leadId); setValue("leadId", leadId, { shouldDirty: true, shouldValidate: true }); setValue("member", lead ? lead.name : "", { shouldDirty: true, shouldValidate: true }); setValue("company", lead ? lead.company || "" : "", { shouldDirty: true }); setValue("phone", lead ? lead.phone || "" : "", { shouldDirty: true }); setValue("email", lead ? lead.email || "" : "", { shouldDirty: true }); };
-  const selectExisting = (id) => { setReactivationId(id); setValue("reactivateMemberId", id, { shouldDirty: true }); const existing = members.find((item) => item.id === id); if (existing) { setValue("member", existing.member || "", { shouldDirty: true }); setValue("phone", existing.phone || "", { shouldDirty: true }); setValue("email", existing.email || "", { shouldDirty: true }); setValue("company", existing.company || "", { shouldDirty: true }); setValue("team", existing.team || "", { shouldDirty: true }); setValue("space", existing.spaceId || "", { shouldDirty: true }); setValue("rent", existing.rent || "PKR 0", { shouldDirty: true }); setValue("deposit", existing.deposit || "PKR 0", { shouldDirty: true }); setValue("membershipStatus", normalizeMembershipStatus(existing.membershipStatus), { shouldDirty: true }); setValue("noticeStartDate", existing.noticeStartDate || "", { shouldDirty: true }); setValue("expectedLeavingDate", existing.expectedLeavingDate || "", { shouldDirty: true }); setValue("noticeNotes", existing.noticeNotes || "", { shouldDirty: true }); } };
-  const handleMembershipStatusChange = (value) => { setValue("membershipStatus", value, { shouldDirty: true, shouldValidate: true }); if (value === "Notice period") { const start = watch("noticeStartDate") || new Date().toISOString().slice(0, 10); setValue("noticeStartDate", start, { shouldDirty: true, shouldValidate: true }); setValue("expectedLeavingDate", watch("expectedLeavingDate") || addOneMonth(start), { shouldDirty: true, shouldValidate: true }); } };
+  const selectedLeadId = watch("leadId");
+  const selectedLead = leads.find((item) => item.id === selectedLeadId);
+  const leadSelected = !initialMember && Boolean(selectedLeadId);
+  const companyLocked = leadSelected && Boolean(String(selectedLead?.company || "").trim());
+  const companyOptions = [...companies].sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+  const selectLead = (leadId) => { const lead = leads.find((item) => item.id === leadId); setValue("leadId", leadId, { shouldDirty: true, shouldValidate: true }); setValue("member", lead ? lead.name : "", { shouldDirty: true, shouldValidate: true }); setValue("company", lead ? lead.company || "" : "", { shouldDirty: true }); setValue("phone", lead ? lead.phone || "" : "", { shouldDirty: true }); setValue("email", lead ? lead.email || "" : "", { shouldDirty: true }); if (lead) { const quotation = findLeadQuotation(quotations, lead.id); setValue("rent", quotation ? numericString(quotation.monthlyRent, "0") : "0", { shouldDirty: true, shouldValidate: true }); setValue("deposit", quotation ? quotationSecurityDeposit(quotation) : "0", { shouldDirty: true, shouldValidate: true }); } };
   const handleNoticeStartChange = (event) => { const start = event.target.value; setValue("noticeStartDate", start, { shouldDirty: true, shouldValidate: true }); if (watch("membershipStatus") === "Notice period") setValue("expectedLeavingDate", addOneMonth(start), { shouldDirty: true, shouldValidate: true }); };
   const onSubmit = async (values) => {
     if (saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setIsSaving(true);
     try {
-      await onSave({ ...values, membershipStatus: normalizeMembershipStatus(values.membershipStatus), rent: numericString(values.rent, "0"), deposit: numericString(values.deposit, "0"), id: initialMember?.id || `member-${Date.now()}`, status: initialMember?.status || "Active", joined: values.joined, spaceId: values.space, space: spaces.find((item) => item.id === values.space)?.label || "Unassigned", dueDay: Number(values.dueDay) || 5, reactivateMemberId: reactivationId });
+      await onSave({ ...values, membershipStatus: normalizeMembershipStatus(values.membershipStatus), rent: numericString(values.rent, "0"), deposit: numericString(values.deposit, "0"), id: initialMember?.id || `member-${Date.now()}`, status: initialMember?.status || "Active", joined: values.joined, spaceId: values.space, space: spaces.find((item) => item.id === values.space)?.label || "Unassigned", dueDay: Number(values.dueDay) || 5, reactivateMemberId: "" });
     } finally {
       saveInFlightRef.current = false;
       setIsSaving(false);
@@ -87,13 +151,12 @@ function MemberForm({ leads, members, spaces, onCancel, onSave, initialMember = 
   };
   const rent = Number(numericString(watch("rent"), "0")) || 0;
   const deposit = Number(numericString(watch("deposit"), "0")) || 0;
-  const inactiveMembers = members.filter((member) => !isActiveMember(member) && member.id !== initialMember?.id);
-  return <div className="dialog-content member-form-card"><div className="card-heading"><div><span className="seat-details-label">{initialMember ? "Edit member" : "New member"}</span><h2>{initialMember ? "Edit member" : "Add member"}</h2><p className="muted-copy">Keep contact details, billing, and workspace assignment together.</p></div></div><form className="inline-form-grid member-form-grid" onSubmit={handleSubmit(onSubmit)}>{!initialMember && <SelectField label="Reactivate existing member" value={reactivationId} onChange={(event) => selectExisting(event.target.value)}><option value="">Create a new member</option>{inactiveMembers.map((member) => <option key={member.id} value={member.id}>{member.member} · {member.company || "No company"}</option>)}</SelectField>}<MemberLeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} /><label className="settings-label">Member name<Input className={error("member") ? "has-error" : ""} {...register("member")} aria-invalid={Boolean(error("member"))} />{error("member") && <span className="lead-form-error">{error("member")}</span>}</label><label className="settings-label">Phone number<Input {...register("phone")} placeholder="0300 1234567" /></label><label className="settings-label">Email address<Input type="email" {...register("email")} placeholder="member@example.com" /></label><label className="settings-label">Company<Input {...register("company")} /></label><label className="settings-label">Team<Input {...register("team")} placeholder="Finance team" /></label><MemberSpaceSelect spaces={spaces} value={watch("space")} currentMemberId={initialMember?.id} onChange={(value, space) => { setValue("space", value, { shouldDirty: true }); if (space?.monthlyRent && (!initialMember || value !== initialMember.spaceId)) setValue("rent", numericString(space.monthlyRent, "0"), { shouldDirty: true }); }} /><label className="settings-label">Monthly rent<Input className={error("rent") ? "has-error" : ""} {...numericField(register, "rent")} aria-invalid={Boolean(error("rent"))} />{error("rent") && <span className="lead-form-error">{error("rent")}</span>}</label><label className="settings-label">Security deposit<Input className={error("deposit") ? "has-error" : ""} {...numericField(register, "deposit")} placeholder="0" aria-invalid={Boolean(error("deposit"))} />{deposit > rent ? <span className="lead-form-warning">Security deposit is higher than monthly rent.</span> : null}{error("deposit") && <span className="lead-form-error">{error("deposit")}</span>}</label><label className="settings-label">Billing start date<Input className={error("billingStartDate") ? "has-error" : ""} type="date" {...register("billingStartDate")} />{error("billingStartDate") && <span className="lead-form-error">{error("billingStartDate")}</span>}</label><label className="settings-label">Joining date<Input className={error("joined") ? "has-error" : ""} type="date" {...register("joined")} />{error("joined") && <span className="lead-form-error">{error("joined")}</span>}</label><section className="member-lifecycle-section"><div className="member-lifecycle-heading"><div><span className="settings-label-title">Membership details</span><p className="muted-copy">Set Active or Notice period. Deactivate the member separately when they leave.</p></div></div><div className="member-lifecycle-grid"><SelectField label="Membership status" value={watch("membershipStatus")} hint={error("membershipStatus")} onChange={(event) => handleMembershipStatusChange(event.target.value)}>{MEMBERSHIP_STATUS_OPTIONS.map((status) => <option value={status} key={status}>{status}</option>)}</SelectField><label className="settings-label">Notice start date<Input className={error("noticeStartDate") ? "has-error" : ""} type="date" value={watch("noticeStartDate")} onChange={handleNoticeStartChange} />{error("noticeStartDate") && <span className="lead-form-error">{error("noticeStartDate")}</span>}</label><label className="settings-label">Expected leaving date<Input className={error("expectedLeavingDate") ? "has-error" : ""} type="date" {...register("expectedLeavingDate")} />{error("expectedLeavingDate") && <span className="lead-form-error">{error("expectedLeavingDate")}</span>}</label><label className="settings-label member-notice-notes-field">Notice notes<Input {...register("noticeNotes")} placeholder="Reason or move-out notes" /></label></div></section><div className="dialog-actions member-form-actions"><Button type="button" variant="ghost" onClick={onCancel} disabled={isSaving}>Cancel</Button><Button type="submit" loading={isSaving} disabled={isSaving}><CirclePlus size={15} /> {reactivationId ? "Reactivate member" : initialMember ? "Save changes" : "Save member"}</Button></div></form></div>;
+  return <div className="dialog-content member-form-card"><div className="card-heading"><div><h2>{initialMember ? "Edit member" : "Add member"}</h2><p className="muted-copy">Keep contact details, billing, and workspace assignment together.</p></div></div><form className="inline-form-grid member-form-grid" onSubmit={handleSubmit(onSubmit)}>{!initialMember ? <MemberLeadSelect leads={leads} value={watch("leadId")} onChange={selectLead} /> : null}<div className="member-form-section-heading"><h3>Contact details</h3></div><label className="settings-label">Member name<Input className={error("member") ? "has-error" : ""} {...register("member")} readOnly={leadSelected} aria-readonly={leadSelected} aria-invalid={Boolean(error("member"))} />{error("member") && <span className="lead-form-error">{error("member")}</span>}</label><label className="settings-label">Phone number<Input {...register("phone")} readOnly={leadSelected} aria-readonly={leadSelected} placeholder="0300 1234567" /></label><label className="settings-label">Email address<Input type="email" {...register("email")} readOnly={leadSelected} aria-readonly={leadSelected} placeholder="member@example.com" /></label><label className="settings-label">CNIC<Input {...register("cnic")} placeholder="35202-1234567-1" /></label><SelectField label="Gender" value={watch("gender")} onChange={(event) => setValue("gender", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option><option value="Other">Other</option><option value="Prefer not to say">Prefer not to say</option></SelectField><label className="settings-label">Vehicle license plate<Input {...register("vehicleLicensePlate")} placeholder="ABC-123" /></label><SelectField label="Company" value={watch("company")} disabled={companyLocked} onChange={(event) => setValue("company", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">Unassigned</option>{companyOptions.map((company) => <option value={company.name} key={company.id || company.name}>{company.name}</option>)}</SelectField><div className="member-form-section-heading"><h3>Workspace and billing</h3></div><MemberSpaceSelect spaces={spaces} members={members} value={watch("space")} currentMemberId={initialMember?.id} onChange={(value, space) => { setValue("space", value, { shouldDirty: true }); if (!leadSelected && space?.monthlyRent && (!initialMember || value !== initialMember.spaceId)) setValue("rent", numericString(space.monthlyRent, "0"), { shouldDirty: true }); }} /><label className="settings-label">Monthly rent<Input className={error("rent") ? "has-error" : ""} {...numericField(register, "rent")} aria-invalid={Boolean(error("rent"))} />{error("rent") && <span className="lead-form-error">{error("rent")}</span>}</label><label className="settings-label">Security deposit<Input className={error("deposit") ? "has-error" : ""} {...numericField(register, "deposit")} placeholder="0" aria-invalid={Boolean(error("deposit"))} />{deposit > rent ? <span className="lead-form-warning">Security deposit is higher than monthly rent.</span> : null}{error("deposit") && <span className="lead-form-error">{error("deposit")}</span>}</label><div className="member-form-section-heading"><h3>Dates</h3></div><DatePickerField label="Billing start date" value={watch("billingStartDate")} hint={error("billingStartDate")} onChange={(value) => setValue("billingStartDate", value, { shouldDirty: true, shouldValidate: true })} /><DatePickerField label="Joining date" value={watch("joined")} hint={error("joined")} onChange={(value) => setValue("joined", value, { shouldDirty: true, shouldValidate: true })} /><div className="inline-form-actions member-form-actions"><Button type="button" variant="danger" onClick={onCancel} disabled={isSaving}>Cancel</Button><Button type="submit" loading={isSaving} disabled={isSaving}><CirclePlus size={15} /> {initialMember ? "Save changes" : "Save member"}</Button></div></form></div>;
 }
 
 function createMemberColumns(onView, onEdit, onToggleStatus, canEdit) {
   const columnHelper = createColumnHelper<any>();
-  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong><span>{row.original.team || "No team recorded"}</span></div> }), columnHelper.accessor("space", { header: "Assigned space", cell: ({ getValue, row }) => <WorkspaceBadge value={row.original.spaceType || getValue()} /> }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("status", { header: "Account status", cell: ({ getValue }) => <span className={`status-tag ${isActiveMember({ status: getValue() }) ? "status-active" : "status-inactive"}`}>{isActiveMember({ status: getValue() }) ? "Active" : "Suspended"}</span> }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: canEdit ? "Action" : "Access", cell: ({ row }) => canEdit ? <div className="member-primary-actions"><button className="action-icon-btn" type="button" onClick={() => onEdit(row.original)} aria-label={`Edit ${row.original.member}`} title="Edit member"><Pencil size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onToggleStatus(row.original)} aria-label={`${isActiveMember(row.original) ? "Suspend" : "Reactivate"} ${row.original.member}`} title={isActiveMember(row.original) ? "Suspend member" : "Reactivate member"}><Power size={16} /></button><button className="action-icon-btn" type="button" onClick={() => onView(row.original)} aria-label={`View ledger for ${row.original.member}`} title="View ledger"><BookOpen size={16} /></button></div> : <span className="read-only-label">Read only</span> })];
+  return [columnHelper.accessor("member", { header: "Member", cell: ({ row }) => <div className="table-primary"><strong>{row.original.member}</strong><span>{row.original.phone || row.original.joined}</span></div> }), columnHelper.accessor("company", { header: "Company", cell: ({ row }) => <div className="table-primary"><strong>{row.original.company || "Unassigned"}</strong>{row.original.team ? <span>{row.original.team}</span> : null}</div> }), columnHelper.accessor("space", { header: "Assigned space", cell: ({ getValue, row }) => <WorkspaceBadge value={row.original.spaceType || getValue()} /> }), columnHelper.accessor("rent", { header: "Monthly rent" }), columnHelper.accessor("membershipStatus", { header: "Membership", cell: ({ getValue }) => { const value = normalizeMembershipStatus(getValue()); return <span className={`status-tag status-membership-${value === "Notice period" ? "notice" : "active"}`}>{value}</span>; } }), columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => canEdit ? <div className="member-action-cell"><TableActionMenu ariaLabel={`Actions for ${row.original.member}`} items={[{ label: "Edit member", icon: <Pencil size={15} />, onSelect: () => onEdit(row.original) }, { label: isActiveMember(row.original) ? "Suspend member" : "Reactivate member", icon: <Power size={15} />, onSelect: () => onToggleStatus(row.original), destructive: isActiveMember(row.original) }, { label: "View ledger", icon: <BookOpen size={15} />, onSelect: () => onView(row.original) }]} /></div> : <span className="read-only-label">Read only</span> })];
 }
 
 function updateExistingMember(previous, values) {
@@ -106,10 +169,13 @@ export default function MembersPage() {
   const router = useRouter();
   const { showToast } = useToast();
   const canEdit = useHasPermission("members.write");
+  const canWriteCompanies = useHasPermission("companies.write");
+  const canWriteLeads = useHasPermission("leads.write");
   const queryClient = useQueryClient();
   const membersQuery = useQuery({ queryKey: queryKeys.members.all, queryFn: fetchMembersSnapshot });
   const companiesQuery = useQuery({ queryKey: queryKeys.companies.all, queryFn: fetchCompaniesSnapshot });
   const workspacesQuery = useQuery({ queryKey: queryKeys.workspaces.all, queryFn: fetchWorkspacesSnapshot });
+  const quotationsQuery = useQuery({ queryKey: queryKeys.quotations.all, queryFn: fetchQuotationsSnapshot });
   const [members, setMembers] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
@@ -142,13 +208,19 @@ export default function MembersPage() {
   }, [companiesQuery.data, showToast]);
 
   useEffect(() => {
+    if (quotationsQuery.data?.errorMessage) showToast({ variant: "error", title: "Quotation pricing could not be refreshed", message: quotationsQuery.data.errorMessage });
+  }, [quotationsQuery.data, showToast]);
+
+  useEffect(() => {
     if (!membersQuery.data || !workspacesQuery.data) return;
     const loadedSpaces = mergeWorkspaceRecords(workspacesQuery.data.workspaces);
     const loadedMembers = membersQuery.data.members.map((member) => {
-      const assignedSpace = loadedSpaces.find((space) => space.memberId === member.id && isAssignableWorkspace(space) && space.status === "occupied");
+      const assignedSpace = loadedSpaces.find((space) => String(space.id) === String(member.spaceId || "") && isAssignableWorkspace(space)) || loadedSpaces.find((space) => space.memberId === member.id && isAssignableWorkspace(space) && space.status === "occupied");
       return assignedSpace
         ? { ...member, spaceId: assignedSpace.id, space: assignedSpace.label }
-        : { ...member, spaceId: "", space: "Unassigned" };
+        : member.spaceId
+          ? { ...member, spaceId: member.spaceId, space: member.space || member.spaceId }
+          : { ...member, spaceId: "", space: "Unassigned" };
     });
     setMembers(loadedMembers);
     setSpaces(loadedSpaces);
@@ -185,7 +257,7 @@ export default function MembersPage() {
   const saveMember = async (values) => {
     if (!canEdit) { showToast({ variant: "error", title: "Admin access required", message: "Only an administrator can edit member records." }); return; }
     const identityMatch = findMemberIdentityMatch(values, members, editingMember?.id);
-    if (identityMatch && identityMatch.id !== values.reactivateMemberId) { showToast({ variant: "error", title: "Duplicate member contact", message: `That phone number or email belongs to ${identityMatch.member}. Select that member under Reactivate existing member.` }); return; }
+    if (identityMatch && identityMatch.id !== values.reactivateMemberId) { showToast({ variant: "error", title: "Duplicate member contact", message: `That phone number or email belongs to ${identityMatch.member}. Edit the existing member instead.` }); return; }
     try {
       const existing = values.reactivateMemberId ? members.find((item) => item.id === values.reactivateMemberId) : null;
       const previous = editingMember ? members.find((item) => item.id === editingMember.id) : null;
@@ -194,26 +266,71 @@ export default function MembersPage() {
       else if (previous) savedMember = updateExistingMember(previous, values);
       else { const period = createMembershipPeriod(values); savedMember = { ...values, status: "Active", firstJoined: values.joined, currentMembershipId: period.id, membershipPeriods: [period], contactHistory: { phones: values.phone ? [{ value: values.phone, normalized: normalizePhone(values.phone) }] : [] } }; }
 
+      const isNewMember = !previous && !existing;
+      const linkedLead = isNewMember && savedMember.leadId ? leads.find((lead) => lead.id === savedMember.leadId) : null;
+      const companyName = String(savedMember.company || "").trim();
+      const matchingCompany = companies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
+      const needsRemoteCompany = Boolean(companyName && companyName.toLowerCase() !== "unassigned" && (!matchingCompany || matchingCompany.backend !== "supabase"));
+
+      if (isSupabaseLeadsEnabled() && isNewMember && savedMember.leadId) {
+        if (!linkedLead || !isSupabaseId(savedMember.leadId)) throw new Error("The selected lead could not be verified in Supabase.");
+        if (!canWriteLeads) throw new Error("Lead conversion permission is required before adding a member from a lead.");
+      }
+      if (isSupabaseLeadsEnabled() && needsRemoteCompany && !canWriteCompanies) {
+        throw new Error("Company creation permission is required before adding this member.");
+      }
+
       const requestedWorkspaceId = savedMember.spaceId || null;
       const memberWithoutWorkspace = { ...savedMember, spaceId: "", space: "Unassigned" };
       const row = previous || existing
         ? await updateSupabaseMember(savedMember.id, memberWithoutWorkspace)
         : await createSupabaseMember(memberWithoutWorkspace);
-      await assignSupabaseMemberToWorkspace(row.id, requestedWorkspaceId);
+      if (requestedWorkspaceId) await assignSupabaseMemberToSharedWorkspace(row.id, requestedWorkspaceId, previous?.spaceId || existing?.spaceId || null);
+      else await assignSupabaseMemberToWorkspace(row.id, null);
       savedMember = { ...savedMember, ...mapSupabaseMemberToOsMember(row), id: row.id, spaceId: requestedWorkspaceId || "", space: requestedWorkspaceId ? savedMember.space || requestedWorkspaceId : "Unassigned" };
 
-      const matchingCompany = companies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
-      let nextCompanies = matchingCompany ? companies : savedMember.company && savedMember.company !== "Unassigned" ? [{ id: `company-${Date.now()}`, name: savedMember.company, status: "Active" }, ...companies] : companies;
+      let nextCompanies = companies;
+      if (companyName && companyName.toLowerCase() !== "unassigned") {
+        if (isSupabaseLeadsEnabled() && needsRemoteCompany) {
+          const companyRow = await createSupabaseCompany(companyName);
+          const persistedCompany = mapSupabaseCompanyToOsCompany(companyRow);
+          nextCompanies = [persistedCompany, ...companies.filter((company) => company.id !== persistedCompany.id && String(company.name || "").trim().toLowerCase() !== companyName.toLowerCase())];
+        } else if (!matchingCompany) {
+          nextCompanies = [{ id: `company-${Date.now()}`, name: companyName, status: "Active" }, ...companies];
+        }
+      }
       const linkedCompany = nextCompanies.find((company) => String(company.name || "").trim().toLowerCase() === memberCompanyKey(savedMember));
       savedMember = { ...savedMember, companyId: linkedCompany?.id || "" };
       const nextMembers = previous ? members.map((item) => item.id === previous.id ? savedMember : item) : existing ? members.map((item) => item.id === existing.id ? savedMember : item) : [savedMember, ...members];
       nextCompanies = syncCompanyStatuses(nextCompanies, nextMembers);
       const nextSpaces = updateSpacesForMember(spaces, savedMember, previous || existing);
       persistMembers(nextMembers); persistCompanies(nextCompanies); persistSpaces(nextSpaces);
-      if (savedMember.leadId && !previous && !existing) { const nextLeads = leads.map((lead) => lead.id === savedMember.leadId ? transitionLead(lead, { type: "converted" }) : lead); setLeads(nextLeads); saveDemoValue("leads", nextLeads); }
+      if (savedMember.leadId && isNewMember) {
+        const currentLead = linkedLead || leads.find((lead) => lead.id === savedMember.leadId);
+        if (currentLead) {
+          const conversionEntry = createMemberConversionJourneyEntry(currentLead);
+          const convertedLead = { ...transitionLead(currentLead, { type: "converted" }), journey: [conversionEntry, ...(Array.isArray(currentLead.journey) ? currentLead.journey : [])] };
+          if (isSupabaseLeadsEnabled() && isSupabaseId(savedMember.leadId)) {
+            await updateSupabaseLead(savedMember.leadId, {
+              visited: Boolean(currentLead.visited),
+              stage: "Converted",
+              journeyEntry: conversionEntry,
+            }, "lead.update");
+          }
+          const nextLeads = leads.map((lead) => lead.id === savedMember.leadId ? convertedLead : lead);
+          setLeads(nextLeads);
+          saveDemoValue("leads", nextLeads);
+          await queryClient.invalidateQueries({ queryKey: queryKeys.leads.all, refetchType: "active" });
+        }
+      }
+      if (isSupabaseLeadsEnabled()) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all, refetchType: "active" });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.members.all, refetchType: "active" });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.workspaces.all, refetchType: "active" });
+      }
       closeForm(); showToast({ variant: "success", title: existing ? "Member reactivated" : previous ? "Member updated" : "Member added", message: `${savedMember.member}'s details and workspace assignment are up to date.` });
     } catch (error) {
-      showToast({ variant: "error", title: "Member was not saved", message: "We couldn’t save this member. Please try again." });
+      showToast({ variant: "error", title: "Member was not saved", message: error instanceof Error ? error.message : "We couldn’t save this member. Please try again." });
     }
   };
 
@@ -235,7 +352,8 @@ export default function MembersPage() {
       const reactivated = reactivateMember(member, { ...member, billingStartDate: new Date().toISOString().slice(0, 10), spaceId: restorableSpace?.id || "", space: restorableSpace?.label || "Unassigned" });
       const requestedWorkspaceId = reactivated.spaceId || null;
       const row = await updateSupabaseMember(member.id, { ...reactivated, spaceId: "", space: "Unassigned" });
-      await assignSupabaseMemberToWorkspace(row.id, requestedWorkspaceId);
+      if (requestedWorkspaceId) await assignSupabaseMemberToSharedWorkspace(row.id, requestedWorkspaceId);
+      else await assignSupabaseMemberToWorkspace(row.id, null);
       const persistedMember = { ...reactivated, ...mapSupabaseMemberToOsMember(row), id: row.id, spaceId: requestedWorkspaceId || "", space: requestedWorkspaceId ? reactivated.space || requestedWorkspaceId : "Unassigned" };
       const nextMembers = members.map((item) => item.id === member.id ? persistedMember : item);
       const nextSpaces = updateSpacesForMember(spaces, persistedMember);
@@ -251,5 +369,5 @@ export default function MembersPage() {
   const suspendedCount = members.length - activeCount;
   const deposits = members.reduce((total, member) => total + (Number(String(member.deposit || "0").replace(/[^0-9.-]/g, "")) || 0), 0);
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Members</h1><p className="muted-copy">One permanent member record can contain multiple stays and teams.</p></div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canEdit ? <Button onClick={() => { setEditingMember(null); setFormOpen(true); }}><CirclePlus size={16} /> Add member</Button> : <span className="read-only-label">Admin editing only</span>}</div></div><section className="stat-grid module-stats"><KpiCard icon={<UserRound size={18} />} label="Active members" value={activeCount} detail="Current active records" /><KpiCard icon={<CreditCard size={18} />} label="Security deposits" value={`PKR ${deposits.toLocaleString("en-PK")}`} detail="Recorded member deposits" /></section><div className="section-heading"><div><h2>{memberView === "active" ? "Active members" : "Suspended members"}</h2><p className="muted-copy">Use the toggle to show only active or suspended member accounts.</p></div><div className="directory-view-toggle" role="group" aria-label="Member status filter"><button className={memberView === "active" ? "is-selected" : ""} type="button" onClick={() => setMemberView("active")}>Active ({activeCount})</button><button className={memberView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setMemberView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable columns={createMemberColumns((member) => router.push(`/members/${member.id}`), (member) => { setEditingMember(member); setFormOpen(true); }, toggleMemberStatus, canEdit)} data={filteredMembers} onRowClick={(member) => router.push(`/members/${member.id}`)} emptyMessage={memberView === "active" ? "No active members yet." : "No suspended members."} /><Dialog open={formOpen} onClose={closeForm} ariaLabel={editingMember ? "Edit member" : "Add member"}><MemberForm key={editingMember?.id || "new-member"} leads={leads} members={members} spaces={spaces} initialMember={editingMember} onCancel={closeForm} onSave={saveMember} /></Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Members</h1><p className="muted-copy">One permanent member record can contain multiple stays and teams.</p></div><div className="header-actions"><label className="month-filter">Month <Input type="month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} /></label>{canEdit && memberView === "active" && suspendedCount > 0 ? <Button variant="soft" onClick={() => setMemberView("suspended")}><Power size={16} /> Reactivate member</Button> : null}{canEdit ? <Button onClick={() => { setEditingMember(null); setFormOpen(true); }}><CirclePlus size={16} /> Add member</Button> : <span className="read-only-label">Admin editing only</span>}</div></div><section className="stat-grid module-stats"><KpiCard icon={<UserRound size={18} />} label="Active members" value={activeCount} detail="Current active records" /><KpiCard icon={<CreditCard size={18} />} label="Security deposits" value={`PKR ${deposits.toLocaleString("en-PK")}`} detail="Recorded member deposits" /></section><div className="section-heading"><div><h2>{memberView === "active" ? "Active members" : "Suspended members"}</h2><p className="muted-copy">Use the toggle to show only active or suspended member accounts.</p></div><div className="directory-view-toggle" role="group" aria-label="Member status filter"><button className={memberView === "active" ? "is-selected" : ""} type="button" onClick={() => setMemberView("active")}>Active ({activeCount})</button><button className={memberView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setMemberView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable title={memberView === "active" ? "Active members" : "Suspended members"} subtitle="Use the toggle to show only active or suspended member accounts." columns={createMemberColumns((member) => router.push(`/members/${member.id}`), (member) => { setEditingMember(member); setFormOpen(true); }, toggleMemberStatus, canEdit)} data={filteredMembers} onRowClick={(member) => router.push(`/members/${member.id}`)} emptyMessage={memberView === "active" ? "No active members yet." : "No suspended members."} /><Dialog open={formOpen} onClose={closeForm} ariaLabel={editingMember ? "Edit member" : "Add member"}><MemberForm key={editingMember?.id || "new-member"} leads={leads} companies={companies} members={members} spaces={spaces} quotations={quotationsQuery.data?.quotations || []} initialMember={editingMember} onCancel={closeForm} onSave={saveMember} /></Dialog></motion.div>;
 }

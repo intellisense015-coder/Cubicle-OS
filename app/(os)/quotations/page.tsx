@@ -17,17 +17,19 @@ import { Input } from "@/components/ui/input";
 import { DatePickerField, SelectField } from "@/components/ui/primitives";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { getDemoValue, getDemoSession, saveDemoValue } from "@/lib/demo-session";
 import { leadRows } from "@/lib/module-b-data";
 import DynamicInvoiceTemplate, { invoiceFromRecord } from "@/components/invoices/invoice-template";
 import { ChargeEditor, chargeAmount, chargesTotal, getEditableCharges } from "@/components/invoices/charge-editor";
 import { useToast } from "@/components/ui/toast-provider";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
+import { mergeLeadJourneyEntries } from "@/lib/lead-journey";
 import { numericField, numericString, sanitizeNumericInput } from "@/lib/number-input";
 import { useHasPermission } from "@/lib/access-control";
 import { calculateInvoiceTotals, parseAmount } from "@/lib/invoice-calculations";
 import { getSupabaseBrowserClient, isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { createSupabaseQuotation, updateSupabaseQuotation, updateSupabaseQuotationStatus } from "@/lib/supabase/quotations";
+import { updateSupabaseLead } from "@/lib/supabase/leads";
 import { fetchLeadsSnapshot } from "@/lib/lead-query";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchQuotationsSnapshot, type QuotationsQuerySnapshot } from "@/lib/quotation-query";
@@ -137,6 +139,7 @@ function addQuotationJourneyEntry(lead, quotation, outcome) {
       nextFollowUpDate: "",
       nextFollowUpTime: "",
       communicationMode: "Email / WhatsApp",
+      followedUpBy: String(getDemoValue("profileName") || getDemoSession().email || "Only me").trim() || "Only me",
       conversionProbability: "High",
       conversionReason: "",
       notes: `${quotation.quotation} ${outcome.toLowerCase()}.`,
@@ -328,13 +331,36 @@ export default function QuotationsPage() {
         persist(quotations.map((quotation) => quotation.quotation === selected.quotation ? sentQuotation : quotation));
       }
       setSelected(sentQuotation);
-      if (!isSupabaseLeadsEnabled() && selectedLead && Array.isArray(storedLeads)) {
-        const nextLeads = storedLeads.map((lead) => lead.id === selectedLead.id
-          ? addQuotationJourneyEntry(transitionLead(lead, { type: "quotation-sent" }), sentQuotation, "Quotation sent")
-          : lead);
+      const journeyLeads = currentLeads;
+      if (selectedLead && Array.isArray(journeyLeads)) {
+        const cachedLead = Array.isArray(storedLeads)
+          ? storedLeads.find((lead) => lead.id === selectedLead.id)
+          : null;
+        const nextLeads = journeyLeads.map((lead) => {
+          if (lead.id !== selectedLead.id) return lead;
+          const existingJourney = mergeLeadJourneyEntries(
+            lead.journey,
+            selectedLead.journey,
+            cachedLead?.journey,
+          );
+          return addQuotationJourneyEntry(
+            transitionLead({ ...lead, journey: existingJourney }, { type: "quotation-sent" }),
+            sentQuotation,
+            "Quotation sent",
+          );
+        });
         saveDemoValue("leads", nextLeads);
-        queryClient.setQueryData(queryKeys.leads.all, (current: any) => ({ ...(current || { dataSource: "demo", errorMessage: "" }), leads: nextLeads, errorMessage: "" }));
+        queryClient.setQueryData(queryKeys.leads.all, (current: any) => ({ ...(current || { dataSource: isSupabaseLeadsEnabled() ? "supabase" : "demo", errorMessage: "" }), leads: nextLeads, errorMessage: "" }));
         setEligibleLeads(getEligibleLeads(nextLeads));
+        const persistedLead = nextLeads.find((lead) => lead.id === selectedLead.id);
+        const journeyEntry = persistedLead?.journey?.find((entry) => entry.entryType === "quotation" && entry.quotationNumber === sentQuotation.quotation && entry.outcome === "Quotation sent");
+        if (selectedLead.backend === "supabase" && journeyEntry?.entryType === "quotation") {
+          try {
+            await updateSupabaseLead(selectedLead.id, { journeyEntry }, "lead.journey.update");
+          } catch {
+            showToast({ variant: "error", title: "Journey was not updated", message: "The quotation was sent, but its journey entry could not be saved." });
+          }
+        }
       }
       if (channel === "whatsapp") {
         window.open(`https://wa.me/${recipientPhone}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
@@ -350,5 +376,5 @@ export default function QuotationsPage() {
   };
   const closeForm = () => { setCreating(false); setEditing(null); };
   if (!canView) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Quotation records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Quotations — View access.</div></motion.div>;
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Prepare and share workspace quotations using the invoice template.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div>{canWrite ? <Button className="quotation-create-button" onClick={() => setCreating(true)}><PlusCircle size={16} /> Create quotation</Button> : <span className="read-only-label">View only — print and send enabled</span>}</div><section className="stat-grid finance-stat-grid module-stats quotation-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total quotations" value={quotations.length} detail={isSupabaseLeadsEnabled() ? "Live data" : "Created in this session"} /></section><div className="section-heading"><div><h2>Quotation register</h2><p className="muted-copy">Select a quotation to preview, print, or send it.</p></div></div><DataTable columns={createQuotationColumns(setSelected, setEditing, canWrite)} data={quotations} onRowClick={setSelected} emptyMessage="No quotations created yet." /><Dialog open={creating && canWrite || Boolean(editing) && canWrite} onClose={closeForm} ariaLabel={editing ? "Edit quotation" : "Create quotation"}><QuotationForm initialQuotation={editing} eligibleLeads={eligibleLeads} onCancel={closeForm} onSave={saveQuotation} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Quotation preview">{selected ? <div className="dialog-content invoice-detail-only"><div className="invoice-preview-frame"><DynamicInvoiceTemplate invoice={invoiceFromRecord({ ...selected, invoice: selected.quotation, issueDate: selected.date })} documentTitle="QUOTATION" /></div><div className="dialog-actions invoice-preview-actions quotation-preview-actions"><Button className="quotation-preview-cancel" variant="ghost" onClick={() => { setSendOpen(false); setSelected(null); }}>Cancel</Button><Button className="quotation-preview-print" onClick={() => window.print()}>Print quotation</Button><Button className="quotation-preview-send" onClick={() => setSendOpen(true)}><Send size={15} /> Send quotation</Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => setSendOpen(false)} ariaLabel="Send quotation"><div className="dialog-content quotation-send-dialog inline-form-card"><div className="card-heading"><div><h2>Send quotation</h2><p className="muted-copy">Choose how you want to share this quotation.</p></div></div><div className="quotation-send-options"><button type="button" className="quotation-send-option" onClick={() => sendQuotation("whatsapp")} disabled={Boolean(sendingChannel)}>{sendingChannel === "whatsapp" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <MessageCircle size={18} />}<span><strong>WhatsApp</strong><small>Open the chat with a pre-filled message.</small></span></button><button type="button" className="quotation-send-option" onClick={() => sendQuotation("email")} disabled={Boolean(sendingChannel)}>{sendingChannel === "email" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <Mail size={18} />}<span><strong>Email</strong><small>Open an email with a pre-filled message.</small></span></button></div><div className="dialog-actions quotation-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={Boolean(sendingChannel)}>Cancel</Button></div></div></Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Prepare and share workspace quotations using the invoice template.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div>{canWrite ? <Button className="quotation-create-button" onClick={() => setCreating(true)}><PlusCircle size={16} /> Create quotation</Button> : <span className="read-only-label">View only — print and send enabled</span>}</div><section className="stat-grid finance-stat-grid module-stats quotation-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total quotations" value={quotations.length} detail={isSupabaseLeadsEnabled() ? "Live data" : "Created in this session"} /></section><DataTable title="Quotation register" subtitle="Select a quotation to preview, print, or send it." columns={createQuotationColumns(setSelected, setEditing, canWrite)} data={quotations} onRowClick={setSelected} emptyMessage="No quotations created yet." /><Dialog open={creating && canWrite || Boolean(editing) && canWrite} onClose={closeForm} ariaLabel={editing ? "Edit quotation" : "Create quotation"}><QuotationForm initialQuotation={editing} eligibleLeads={eligibleLeads} onCancel={closeForm} onSave={saveQuotation} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Quotation preview">{selected ? <div className="dialog-content invoice-detail-only"><div className="invoice-preview-frame"><DynamicInvoiceTemplate invoice={invoiceFromRecord({ ...selected, invoice: selected.quotation, issueDate: selected.date })} documentTitle="QUOTATION" /></div><div className="dialog-actions invoice-preview-actions quotation-preview-actions"><Button className="quotation-preview-cancel" variant="ghost" onClick={() => { setSendOpen(false); setSelected(null); }}>Cancel</Button><Button className="quotation-preview-print" onClick={() => window.print()}>Print quotation</Button><Button className="quotation-preview-send" onClick={() => setSendOpen(true)}><Send size={15} /> Send quotation</Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => setSendOpen(false)} ariaLabel="Send quotation"><div className="dialog-content quotation-send-dialog inline-form-card"><div className="card-heading"><div><h2>Send quotation</h2><p className="muted-copy">Choose how you want to share this quotation.</p></div></div><div className="quotation-send-options"><button type="button" className="quotation-send-option" onClick={() => sendQuotation("whatsapp")} disabled={Boolean(sendingChannel)}>{sendingChannel === "whatsapp" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <MessageCircle size={18} />}<span><strong>WhatsApp</strong><small>Open the chat with a pre-filled message.</small></span></button><button type="button" className="quotation-send-option" onClick={() => sendQuotation("email")} disabled={Boolean(sendingChannel)}>{sendingChannel === "email" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <Mail size={18} />}<span><strong>Email</strong><small>Open an email with a pre-filled message.</small></span></button></div><div className="dialog-actions quotation-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={Boolean(sendingChannel)}>Cancel</Button></div></div></Dialog></motion.div>;
 }

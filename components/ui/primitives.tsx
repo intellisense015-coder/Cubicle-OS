@@ -20,30 +20,35 @@ export function Field({ label, hint, className = "", ...props }: FieldProps) {
   return <label className={cn("modal-field", className)}>{label ? <span className="modal-field-label">{label}</span> : null}<input className="floating-input modal-field-input" placeholder={placeholder} type={type} onChange={handleChange} {...inputProps} />{hint ? <span className="modal-field-hint">{hint}</span> : null}</label>;
 }
 
-type SelectOption = { value: string; label: ReactNode };
-type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & { label: string; hint?: string; searchable?: boolean; searchPlaceholder?: string; renderOption?: (option: SelectOption) => ReactNode; children: ReactNode };
+type SelectOption = { value: string; label: ReactNode; disabled?: boolean };
+type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & { label: string; hint?: string; searchable?: boolean; searchPlaceholder?: string; placeholder?: ReactNode; multiple?: boolean; selectedValues?: string[]; onMultiChange?: (values: string[]) => void; renderOption?: (option: SelectOption) => ReactNode; children: ReactNode };
 
-export function SelectField({ label, hint, className = "", children, searchable: _searchable, searchPlaceholder: _searchPlaceholder, renderOption, ...props }: SelectFieldProps) {
-  const { value, defaultValue, onChange, name, disabled, "aria-label": ariaLabel } = props;
-  const options = Children.toArray(children).filter(isValidElement).map((child: any) => ({ value: String(child.props.value ?? ""), label: child.props.children }));
+export function SelectField({ label, hint, className = "", children, searchable = false, searchPlaceholder = "Search...", renderOption, ...props }: SelectFieldProps) {
+  const { value, defaultValue, onChange, name, disabled, placeholder, multiple = false, selectedValues = [], onMultiChange, "aria-label": ariaLabel } = props;
+  const options = Children.toArray(children).filter(isValidElement).map((child: any) => ({ value: String(child.props.value ?? ""), label: child.props.children, disabled: Boolean(child.props.disabled) }));
   const [internalValue, setInternalValue] = useState(String(defaultValue ?? ""));
   const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const [position, setPosition] = useState({ top: 0, left: 0, width: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const selectedValue = value !== undefined ? String(value) : internalValue;
   const selected = options.find((option) => option.value === selectedValue);
+  const selectedValueSet = new Set(selectedValues.map(String));
+  const filteredOptions = searchable && searchTerm.trim()
+    ? options.filter((option) => String(option.label).toLowerCase().includes(searchTerm.trim().toLowerCase()))
+    : options;
 
   const updatePosition = () => {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const menuHeight = menuRef.current?.getBoundingClientRect().height || Math.min(256, options.length * 44 + 16);
+    const menuHeight = menuRef.current?.getBoundingClientRect().height || Math.min(256, filteredOptions.length * 44 + (searchable ? 64 : 16));
     const opensAbove = rect.bottom + menuHeight + 8 > window.innerHeight && rect.top - menuHeight - 8 >= 16;
     setPosition({ top: opensAbove ? rect.top - menuHeight - 8 : rect.bottom + 8, left: Math.max(16, Math.min(rect.left, window.innerWidth - rect.width - 16)), width: rect.width });
   };
 
-  useLayoutEffect(() => { if (open) updatePosition(); }, [open, options.length]);
+  useLayoutEffect(() => { if (open) updatePosition(); }, [open, filteredOptions.length]);
   useEffect(() => {
     if (!open) return undefined;
     const closeOnOutside = (event: MouseEvent) => { if (!triggerRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false); };
@@ -56,9 +61,16 @@ export function SelectField({ label, hint, className = "", children, searchable:
   }, [open]);
 
   const selectOption = (nextValue: string) => {
+    if (multiple) {
+      const nextValues = selectedValueSet.has(nextValue) ? selectedValues.filter((item) => String(item) !== nextValue) : [...selectedValues, nextValue];
+      onMultiChange?.(nextValues);
+      setSearchTerm("");
+      return;
+    }
     if (value === undefined) setInternalValue(nextValue);
     onChange?.({ target: { value: nextValue, name: name || "" } } as ChangeEvent<HTMLSelectElement>);
     setOpen(false);
+    setSearchTerm("");
   };
 
   const renderLabel = (option: SelectOption) => {
@@ -68,9 +80,10 @@ export function SelectField({ label, hint, className = "", children, searchable:
     }
     return option.label;
   };
-  const menu = open && typeof document !== "undefined" ? createPortal(<div ref={menuRef} className="custom-select-menu" style={{ top: position.top, left: position.left, width: position.width }} role="listbox" aria-label={ariaLabel || label}>{options.map((option) => <button type="button" role="option" aria-selected={selectedValue === option.value} className={cn("custom-select-option", selectedValue === option.value && "is-selected")} key={option.value} onClick={() => selectOption(option.value)}>{renderLabel(option)}<span className="custom-select-check">{selectedValue === option.value ? <Check size={13} /> : null}</span></button>)}</div>, document.body) : null;
+  const menu = open && typeof document !== "undefined" ? createPortal(<div ref={menuRef} className="custom-select-menu" style={{ top: position.top, left: position.left, width: position.width }} role="listbox" aria-label={ariaLabel || label} aria-multiselectable={multiple || undefined}>{searchable ? <input className="custom-select-search" autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={searchPlaceholder} aria-label={`Search ${label}`} /> : null}{filteredOptions.length ? filteredOptions.map((option) => { const isSelected = multiple ? selectedValueSet.has(option.value) : selectedValue === option.value; return <button type="button" role="option" aria-selected={isSelected} className={cn("custom-select-option", isSelected && "is-selected")} key={option.value} disabled={option.disabled} onClick={() => selectOption(option.value)}>{renderLabel(option)}<span className="custom-select-check">{isSelected ? <Check size={13} /> : null}</span></button>; }) : <span className="custom-select-empty">No matches found</span>}</div>, document.body) : null;
 
-  return <label className="modal-field"><span className="modal-field-label">{label}</span><button ref={triggerRef} type="button" className={cn("custom-select-trigger", className, hint && "has-error")} onClick={() => { setOpen((current) => !current); requestAnimationFrame(updatePosition); }} aria-expanded={open} aria-haspopup="listbox" aria-label={ariaLabel || label} disabled={disabled}>{selected ? renderLabel(selected) : renderLabel(options[0] || { value: "", label: "Select an option" })}<ChevronDown size={14} className={cn("custom-select-chevron", open && "is-open")} /></button>{menu}<span className={hint ? "modal-field-hint" : "modal-field-hint modal-field-hint-empty"}>{hint || " "}</span></label>;
+  const triggerValue = multiple ? (selectedValues.length ? `${selectedValues.length} selected` : placeholder || "Select options") : (selected ? renderLabel(selected) : renderLabel(options[0] || { value: "", label: placeholder || "Select an option" }));
+  return <label className="modal-field"><span className="modal-field-label">{label}</span><button ref={triggerRef} type="button" className={cn("custom-select-trigger", className, hint && "has-error")} onClick={() => { setOpen((current) => !current); requestAnimationFrame(updatePosition); }} aria-expanded={open} aria-haspopup="listbox" aria-label={ariaLabel || label} disabled={disabled}>{triggerValue}<ChevronDown size={14} className={cn("custom-select-chevron", open && "is-open")} /></button>{menu}<span className={hint ? "modal-field-hint" : "modal-field-hint modal-field-hint-empty"}>{hint || " "}</span></label>;
 }
 
 export function DateField({ label, hint, ...props }: FieldProps) {

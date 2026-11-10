@@ -433,7 +433,7 @@ export default function DashboardPage() {
 
       <section className="dashboard-table-card">
         <div className="card-heading"><div><h2>Payment watchlist</h2></div></div>
-        <DataTable className="dashboard-payment-data-table" columns={paymentColumns} data={paymentRows} onRowClick={() => router.push("/invoices")} emptyMessage="No payment records yet." />
+        <DataTable title="Payment watchlist" subtitle="Invoices that need attention." className="dashboard-payment-data-table" columns={paymentColumns} data={paymentRows} onRowClick={() => router.push("/invoices")} emptyMessage="No payment records yet." />
       </section>
       </div>
 

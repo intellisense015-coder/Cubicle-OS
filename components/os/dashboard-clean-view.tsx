@@ -339,7 +339,7 @@ export function DashboardCleanView({
 
     <section className="dashboard-clean-payment-panel">
       <div className="dashboard-clean-panel-heading"><div><h2>Payment watchlist</h2><p>Invoices that need attention.</p></div><div className="dashboard-clean-payment-summary"><strong>{formatDashboardAmount(paymentDueAmount)}</strong><span>outstanding</span></div></div>
-      <DataTable className="dashboard-payment-data-table" columns={paymentColumns} data={paymentRows} onRowClick={getPaymentRowClick} emptyMessage="No payment records yet." />
+      <DataTable title="Payment watchlist" subtitle="Invoices that need attention." className="dashboard-payment-data-table" columns={paymentColumns} data={paymentRows} onRowClick={getPaymentRowClick} emptyMessage="No payment records yet." />
     </section>
   </>;
 }

@@ -25,6 +25,21 @@ export type SupabaseLeadOpportunityLossRow = {
   lost_at: string;
 };
 
+export type SupabaseLeadAssignmentRow = {
+  lead_id: string;
+  assigned_to: string | null;
+};
+
+export type SupabaseLeadJourneyRow = {
+  id: string;
+  lead_id: string;
+  client_entry_id: string | null;
+  entry_type: string;
+  occurred_date: string;
+  occurred_time: string | null;
+  entry_data: Record<string, unknown>;
+};
+
 const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
 
 const workspaceOptionByLabel: Record<string, string> = {
@@ -53,7 +68,22 @@ function timeValue(value: string | null) {
   return value ? String(value).slice(0, 5) : "";
 }
 
-export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
+function mapSupabaseLeadJourneyRow(row: SupabaseLeadJourneyRow) {
+  return {
+    ...(row.entry_data || {}),
+    id: row.client_entry_id || row.id,
+    entryType: row.entry_type,
+    occurredDate: row.occurred_date,
+    occurredTime: timeValue(row.occurred_time),
+  };
+}
+
+export function mapSupabaseLeadToOsLead(
+  row: SupabaseLeadRow,
+  assignedTo: string | null = null,
+  assignmentLoaded = false,
+  journeyRows: SupabaseLeadJourneyRow[] | null = null,
+) {
   const teamSize = Number(row.team_size) || 0;
   const visitDate = row.visit_date || "";
   const visitTime = timeValue(row.visit_time);
@@ -74,7 +104,8 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     stage,
     osStage: row.os_stage || null,
     nextFollowUp: visitDate ? `${visitDate}${visitTime ? ` · ${visitTime}` : ""}` : "Not scheduled",
-    assignedTo: "Unassigned",
+    assignedTo: assignmentLoaded ? assignedTo || "Unassigned" : "Unassigned",
+    assignmentLoaded,
     lostReason: "",
     workspace: workspaceLabelByOption[row.workspace_option || ""] || row.workspace_option || "",
     visitDate,
@@ -84,7 +115,8 @@ export function mapSupabaseLeadToOsLead(row: SupabaseLeadRow) {
     visited: Boolean(row.visited),
     lostMonthlyValue: null,
     lostAt: "",
-    journey: [],
+    journey: journeyRows === null ? [] : journeyRows.map(mapSupabaseLeadJourneyRow),
+    journeyLoaded: journeyRows !== null,
   };
 }
 
@@ -117,6 +149,31 @@ export async function fetchSupabaseLeadOpportunityLosses() {
   return (data || []) as SupabaseLeadOpportunityLossRow[];
 }
 
+export async function fetchSupabaseLeadAssignments() {
+  const { data, error } = await getSupabaseBrowserClient()
+    .from("os_lead_assignments")
+    .select("lead_id,assigned_to");
+
+  // Keep the existing leads screen usable until the OS assignment migration
+  // has been applied. Once the table exists, its value is authoritative.
+  if (error?.code === "PGRST205") return { rows: [] as SupabaseLeadAssignmentRow[], available: false };
+  if (error) throw error;
+  return { rows: (data || []) as SupabaseLeadAssignmentRow[], available: true };
+}
+
+export async function fetchSupabaseLeadJourneys() {
+  const { data, error } = await getSupabaseBrowserClient()
+    .from("os_lead_journey")
+    .select("id,lead_id,client_entry_id,entry_type,occurred_date,occurred_time,entry_data")
+    .order("occurred_date", { ascending: false })
+    .order("occurred_time", { ascending: false });
+
+  // Keep the leads page usable until the durable journey migration is applied.
+  if (error?.code === "PGRST205") return { rows: [] as SupabaseLeadJourneyRow[], available: false };
+  if (error) throw error;
+  return { rows: (data || []) as SupabaseLeadJourneyRow[], available: true };
+}
+
 export async function fetchSupabaseLead(id: string) {
   const { data, error } = await getSupabaseBrowserClient()
     .from("leads")
@@ -135,6 +192,7 @@ export async function createSupabaseLead(input: {
   team: string;
   shift: string;
   workspace?: string;
+  assignedTo?: string;
 }) {
   const teamSize = parseTeamSize(input.team);
   if (!teamSize) throw new Error("Team size must include a positive number, for example 6 people.");
@@ -146,6 +204,7 @@ export async function createSupabaseLead(input: {
     team: input.team.trim(),
     shift: input.shift.trim() || "Flexible",
     workspace: input.workspace,
+    assignedTo: input.assignedTo,
   });
 }
 
@@ -157,8 +216,10 @@ export async function updateSupabaseLead(id: string, input: {
   visitDate?: string | null;
   visitTime?: string | null;
   stage?: string;
+  assignedTo?: string | null;
   lostReason?: string;
   lostMonthlyValue?: number | string | null;
+  journeyEntry?: Record<string, unknown>;
 }, action: "lead.update" | "lead.followup.update" | "lead.journey.update" = "lead.update") {
   return secureOsMutation<SupabaseLeadRow | null>(action, { id, ...input });
 }
