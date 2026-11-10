@@ -27,6 +27,15 @@ function localPakistanDateTime() {
 
 function dateParts(value: string) { const [year, month, day] = value.split("-").map(Number); return { year, month, day }; }
 function dateKey(year: number, month: number, day: number) { return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`; }
+function addMonths(periodStart: string, months: number) {
+  const { year, month } = dateParts(periodStart);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  return dateKey(target.getUTCFullYear(), target.getUTCMonth() + 1, 1);
+}
+function billingPeriodFor(sendDate: string, sendDay: number, dueDay: number) {
+  const currentPeriod = `${sendDate.slice(0, 7)}-01`;
+  return sendDay > dueDay ? addMonths(currentPeriod, 1) : currentPeriod;
+}
 function lastDayOfMonth(periodStart: string) { const { year, month } = dateParts(periodStart); return dateKey(year, month, new Date(Date.UTC(year, month, 0)).getUTCDate()); }
 function dueDateFor(periodStart: string, dueDay: number, billingStartDate: string | null) {
   const { year, month } = dateParts(periodStart);
@@ -79,23 +88,29 @@ export async function GET(request: Request) {
 
     const { data: members, error: membersError } = await admin.from("members").select("id,member_name,email,company_name,assigned_space,monthly_rent,billing_start_date,due_day,status,membership_status").in("status", ["active", "activated"]).in("id", memberIds);
     if (membersError) throw membersError;
-    let sequence = await nextInvoiceNumber(admin, localNow.year);
+    const sequenceByYear = new Map<number, number>();
     let generatedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
     const failures: Array<{ member: string; error: string }> = [];
 
     for (const member of members || []) {
-      const { data: existing, error: existingError } = await admin.from("invoices").select("id,invoice_number").eq("member_id", member.id).eq("period_start", periodStart).limit(1);
+      const dueDay = Number(member.due_day) || 5;
+      const billingPeriodStart = billingPeriodFor(localNow.date, sendDay, dueDay);
+      const invoiceYear = dateParts(billingPeriodStart).year;
+      const { data: existing, error: existingError } = await admin.from("invoices").select("id,invoice_number").eq("member_id", member.id).eq("period_start", billingPeriodStart).limit(1);
       if (existingError) throw existingError;
       if (existing?.length) { skippedCount += 1; continue; }
       const subtotal = amount(member.monthly_rent);
       if (subtotal <= 0) { failedCount += 1; failures.push({ member: member.member_name, error: "Monthly rent is zero." }); continue; }
-      const invoiceNumber = `INV-${localNow.year}-${sequence++}`;
-      const billingStartDate = member.billing_start_date || periodStart;
-      const dueDate = dueDateFor(periodStart, Number(member.due_day) || 5, billingStartDate);
+      if (!sequenceByYear.has(invoiceYear)) sequenceByYear.set(invoiceYear, await nextInvoiceNumber(admin, invoiceYear));
+      const invoiceSequence = sequenceByYear.get(invoiceYear) as number;
+      sequenceByYear.set(invoiceYear, invoiceSequence + 1);
+      const invoiceNumber = `INV-${invoiceYear}-${invoiceSequence}`;
+      const billingStartDate = member.billing_start_date || billingPeriodStart;
+      const dueDate = dueDateFor(billingPeriodStart, dueDay, billingStartDate);
       const accountName = `${member.member_name} - ${member.company_name || "No company"}`;
-      const { data: invoice, error: invoiceError } = await admin.from("invoices").insert({ invoice_number: invoiceNumber, member_id: member.id, workspace_id: member.assigned_space || null, account_name: accountName, currency: "PKR", period_start: periodStart, period_end: lastDayOfMonth(periodStart), issue_date: localNow.date, due_date: dueDate, billing_start_date: billingStartDate, due_day: Number(member.due_day) || 5, subtotal, tax_enabled: false, tax_rate: 0, tax_amount: 0, sales_tax_enabled: false, sales_tax_rate: 0, sales_tax_amount: 0, total_amount: subtotal, payment_status: "due_soon", email_status: "not_sent", grace_until: null, manual_date_override: false }).select("id,invoice_number").single();
+      const { data: invoice, error: invoiceError } = await admin.from("invoices").insert({ invoice_number: invoiceNumber, member_id: member.id, workspace_id: member.assigned_space || null, account_name: accountName, currency: "PKR", period_start: billingPeriodStart, period_end: lastDayOfMonth(billingPeriodStart), issue_date: localNow.date, due_date: dueDate, billing_start_date: billingStartDate, due_day: dueDay, subtotal, tax_enabled: false, tax_rate: 0, tax_amount: 0, sales_tax_enabled: false, sales_tax_rate: 0, sales_tax_amount: 0, total_amount: subtotal, payment_status: "due_soon", email_status: "not_sent", grace_until: null, manual_date_override: false }).select("id,invoice_number").single();
       if (invoiceError) { if (String(invoiceError.code) === "23505") { skippedCount += 1; continue; } failedCount += 1; failures.push({ member: member.member_name, error: "Invoice could not be created." }); continue; }
       const { error: itemError } = await admin.from("invoice_items").insert({ invoice_id: invoice.id, description: member.assigned_space ? `${member.assigned_space} workspace service` : "Workspace monthly rent", quantity: 1, unit_price: subtotal, sort_order: 0 });
       if (itemError) { await admin.from("invoices").delete().eq("id", invoice.id); failedCount += 1; failures.push({ member: member.member_name, error: "Invoice line item could not be created." }); continue; }
