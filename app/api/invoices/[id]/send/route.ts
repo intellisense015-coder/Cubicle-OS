@@ -1,14 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-<<<<<<< HEAD
-import { sendResendEmail, resolveEmailSender, validEmail } from "@/lib/server-email";
-import { invoiceEmailSubject, renderInvoiceEmailHtml, renderInvoiceEmailText } from "@/lib/invoice-email-html";
-=======
 import { sendResendEmail, validEmail } from "@/lib/server-email";
 import { resolveOsEmailSender } from "@/lib/server-os-email";
-import { renderInvoiceEmailHtml, renderInvoiceEmailSubject } from "@/lib/invoice-email-html";
+import { renderInvoiceEmailHtml, renderInvoiceEmailSubject, renderInvoiceEmailText } from "@/lib/invoice-email-html";
 import { getOsEmailTemplate } from "@/lib/server-os-email-templates";
->>>>>>> 65c4630 (Half Bugs fixed)
 import { checkRateLimits, rateLimitResponse, readJsonBody, recordSecurityAudit, requestBodyError } from "@/lib/server-security";
 import { z } from "zod";
 
@@ -20,15 +15,11 @@ const invoiceSendSchema = z.object({
   attachment: z.object({
     filename: z.string().trim().min(1).max(255),
     content: z.string().trim().min(1).max(34_000_000),
-<<<<<<< HEAD
-  }).strict(),
-=======
   }).strict().optional(),
   template: z.object({
     subject: z.string().trim().max(200).optional(),
     body: z.string().max(5000).optional(),
   }).strict().optional(),
->>>>>>> 65c4630 (Half Bugs fixed)
 }).strict();
 
 function isMissingSalesTaxColumn(error: unknown) {
@@ -195,17 +186,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       whtEnabled: invoice.tax_enabled === true,
       whtAmount: invoice.tax_amount,
       totalAmount: invoice.total_amount,
-<<<<<<< HEAD
-    };
-    const html = renderInvoiceEmailHtml(emailInput);
-    const text = renderInvoiceEmailText(emailInput);
-    const subject = invoiceEmailSubject.replace("{{invoice_number}}", String(invoice.invoice_number));
-=======
       body: templateValue(parsedBody.data.template, "body") || storedTemplate.body,
     };
     const html = renderInvoiceEmailHtml(emailInput);
     const subject = renderInvoiceEmailSubject(templateValue(parsedBody.data.template, "subject") || storedTemplate.subject, emailInput);
->>>>>>> 65c4630 (Half Bugs fixed)
+    const text = renderInvoiceEmailText(emailInput);
 
     const emailResult = await sendResendEmail({
       from: sender.from,

@@ -8,13 +8,14 @@ type DetailPageHeaderProps = {
   title: string;
   description?: string;
   actions?: ReactNode;
+  iconOnlyBack?: boolean;
 };
 
-export function DetailPageHeader({ backHref, backLabel, title, description, actions }: DetailPageHeaderProps) {
+export function DetailPageHeader({ backHref, backLabel, title, description, actions, iconOnlyBack = false }: DetailPageHeaderProps) {
   return <header className="detail-page-header">
-    <Link href={backHref} className="detail-back-link">
+    <Link href={backHref} className={`detail-back-link${iconOnlyBack ? " detail-back-link-icon-only" : ""}`} aria-label={iconOnlyBack ? backLabel : undefined} title={iconOnlyBack ? backLabel : undefined}>
       <span className="detail-back-icon" aria-hidden="true"><ArrowLeft size={15} /></span>
-      <span>{backLabel}</span>
+      {!iconOnlyBack ? <span>{backLabel}</span> : null}
     </Link>
     <div className="detail-page-title-row">
       <div className="detail-page-title-copy">

@@ -11,8 +11,8 @@ import { AuthShell } from "@/components/ui/auth-shell";
 import { Button } from "@/components/ui/button";
 import { InputOTP } from "@/components/ui/input-otp";
 import { saveDemoValue } from "@/lib/demo-session";
-<<<<<<< HEAD
 import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { enrollSupabaseTotp, removeUnverifiedTotpFactors } from "@/lib/supabase/mfa";
 
 type MfaMode = "loading" | "enroll" | "verify" | "error";
 
@@ -46,11 +46,7 @@ async function waitForBrowserSession(
   }
 
   return null;
-=======
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { enrollSupabaseTotp, removeUnverifiedTotpFactors } from "@/lib/supabase/mfa";
-
-type MfaMode = "loading" | "enroll" | "verify" | "error";
+}
 
 function getPostAuthPath(value: string | null) {
   if (value?.startsWith("/post-auth") && !value.startsWith("//")) return value;
@@ -69,7 +65,6 @@ async function prepareTotpEnrollment(supabase: ReturnType<typeof getSupabaseBrow
   // Enrollment returns the QR code and secret. The challenge is created only
   // after the user has scanned the QR code and submits the current code.
   return { enrollmentData: await enrollSupabaseTotp(supabase) };
->>>>>>> 65c4630 (Half Bugs fixed)
 }
 
 // TITLE: MFA PAGE

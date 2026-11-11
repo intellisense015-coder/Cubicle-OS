@@ -16,6 +16,11 @@ export type SupabaseVisitRow = {
   notes: string | null;
   created_by: string | null;
   completed_at: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancelled_by_name: string | null;
+  cancellation_reason: string | null;
+  cancellation_details: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -33,6 +38,11 @@ const visitColumns = [
   "notes",
   "created_by",
   "completed_at",
+  "cancelled_at",
+  "cancelled_by",
+  "cancelled_by_name",
+  "cancellation_reason",
+  "cancellation_details",
   "created_at",
   "updated_at",
 ].join(",");
@@ -49,6 +59,9 @@ async function currentUserId() {
 }
 
 export function mapSupabaseVisitToOsVisit(row: SupabaseVisitRow) {
+  const cancellationNotes = String(row.notes || "");
+  const reasonFromNotes = cancellationNotes.match(/^Cancellation reason:\s*(.+)$/im)?.[1]?.trim() || "";
+  const detailsFromNotes = cancellationNotes.match(/^Cancellation details:\s*([\s\S]+)$/im)?.[1]?.trim() || "";
   return {
     id: row.id,
     backend: "supabase",
@@ -61,6 +74,10 @@ export function mapSupabaseVisitToOsVisit(row: SupabaseVisitRow) {
     purpose: row.purpose,
     status: row.status,
     notes: row.notes || "",
+    cancelledAt: row.cancelled_at || (row.status === "Cancelled" ? row.updated_at : ""),
+    cancelledBy: row.cancelled_by_name || row.cancelled_by || "",
+    cancellationReason: row.cancellation_reason || reasonFromNotes,
+    cancellationDetails: row.cancellation_details || detailsFromNotes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -99,6 +116,6 @@ export async function createSupabaseVisit(visit: {
   });
 }
 
-export async function updateSupabaseVisitStatus(id: string, status: SupabaseVisitStatus) {
-  return secureOsMutation<SupabaseVisitRow>("visit.status", { id, status });
+export async function updateSupabaseVisitStatus(id: string, status: SupabaseVisitStatus, cancellation?: { reason: string; details: string } | null) {
+  return secureOsMutation<SupabaseVisitRow>("visit.status", { id, status, cancellationReason: cancellation?.reason || "", cancellationDetails: cancellation?.details || "" });
 }

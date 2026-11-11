@@ -102,11 +102,7 @@ export default function SettingsPage() {
       }));
       showToast({ variant: "success", title: "Company profile saved", message: "Your company details were updated successfully." });
     } catch (error) {
-<<<<<<< HEAD
-      showToast({ variant: "error", title: "Company profile was not saved", message: error instanceof Error ? error.message : "The owner profile could not be updated." });
-=======
       showToast({ variant: "error", title: "Company profile was not saved", message: "We couldn’t update the company details. Please try again." });
->>>>>>> 65c4630 (Half Bugs fixed)
     } finally {
       setCompanySaving(false);
     }

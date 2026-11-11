@@ -94,14 +94,10 @@ export default function SignInPage() {
       saveDemoValue("mfaVerified", false);
       const requestedPath = new URLSearchParams(window.location.search).get("next");
       const nextPath = requestedPath?.startsWith("/") && !requestedPath.startsWith("//") ? requestedPath : "/dashboard";
-<<<<<<< HEAD
       // Use a document navigation after the cookie is written so the MFA page
       // always starts with a fresh client that can read the persisted session.
-      window.location.assign(`/mfa?next=${encodeURIComponent(nextPath)}`);
-=======
       const postAuthPath = `/post-auth?next=${encodeURIComponent(nextPath)}`;
-      router.push(`/mfa?next=${encodeURIComponent(postAuthPath)}`);
->>>>>>> 65c4630 (Half Bugs fixed)
+      window.location.assign(`/mfa?next=${encodeURIComponent(postAuthPath)}`);
     } catch (error) {
       form.setError("root", {
         type: "server",

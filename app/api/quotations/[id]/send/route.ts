@@ -39,19 +39,18 @@ function authClient(accessToken: string) {
 function parsePdfAttachment(value: unknown) {
   if (!value || typeof value !== "object") throw new Error("The quotation PDF attachment is required.");
   const record = value as { filename?: unknown; content?: unknown };
-  const rawContent = String(record.content || "").trim();
-  const content = rawContent
-    .replace(/^data:application\/pdf(?:;[^,]*)?,/i, "")
+  let content = String(record.content || "")
+    .replace(/^data:[^,]*,/i, "")
     .replace(/\s+/g, "")
-    .replace(/-/g, "+")
-    .replace(/_/g, "/")
     .trim();
   if (!content) throw new Error("The quotation PDF attachment is required.");
   if (content.length > 25_000_000) throw new Error("The quotation PDF attachment is too large.");
-  if (!/^[A-Za-z0-9+/=]+$/.test(content)) throw new Error("The quotation PDF attachment is invalid.");
+  if (!/^[A-Za-z0-9+/_=-]+$/.test(content)) throw new Error("The quotation PDF attachment is invalid.");
+  content = content.replaceAll("-", "+").replaceAll("_", "/");
   const decoded = Buffer.from(content, "base64");
-  const signature = decoded.subarray(0, 16).toString("ascii").replace(/^\uFEFF|^[\u0000-\u0020]+/, "");
-  if (decoded.length < 5 || !signature.startsWith("%PDF-")) throw new Error("The quotation PDF attachment is invalid.");
+  const pdfHeader = decoded.indexOf(Buffer.from("%PDF-", "ascii"));
+  if (pdfHeader < 0 || pdfHeader > 64) throw new Error("The quotation PDF attachment is invalid.");
+  if (pdfHeader) content = decoded.subarray(pdfHeader).toString("base64");
   const filename = String(record.filename || "quotation.pdf").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/\.pdf$/i, "") + ".pdf";
   return { filename, content };
 }

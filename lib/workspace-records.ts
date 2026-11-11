@@ -110,6 +110,21 @@ export function isAssignableWorkspace(workspace) {
   return ["office", "seat", "cabin"].includes(workspace.kind);
 }
 
+export function workspaceMemberCount(workspace, members = []) {
+  const workspaceId = String(workspace?.id || workspace?.areaId || "");
+  return members.filter((member) => String(member?.spaceId || "") === workspaceId && String(member?.status || "Active").toLowerCase() !== "inactive").length;
+}
+
+export function workspaceHasCapacity(workspace, members = [], currentMemberId = "") {
+  if (!isAssignableWorkspace(workspace)) return false;
+  if (workspace?.operationalStatus && workspace.operationalStatus !== "ACTIVE") return false;
+  if (workspace?.maintenanceStatus && workspace.maintenanceStatus !== "deactivated") return false;
+  if (["maintenance", "reserved"].includes(String(workspace?.status || "").toLowerCase())) return false;
+  const occupiedByOthers = members.filter((member) => String(member?.spaceId || "") === String(workspace?.id || workspace?.areaId || "") && String(member?.status || "Active").toLowerCase() !== "inactive" && String(member?.id || "") !== String(currentMemberId || "")).length;
+  const capacity = Math.max(1, Number(workspace?.capacity) || 1);
+  return occupiedByOthers < capacity;
+}
+
 /** Keep user-edited workspace fields while enforcing the developer-mapped floor areas. */
 export function mergeWorkspaceRecords(saved) {
   const savedByAreaId = new Map((Array.isArray(saved) ? saved : []).map((record) => [record.areaId || record.id, record]));

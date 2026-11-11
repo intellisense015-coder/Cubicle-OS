@@ -27,15 +27,15 @@ export function getEditableCharges(record: any): EditableCharge[] {
 
 export const chargesTotal = (charges: EditableCharge[]) => charges.reduce((total, charge) => total + chargeAmount(charge.amount), 0);
 
-export function ChargeEditor({ charges, onChange, title = "Charges", compact = false }: { charges: EditableCharge[]; onChange: (charges: EditableCharge[]) => void; title?: string; compact?: boolean }) {
+export function ChargeEditor({ charges, onChange, title = "Charges", compact = false, showIntro = true }: { charges: EditableCharge[]; onChange: (charges: EditableCharge[]) => void; title?: string; compact?: boolean; showIntro?: boolean }) {
   const updateCharge = (index: number, field: keyof EditableCharge, value: string) => {
     onChange(charges.map((charge, chargeIndex) => chargeIndex === index ? { ...charge, [field]: value } : charge));
   };
 
-  return <section className={`charge-editor${compact ? " charge-editor-compact" : ""}`}>
+  return <section className={`charge-editor${compact ? " charge-editor-compact" : ""}${showIntro ? "" : " charge-editor-no-intro"}`}>
       <div className="charge-editor-heading">
-      <div><span className="settings-label-title">{title}</span>{compact ? null : <p className="muted-copy">Add monthly, meeting room, membership or any other billable line.</p>}</div>
-      {compact ? null : <Button type="button" variant="soft" onClick={() => onChange([...charges, { description: "", amount: "0" }])}><PlusCircle size={15} /> Add charge</Button>}
+      <div>{showIntro ? <span className="settings-label-title">{title}</span> : null}{showIntro && !compact ? <p className="muted-copy">Add monthly, meeting room, membership or any other billable line.</p> : null}</div>
+      {compact ? null : <Button type="button" variant="soft" className="charge-add-button" onClick={() => onChange([...charges, { description: "", amount: "0" }])}><PlusCircle size={15} /> Add charge</Button>}
     </div>
     <div className="charge-editor-columns"><span>Description</span><span>Amount (PKR)</span><span /></div>
     {charges.map((charge, index) => <div className="charge-editor-row" key={`charge-${index}`}>

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { TablePagination } from "@/components/ui/table";
 import { getMaintenanceCategories, getMaintenanceRecords, isActiveMaintenanceRecord, MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, saveMaintenanceCategories, type MaintenanceCategory, type MaintenanceRecord } from "@/lib/maintenance";
 import { useHasPermission } from "@/lib/access-control";
 import { useToast } from "@/components/ui/toast-provider";
@@ -47,10 +48,16 @@ function MaintenanceCategoryCards({ categories, canEditCategories, categorySavin
 
 function MaintenanceRecordTable({ records, workspaces }: { records: MaintenanceRecord[]; workspaces: any[] }) {
   const workspaceById = new Map(workspaces.map((workspace) => [String(workspace.areaId || workspace.id), workspace]));
+  const pageSize = 20;
+  const [pageIndex, setPageIndex] = useState(0);
+  const pagedRecords = records.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+  useEffect(() => {
+    setPageIndex((current) => Math.min(current, Math.max(0, Math.ceil(records.length / pageSize) - 1)));
+  }, [records.length]);
   if (!records.length) {
     return <div className="empty-state"><strong>No maintenance requests.</strong><span>Reported issues will appear here when they are added.</span></div>;
   }
-  return <section className="table-card maintenance-requests-table"><div className="table-scroll"><table className="data-table"><thead><tr><th>Request</th><th>Workspace</th><th>Category</th><th>Severity</th><th>Status</th><th>Reported</th></tr></thead><tbody>{records.map((record) => <tr key={record.id}><td className="table-primary"><strong>{record.title}</strong><span>{record.description || "No description"}</span></td><td><WorkspaceBadge value={workspaceById.get(record.workspaceId)?.type || workspaceLabel(workspaceById.get(record.workspaceId), record.workspaceId)} /></td><td>{record.category || "Uncategorized"}</td><td><span className={`maintenance-severity maintenance-severity-${record.severity.toLowerCase()}`}>{MAINTENANCE_SEVERITY_LABELS[record.severity]}</span></td><td><span className={`maintenance-badge maintenance-record-${record.status.toLowerCase()}`}>{MAINTENANCE_RECORD_STATUS_LABELS[record.status]}</span></td><td>{formatMaintenanceDate(record.reportedAt)}</td></tr>)}</tbody></table></div></section>;
+  return <section className="table-card maintenance-requests-table app-table-with-title"><div className="card-heading app-table-card-heading"><div><h2>Maintenance requests</h2><p className="muted-copy">Select a workspace from Workspaces to report, start or resolve an issue.</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Request</th><th>Workspace</th><th>Category</th><th>Severity</th><th>Status</th><th>Reported</th></tr></thead><tbody>{pagedRecords.map((record) => <tr key={record.id}><td className="table-primary"><strong>{record.title}</strong><span>{record.description || "No description"}</span></td><td><WorkspaceBadge value={workspaceById.get(record.workspaceId)?.type || workspaceLabel(workspaceById.get(record.workspaceId), record.workspaceId)} /></td><td>{record.category || "Uncategorized"}</td><td><span className={`maintenance-severity maintenance-severity-${record.severity.toLowerCase()}`}>{MAINTENANCE_SEVERITY_LABELS[record.severity]}</span></td><td><span className={`maintenance-badge maintenance-record-${record.status.toLowerCase()}`}>{MAINTENANCE_RECORD_STATUS_LABELS[record.status]}</span></td><td>{formatMaintenanceDate(record.reportedAt)}</td></tr>)}</tbody></table></div><TablePagination pageIndex={pageIndex} pageSize={pageSize} total={records.length} onPageChange={setPageIndex} /></section>;
 }
 
 export default function MaintenancePage({ view = "overview" }: { view?: MaintenanceView }) {

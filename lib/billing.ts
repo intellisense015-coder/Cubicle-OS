@@ -1,5 +1,3 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-
 export const BILLING_GRACE_PERIOD_DAYS = 3;
 export type BillingStatus = "Due soon" | "Grace" | "Overdue" | "Paid";
 
@@ -173,87 +171,12 @@ function createInvoiceId(existing: readonly WorkspaceInvoice[], year: number) {
 }
 
 /**
- * Creates missing monthly workspace invoices and recalculates unpaid statuses.
- * Paid invoices are never changed back to an unpaid state.
+ * Workspace billing is read from Supabase now. This helper remains as a
+ * compatibility boundary for dashboard workspace data, but it must not create
+ * or persist invoice records in browser storage.
  */
 export function syncWorkspaceBilling(workspaces: readonly any[]) {
-  const savedInvoices = getDemoValue("invoices");
-  const savedMembers = getDemoValue("members");
-  const members = Array.isArray(savedMembers) ? savedMembers : [];
-  const invoices: WorkspaceInvoice[] = getValidMemberInvoices(savedInvoices, members);
   const today = new Date();
-  const todayKey = localDateKey(today);
-
-  for (const workspace of workspaces) {
-    if (!workspace.memberId) continue;
-    const member = members.find((item) => item.id === workspace.memberId);
-    if (!member || !isActiveMember(member) || workspace.status !== "occupied") continue;
-    const billingStartDate = parseDate(workspace.billingStartDate || member?.billingStartDate || member?.joined);
-    if (!billingStartDate || todayKey < localDateKey(billingStartDate)) continue;
-
-    const dueDay = Number(workspace.dueDay || member?.dueDay || 5);
-    const startMonth = { year: billingStartDate.getFullYear(), month: billingStartDate.getMonth() };
-    let cursor = startMonth;
-    const currentMonth = { year: today.getFullYear(), month: today.getMonth() };
-
-    while (cursor.year < currentMonth.year || (cursor.year === currentMonth.year && cursor.month <= currentMonth.month)) {
-      const period = monthKey(cursor.year, cursor.month);
-      const dueDate = getDueDate(cursor.year, cursor.month, dueDay, billingStartDate);
-      const graceUntil = addDays(dueDate, Number(workspace.gracePeriodDays || BILLING_GRACE_PERIOD_DAYS));
-      const existingIndex = invoices.findIndex((invoice) => invoice.workspaceId === workspace.id && invoice.period === period);
-      const existing = existingIndex >= 0 ? invoices[existingIndex] : null;
-      const manualDateOverride = existing?.manualDateOverride === true;
-      const billingStartKey = existing?.billingStartDate || member?.billingStartDate || member?.joined || localDateKey(billingStartDate);
-      const savedDueDate = manualDateOverride && existing?.dueDate && existing.dueDate >= billingStartKey ? existing.dueDate : null;
-      const memberName = member?.member || workspace.occupant || "Assigned member";
-      const account = `${memberName} - ${member?.company || workspace.company || "No company"}`;
-      const amount = workspace.monthlyRent || member?.rent || "PKR 0";
-      const invoice = {
-        invoice: existing?.invoice || createInvoiceId(invoices, cursor.year),
-        workspaceId: workspace.id,
-        memberId: workspace.memberId,
-        account,
-        period: new Date(cursor.year, cursor.month, 1, 12).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
-        amount: manualDateOverride ? existing?.amount || amount : amount,
-        unitPrice: manualDateOverride ? existing?.unitPrice || existing?.subtotal || amount : amount,
-        qty: existing?.qty || "1",
-        itemDescription: manualDateOverride ? existing?.itemDescription || `${workspace.label || "Workspace"} monthly rent` : `${workspace.label || "Workspace"} monthly rent`,
-        ...(manualDateOverride && existing?.charges ? { charges: existing.charges } : {}),
-        ...(manualDateOverride && existing?.items ? { items: existing.items } : {}),
-        ...(existing?.subtotal !== undefined ? { subtotal: existing.subtotal } : {}),
-        ...(existing?.taxEnabled !== undefined ? { taxEnabled: existing.taxEnabled } : {}),
-        ...(existing?.taxRate !== undefined ? { taxRate: existing.taxRate } : {}),
-        ...(existing?.taxAmount !== undefined ? { taxAmount: existing.taxAmount } : {}),
-        ...(existing?.taxLabel !== undefined ? { taxLabel: existing.taxLabel } : {}),
-        ...(existing?.whtEnabled !== undefined ? { whtEnabled: existing.whtEnabled } : existing?.taxEnabled !== undefined ? { whtEnabled: existing.taxEnabled } : {}),
-        ...(existing?.whtRate !== undefined ? { whtRate: existing.whtRate } : existing?.taxRate !== undefined ? { whtRate: existing.taxRate } : {}),
-        ...(existing?.whtAmount !== undefined ? { whtAmount: existing.whtAmount } : existing?.taxAmount !== undefined ? { whtAmount: existing.taxAmount } : {}),
-        ...(existing?.salesTaxEnabled !== undefined ? { salesTaxEnabled: existing.salesTaxEnabled } : {}),
-        ...(existing?.salesTaxRate !== undefined ? { salesTaxRate: existing.salesTaxRate } : {}),
-        ...(existing?.salesTaxAmount !== undefined ? { salesTaxAmount: existing.salesTaxAmount } : {}),
-        issueDate: manualDateOverride ? existing.issueDate : localDateKey(billingStartDate.getFullYear() === cursor.year && billingStartDate.getMonth() === cursor.month ? billingStartDate : new Date(cursor.year, cursor.month, 1, 12)),
-        dueDate: savedDueDate || localDateKey(dueDate),
-        billingStartDate: billingStartKey,
-        dueDay: manualDateOverride ? Number(existing?.dueDay || dueDay) : dueDay,
-        manualDateOverride,
-        graceUntil: localDateKey(graceUntil),
-        paymentStatus: existing?.paymentStatus === "Paid" ? "Paid" : getBillingStatus({ paymentStatus: existing?.paymentStatus || "Due soon", dueDate: localDateKey(dueDate), graceUntil: localDateKey(graceUntil) }, today),
-        emailStatus: existing?.emailStatus || "Not sent"
-        ,membershipPeriodId: workspace.membershipPeriodId || member.currentMembershipId || ""
-      } satisfies WorkspaceInvoice;
-      if (existingIndex >= 0) invoices[existingIndex] = invoice;
-      else invoices.push(invoice);
-      cursor = nextMonth(cursor.year, cursor.month);
-    }
-  }
-
-  saveDemoValue("invoices", invoices);
-
   const currentPeriod = monthKey(today.getFullYear(), today.getMonth());
-  const nextWorkspaces = workspaces.map((workspace) => {
-    const currentInvoice = invoices.find((invoice) => invoice.workspaceId === workspace.id && invoice.period === new Date(today.getFullYear(), today.getMonth(), 1, 12).toLocaleDateString("en-US", { month: "long", year: "numeric" }));
-    return currentInvoice ? { ...workspace, paymentStatus: currentInvoice.paymentStatus, billingInvoiceId: currentInvoice.invoice } : workspace;
-  });
-  saveDemoValue("workspaces", nextWorkspaces);
-  return { workspaces: nextWorkspaces, invoices, currentPeriod };
+  return { workspaces: Array.isArray(workspaces) ? workspaces : [], invoices: [], currentPeriod };
 }

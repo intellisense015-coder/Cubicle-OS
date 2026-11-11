@@ -34,12 +34,10 @@ function escapeHtml(value: unknown) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
 function money(value: unknown, currency = "PKR") {
   const parsed = Number(String(value ?? 0).replace(/[^0-9.-]/g, ""));
   return `${escapeHtml(currency)} ${(Number.isFinite(parsed) ? parsed : 0).toLocaleString("en-PK", { maximumFractionDigits: 2 })}`;
 }
-
 function templateValues(input: InvoiceEmailInput) {
   return {
     member_name: String(input.memberName || "there"),
@@ -61,7 +59,7 @@ export function renderInvoiceEmailSubject(templateSubject: unknown, input: Invoi
   return renderTemplate(templateSubject, defaultInvoiceEmailTemplate.subject, input).slice(0, 180);
 }
 
-function renderInvoiceEmailText(input: InvoiceEmailInput) {
+export function renderInvoiceEmailText(input: InvoiceEmailInput) {
   return renderTemplate(input.body, defaultInvoiceEmailTemplate.body, input);
 }
 
@@ -79,19 +77,3 @@ export function renderInvoiceEmailHtml(input: InvoiceEmailInput) {
   return `<!doctype html><html><body style="margin:0;background:#f3f7f4;font-family:Arial,Helvetica,sans-serif;color:#26312c"><div style="padding:32px 16px"><div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dfe8e3;border-radius:14px;overflow:hidden"><div style="padding:24px 28px;background:#006b35;color:#ffffff"><div style="font-size:12px;letter-spacing:1.8px;text-transform:uppercase;opacity:.82">The Cubicle</div><h1 style="margin:8px 0 0;font-size:26px;line-height:1.2">Invoice ${escapeHtml(input.invoiceNumber)}</h1></div><div style="padding:28px">${bodyHtml}<table style="width:100%;border-collapse:collapse;margin-top:24px"><tbody>${rows}<tr><td style="padding-top:20px;color:#52615a">Subtotal</td><td style="padding-top:20px;text-align:right;color:#52615a">${money(input.subtotal, currency)}</td></tr>${salesTaxRow}${whtRow}<tr><td style="padding-top:16px;font-size:18px;font-weight:700;color:#18201d">Amount due</td><td style="padding-top:16px;text-align:right;font-size:18px;font-weight:700;color:#006b35">${money(input.totalAmount, currency)}</td></tr></tbody></table><p style="margin:18px 0 0;color:#52615a">Due date: <strong style="color:#26312c">${escapeHtml(input.dueDate)}</strong></p><p style="margin:28px 0 0;padding-top:18px;border-top:1px solid #e5ebe7;color:#738078;font-size:12px;line-height:1.6">This is an automated message from The Cubicle. Please reply to this email if you have any questions.</p></div></div></div></body></html>`;
 }
 
-export function renderInvoiceEmailText(input: InvoiceEmailInput) {
-  const currency = String(input.currency || "PKR");
-  const amount = Number(String(input.totalAmount ?? 0).replace(/[^0-9.-]/g, ""));
-  const formattedAmount = (Number.isFinite(amount) ? amount : 0).toLocaleString("en-PK", { maximumFractionDigits: 2 });
-  return [
-    `Hello ${String(input.memberName ?? "").trim()},`,
-    "",
-    `Your workspace invoice for ${String(input.billingPeriod ?? "").trim()} is ready. The complete invoice PDF is attached to this email.`,
-    "",
-    `Invoice: ${String(input.invoiceNumber ?? "").trim()}`,
-    `Amount due: ${currency} ${formattedAmount}`,
-    `Due date: ${String(input.dueDate ?? "").trim()}`,
-    "",
-    "This is an automated message from The Cubicle. Please reply to this email if you have any questions.",
-  ].join("\n");
-}

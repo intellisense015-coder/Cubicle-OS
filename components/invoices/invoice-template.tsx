@@ -41,7 +41,8 @@ function formatDocumentDate(value: unknown) {
 }
 
 export function invoiceFromRecord(invoice) {
-  const items = getEditableCharges(invoice).map((charge) => ({ description: charge.description, price: chargeAmount(charge.amount), quantity: 1 }));
+  const savedDescription = String(invoice.itemDescription || "").trim();
+  const items = getEditableCharges(invoice).map((charge, index) => ({ description: index === 0 && savedDescription ? savedDescription : charge.description, price: chargeAmount(charge.amount), quantity: 1 }));
   const itemSubtotal = items.reduce((sum, item) => sum + item.price * (item.quantity || 1), 0);
   const subtotal = invoice.subtotal !== undefined ? chargeAmount(invoice.subtotal) : itemSubtotal;
   const totals = calculateInvoiceTotals({

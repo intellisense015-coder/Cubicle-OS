@@ -71,11 +71,7 @@ export default function ProfilePage() {
       });
       if (error) throw error;
     } catch (updateError) {
-<<<<<<< HEAD
-      showToast({ variant: "error", title: "Profile was not saved", message: updateError instanceof Error ? updateError.message : "Your profile could not be updated." });
-=======
       showToast({ variant: "error", title: "Profile was not saved", message: "We couldn’t update your profile. Please try again." });
->>>>>>> 65c4630 (Half Bugs fixed)
       return;
     }
     saveDemoValue("profileName", values.name.trim());

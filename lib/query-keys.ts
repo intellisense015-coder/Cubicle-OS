@@ -21,6 +21,7 @@ export const queryKeys = {
   },
   invoices: {
     all: ["invoices"] as const,
+    automation: ["invoices", "automation"] as const,
   },
   proposals: {
     all: ["proposals"] as const,

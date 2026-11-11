@@ -1,8 +1,8 @@
 import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import { normalizeLeadJourney } from "@/lib/lead-journey";
+import { mergeLeadJourneyEntries, normalizeLeadJourney } from "@/lib/lead-journey";
 import { normalizeLeadStage } from "@/lib/lead-stages";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { fetchSupabaseLeadOpportunityLosses, fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
+import { fetchSupabaseLeadAssignments, fetchSupabaseLeadJourneys, fetchSupabaseLeadOpportunityLosses, fetchSupabaseLeads, mapSupabaseLeadToOsLead } from "@/lib/supabase/leads";
 
 const workflowMetadataKeys = [
   "company",
@@ -41,6 +41,13 @@ function mergeLeadWorkflowMetadata(remoteLead: any, cachedLeads: any[]) {
     // The OS stage is now persisted on the Supabase lead row. Do not let an
     // older browser cache overwrite a newer server-side workflow stage.
     if (key === "stage" && remoteLead.backend === "supabase" && remoteLead.osStage) return lead;
+    if (key === "assignedTo" && remoteLead.backend === "supabase" && remoteLead.assignmentLoaded) return lead;
+    if (key === "journey" && remoteLead.backend === "supabase" && remoteLead.journeyLoaded) {
+      const remoteJourney = Array.isArray(lead[key]) ? lead[key] : [];
+      const cachedJourney = Array.isArray(cached[key]) ? cached[key] : [];
+      lead[key] = mergeLeadJourneyEntries(remoteJourney, cachedJourney);
+      return lead;
+    }
     if (cached[key] !== undefined) lead[key] = cached[key];
     return lead;
   }, { ...remoteLead });
@@ -59,13 +66,30 @@ export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
   }
 
   try {
-    const [rows, lossRows] = await Promise.all([
+    const [rows, lossRows, assignmentResult, journeyResult] = await Promise.all([
       fetchSupabaseLeads(),
       fetchSupabaseLeadOpportunityLosses(),
+      fetchSupabaseLeadAssignments(),
+      fetchSupabaseLeadJourneys(),
     ]);
     const losses = new Map(lossRows.map((loss) => [loss.lead_id, loss]));
+    const assignments = new Map(assignmentResult.rows.map((assignment) => [assignment.lead_id, assignment.assigned_to]));
+    const journeys = new Map<string, typeof journeyResult.rows>();
+    journeyResult.rows.forEach((journey) => {
+      const current = journeys.get(journey.lead_id) || [];
+      current.push(journey);
+      journeys.set(journey.lead_id, current);
+    });
     const leads = normalizeLeads(rows.map((row) => {
-      const merged = mergeLeadWorkflowMetadata(mapSupabaseLeadToOsLead(row), cachedLeads);
+      const merged = mergeLeadWorkflowMetadata(
+        mapSupabaseLeadToOsLead(
+          row,
+          assignments.get(row.id) || null,
+          assignmentResult.available,
+          journeyResult.available ? journeys.get(row.id) || [] : null,
+        ),
+        cachedLeads,
+      );
       const loss = losses.get(row.id);
       if (!loss) return merged;
       return {

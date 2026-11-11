@@ -7,6 +7,9 @@ export type SupabaseMemberRow = {
   member_name: string;
   phone: string | null;
   email: string | null;
+  cnic: string | null;
+  gender: string | null;
+  vehicle_license_plate: string | null;
   company_name: string | null;
   team: string | null;
   assigned_space: string | null;
@@ -32,6 +35,9 @@ const memberColumns = [
   "member_name",
   "phone",
   "email",
+  "cnic",
+  "gender",
+  "vehicle_license_plate",
   "company_name",
   "team",
   "assigned_space",
@@ -88,6 +94,9 @@ export function mapSupabaseMemberToOsMember(row: SupabaseMemberRow) {
     member: row.member_name,
     phone: row.phone || "",
     email: row.email || "",
+    cnic: row.cnic || "",
+    gender: row.gender || "",
+    vehicleLicensePlate: row.vehicle_license_plate || "",
     company: row.company_name || "",
     team: row.team || "",
     spaceId: assignedSpace,
@@ -117,6 +126,9 @@ export function toSupabaseMemberInput(member: any) {
     member_name: asString(member?.member),
     phone: asString(member?.phone) || null,
     email: asString(member?.email).toLowerCase() || null,
+    cnic: asString(member?.cnic) || null,
+    gender: asString(member?.gender) || null,
+    vehicle_license_plate: asString(member?.vehicleLicensePlate) || null,
     company_name: asString(member?.company) || null,
     team: asString(member?.team) || null,
     assigned_space: asString(member?.spaceId || member?.space) || null,

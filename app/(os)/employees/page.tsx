@@ -258,16 +258,12 @@ export default function EmployeesPage() {
         const persistedEmployee = { ...mapSupabaseAdminUserToOsEmployee({ ...row, email: profileRow?.email || employee.email || row.email, phone: profileRow?.phone || employee.phone || row.phone, full_name: profileRow?.full_name || row.full_name || employee.name, last_sign_in_at: profileRow?.last_sign_in_at || row.last_sign_in_at }), name: employee.name, phone: normalizeEmployeePhone(employee.phone) };
         persist(employees.map((item) => item.id === employee.id ? persistedEmployee : item));
         setSelected(null);
-<<<<<<< HEAD
-        showToast({ variant: "success", title: action === "status" ? "Account access updated" : "User role updated", message: `${persistedEmployee.email} was updated successfully.` });
-=======
         if (action === "status") {
           const statusLabel = employee.status === "Disabled" ? "suspended" : "activated";
           showToast({ variant: "success", title: `Account ${statusLabel}`, message: `${persistedEmployee.name}'s account was ${statusLabel}.` });
         } else {
           showToast({ variant: "success", title: "Employee information updated", message: `${persistedEmployee.name}'s information was updated.` });
         }
->>>>>>> 65c4630 (Half Bugs fixed)
         return;
       }
       persist(employees.map((item) => item.id === employee.id ? employee : item));
@@ -279,11 +275,7 @@ export default function EmployeesPage() {
         showToast({ variant: "success", title: "Employee information updated", message: `${employee.name}'s information was updated.` });
       }
     } catch (error) {
-<<<<<<< HEAD
-      showToast({ variant: "error", title: "User access was not updated", message: error?.message || "The user account could not be updated." });
-=======
       showToast({ variant: "error", title: "User access was not updated", message: error?.message || "The employee information could not be updated." });
->>>>>>> 65c4630 (Half Bugs fixed)
     }
   };
   const toggleStatus = () => { const next = { ...selected, status: selected.status === "Disabled" ? "Active" : "Disabled", lastActivity: "Just now" }; return saveEmployee(next, "status"); };
@@ -302,11 +294,7 @@ export default function EmployeesPage() {
         setShowInvite(false);
         showToast({ variant: "success", title: "Invitation sent", message: `Invitation sent to ${form.name}.` });
       } catch (error) {
-<<<<<<< HEAD
-      showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "The invitation could not be sent." });
-=======
         showToast({ variant: "error", title: "Invitation was not sent", message: error?.message || "The invitation could not be sent. Please try again." });
->>>>>>> 65c4630 (Half Bugs fixed)
       }
       return;
     }
@@ -337,5 +325,5 @@ export default function EmployeesPage() {
     router.push(`/employees/${encodeURIComponent(employee.id)}/access`);
   };
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /><KpiCard icon={<KeyRound size={18} />} label="Approval-required" value={approvalRequiredCount} detail="Pending owner approvals" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable columns={createEmployeeColumns(canManage ? openEmployeeAccess : () => undefined, canManage, managingEmployeeId)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee roleOptions={supabaseEnabled ? adminRoles.map((role) => role.label) : roleOptions} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /><KpiCard icon={<KeyRound size={18} />} label="Approval-required" value={approvalRequiredCount} detail="Pending owner approvals" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable title="Employee directory" subtitle={canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."} columns={createEmployeeColumns(canManage ? openEmployeeAccess : () => undefined, canManage, managingEmployeeId)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee roleOptions={supabaseEnabled ? adminRoles.map((role) => role.label) : roleOptions} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
 }

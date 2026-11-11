@@ -78,38 +78,9 @@ export default function AcceptInvitePage() {
       }
     };
 
-<<<<<<< HEAD
-    const establishInviteSession = async () => {
-      try {
-        const code = new URLSearchParams(window.location.search).get("code");
-        if (code) {
-          const response = await fetch("/api/admin/invite", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "accept", code }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error || "This invitation link is invalid or has expired.");
-          window.history.replaceState({}, document.title, "/accept-invite");
-        }
-
-        const { data, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-        applySession(data.session);
-      } catch (sessionException) {
-        if (active) {
-          setState("error");
-          setError(sessionException instanceof Error ? sessionException.message : "This invitation link is invalid or has expired.");
-        }
-      }
-    };
-
-    void establishInviteSession();
-=======
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (allowAuthEvents) applySession(session);
     });
->>>>>>> 65c4630 (Half Bugs fixed)
 
     void (async () => {
       try {
@@ -150,16 +121,11 @@ export default function AcceptInvitePage() {
     try {
       const { error: updateError } = await getSupabaseBrowserClient().auth.updateUser({ password });
       if (updateError) throw updateError;
-<<<<<<< HEAD
-      await getSupabaseBrowserClient().auth.signOut();
-      router.replace("/login?invite=success");
-=======
       const invitationResponse = await fetch("/api/auth/invite/accept", { method: "POST" });
       const invitationPayload = await invitationResponse.json().catch(() => null);
       if (!invitationResponse.ok) throw new Error(invitationPayload?.error || "The invitation could not be completed.");
       const postAuthPath = `/post-auth?next=${encodeURIComponent("/dashboard")}`;
       router.replace(`/mfa?next=${encodeURIComponent(postAuthPath)}`);
->>>>>>> 65c4630 (Half Bugs fixed)
     } catch (updateException) {
       setError(updateException instanceof Error ? updateException.message : "The password could not be saved.");
     } finally {

@@ -102,8 +102,7 @@ export default function ApprovalsPage() {
         <KpiCard icon={<CheckCircle2 size={18} />} label="Approved" value={approved} detail="Completed requests" />
         <KpiCard icon={<X size={18} />} label="Rejected" value={rejected} detail="Declined requests" />
       </section>
-      <div className="section-heading"><div><h2>Approval queue</h2><p className="muted-copy">Review and action requests from the team.</p></div></div>
-      <DataTable columns={createApprovalColumns((approval, status) => setPendingAction({ id: approval.id, status, label: status === "Approved" ? "approve" : "reject" }))} data={approvals} emptyMessage="No approval requests yet." />
+      <DataTable title="Approval queue" subtitle="Review and action requests from the team." columns={createApprovalColumns((approval, status) => setPendingAction({ id: approval.id, status, label: status === "Approved" ? "approve" : "reject" }))} data={approvals} emptyMessage="No approval requests yet." />
       <Dialog open={creating} onClose={() => setCreating(false)} ariaLabel="Create approval request"><CreateApprovalForm onCancel={() => setCreating(false)} onSave={createApproval} /></Dialog>
       <Dialog open={Boolean(pendingAction)} onClose={() => setPendingAction(null)} ariaLabel="Confirm approval action">
         {pendingAction ? <div className="dialog-content"><span className="setup-check-icon"><ListChecks size={17} /></span><h2>{pendingAction.label === "approve" ? "Approve this request?" : "Reject this request?"}</h2><p className="muted-copy">This demo will update the approval status and save it in the current session.</p><div className="dialog-actions"><Button variant="ghost" onClick={() => setPendingAction(null)}>Cancel</Button><Button onClick={confirmAction}>{pendingAction.label === "approve" ? "Approve request" : "Reject request"}</Button></div></div> : null}

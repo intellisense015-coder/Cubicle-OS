@@ -2,6 +2,7 @@ export const leadStages = [
   "New lead",
   "Follow-up due",
   "Visit scheduled",
+  "Visit cancelled",
   "Visited",
   "Quotation requested",
   "Quote Sent",
@@ -94,12 +95,13 @@ export function transitionLead(lead: any, event: LeadStageEvent) {
       if (event.outcome === "Quotation Approved") return { ...base, stage: "Quotation Approved", nextFollowUp: "Not scheduled", pendingVisit: false };
       if (event.outcome === "Agreement shared") return { ...base, stage: "Agreement shared", nextFollowUp: "Not scheduled", pendingVisit: false };
       if (event.outcome === "Not interested") return { ...base, stage: "Not interested", lostReason: event.lostReason || base.lostReason || "", nextFollowUp: "Not scheduled", pendingVisit: false };
+      if (currentStage === "Visit scheduled") return { ...base, stage: "Visit scheduled", nextFollowUp: "Not scheduled", pendingVisit: false };
       return { ...base, stage: stableStage(base), nextFollowUp: "Not scheduled", pendingVisit: false };
     }
     case "visit-scheduled":
       return { ...base, stage: "Visit scheduled", stageBeforeVisit: currentStage, nextFollowUp: event.nextFollowUp, pendingVisit: false };
     case "visit-cancelled":
-      return { ...base, stage: base.stageBeforeVisit && leadStages.includes(base.stageBeforeVisit) ? base.stageBeforeVisit : "Visited", nextFollowUp: "Not scheduled", pendingVisit: false };
+      return { ...base, stage: "Visit cancelled", nextFollowUp: "Not scheduled", pendingVisit: false };
     case "visit-completed":
       return event.nextFollowUpDate
         ? { ...base, stage: "Follow-up due", nextFollowUp: event.nextFollowUp || nextFollowUpValue(event.nextFollowUpDate, event.nextFollowUpTime) }

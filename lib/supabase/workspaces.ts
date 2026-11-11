@@ -168,6 +168,10 @@ export async function updateSupabaseWorkspace(id: string, workspace: any) {
   });
 }
 
-export async function assignSupabaseMemberToWorkspace(memberId: string, workspaceId: string | null) {
-  await secureOsMutation<{ assigned: boolean }>("workspace.assign", { memberId, workspaceId });
+export async function assignSupabaseMemberToWorkspace(memberId: string, workspaceId: string | null, options?: { requireAvailable?: boolean }) {
+  await secureOsMutation<{ assigned: boolean }>("workspace.assign", { memberId, workspaceId, requireAvailable: options?.requireAvailable === true });
+}
+
+export async function assignSupabaseMemberToSharedWorkspace(memberId: string, workspaceId: string, previousWorkspaceId?: string | null) {
+  await secureOsMutation<{ assigned: boolean }>("workspace.assign.shared", { memberId, workspaceId, previousWorkspaceId: previousWorkspaceId || null });
 }
