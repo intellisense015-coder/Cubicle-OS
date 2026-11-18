@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-import { resolveOsEmailSender } from "@/lib/server-os-email";
-import { sendResendEmail, validEmail } from "@/lib/server-email";
+import { validEmail } from "@/lib/server-email";
 
 export const runtime = "nodejs";
 
@@ -213,16 +212,6 @@ function leadMessage(fields: Map<string, string>) {
   return ["Source: Meta Lead Ads", ...lines].join("\n").slice(0, 2000);
 }
 
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[character] || character));
-}
-
 async function fetchMetaLead(leadgenId: string) {
   const token = configured("META_PAGE_ACCESS_TOKEN");
   const endpoint = `https://graph.facebook.com/${graphVersion()}/${encodeURIComponent(leadgenId)}`
@@ -297,7 +286,7 @@ async function markEventFailed(admin: SupabaseClient, leadgenId: string, stage: 
   }).eq("leadgen_id", leadgenId).eq("status", "processing");
 }
 
-async function processEvent(admin: SupabaseClient, event: MetaLeadEvent, notificationEmail: string) {
+async function processEvent(admin: SupabaseClient, event: MetaLeadEvent) {
   const metaLead = await fetchMetaLead(event.leadgenId);
   const fields = fieldMap(metaLead.field_data);
   const name = firstText(fields, ["full_name", "name", "first_name"]) || `Meta lead ${event.leadgenId.slice(-8)}`;
@@ -328,46 +317,13 @@ async function processEvent(admin: SupabaseClient, event: MetaLeadEvent, notific
     throw new MetaProcessingError("lead_insert", "Meta lead could not be saved.");
   }
 
-  let sender: Awaited<ReturnType<typeof resolveOsEmailSender>>;
-  try {
-    sender = await resolveOsEmailSender({ client: admin, purpose: "notifications" });
-    const subject = `New Meta lead: ${name}`.slice(0, 200);
-    const text = [
-      "A new lead was received from Meta Lead Ads.",
-      `Name: ${name}`,
-      email ? `Email: ${email}` : "Email: Not provided",
-      phone ? `Phone: ${phone}` : "Phone: Not provided",
-      `Lead ID: ${event.leadgenId}`,
-    ].join("\n");
-    const html = `<p>A new lead was received from Meta Lead Ads.</p><p><strong>Name:</strong> ${escapeHtml(name)}<br />` +
-      `<strong>Email:</strong> ${escapeHtml(email || "Not provided")}<br />` +
-      `<strong>Phone:</strong> ${escapeHtml(phone || "Not provided")}</p>`;
-    const emailResult = await sendResendEmail({
-      from: sender.from,
-      replyTo: sender.replyTo,
-      to: [notificationEmail],
-      subject,
-      html,
-      text,
-      tags: [
-        { name: "source", value: "meta_lead_ads" },
-        { name: "meta_leadgen_id", value: event.leadgenId },
-      ],
-      idempotencyKey: `meta-lead-${event.leadgenId}`,
-    });
-
-    const updated = await admin.from("os_meta_lead_events").update({
-      lead_id: lead.id,
-      status: "completed",
-      resend_email_id: emailResult.id,
-      last_error: null,
-      updated_at: new Date().toISOString(),
-    }).eq("leadgen_id", event.leadgenId).eq("status", "processing");
-    if (updated.error) throw new MetaProcessingError("event_finalize", "Meta event could not be finalized.");
-  } catch (error) {
-    if (error instanceof MetaProcessingError) throw error;
-    throw new MetaProcessingError("notification", "Meta lead notification failed.");
-  }
+  const updated = await admin.from("os_meta_lead_events").update({
+    lead_id: lead.id,
+    status: "completed",
+    last_error: null,
+    updated_at: new Date().toISOString(),
+  }).eq("leadgen_id", event.leadgenId).eq("status", "processing");
+  if (updated.error) throw new MetaProcessingError("event_finalize", "Meta event could not be finalized.");
 }
 
 export async function GET(request: Request) {
@@ -396,9 +352,6 @@ export async function POST(request: Request) {
   try {
     const appSecret = configured("META_APP_SECRET");
     const expectedPageId = configuredPageId();
-    const notificationEmail = safeEmail(configured("META_LEAD_NOTIFICATION_EMAIL"));
-    if (!notificationEmail) throw new Error("META_LEAD_NOTIFICATION_EMAIL is invalid.");
-
     rawBody = await readLimitedBody(request);
     if (!rawBody || !verifyMetaSignature(rawBody, request.headers.get("x-hub-signature-256"), appSecret)) {
       return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
@@ -419,7 +372,7 @@ export async function POST(request: Request) {
       }
       claimedLeadgenId = event.leadgenId;
       try {
-        await processEvent(admin, event, notificationEmail);
+        await processEvent(admin, event);
         results.push("processed");
       } catch (error) {
         const stage = error instanceof MetaProcessingError ? error.stage : "processing";
