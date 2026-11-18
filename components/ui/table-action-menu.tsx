@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { MoreVertical } from "lucide-react";
+import { LoaderCircle, MoreVertical } from "lucide-react";
 
 export type TableActionMenuItem = {
   label: string;
@@ -15,7 +15,7 @@ export type TableActionMenuItem = {
   keepOpen?: boolean;
 };
 
-export function TableActionMenu({ ariaLabel, items }: { ariaLabel: string; items: TableActionMenuItem[] }) {
+export function TableActionMenu({ ariaLabel, items, loading = false }: { ariaLabel: string; items: TableActionMenuItem[]; loading?: boolean }) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -75,5 +75,5 @@ export function TableActionMenu({ ariaLabel, items }: { ariaLabel: string; items
     return <button className={itemClassName(item)} type="button" role="menuitem" disabled={item.disabled} onClick={(event) => { event.stopPropagation(); choose(item); }}>{content}</button>;
   };
 
-  return <div className="table-action-menu"><button ref={triggerRef} className="action-icon-btn table-action-menu-trigger" type="button" onClick={(event) => { event.stopPropagation(); setOpen((current) => !current); }} aria-label={ariaLabel} aria-expanded={open} aria-haspopup="menu" title={ariaLabel}><MoreVertical size={17} /></button>{open && typeof document !== "undefined" ? createPortal(<div ref={menuRef} className="table-action-menu-panel" role="menu" style={{ top: menuPosition.top, left: menuPosition.left }}>{items.map((item) => <span className="table-action-menu-entry" key={item.label}>{renderItem(item)}</span>)}</div>, document.body) : null}</div>;
+  return <div className="table-action-menu"><button ref={triggerRef} className="action-icon-btn table-action-menu-trigger" type="button" disabled={loading} onClick={(event) => { event.stopPropagation(); setOpen((current) => !current); }} aria-label={ariaLabel} aria-busy={loading || undefined} aria-expanded={open} aria-haspopup="menu" title={ariaLabel}>{loading ? <LoaderCircle size={17} className="animate-spin" /> : <MoreVertical size={17} />}</button>{open && typeof document !== "undefined" ? createPortal(<div ref={menuRef} className="table-action-menu-panel" role="menu" style={{ top: menuPosition.top, left: menuPosition.left }}>{items.map((item) => <span className="table-action-menu-entry" key={item.label}>{renderItem(item)}</span>)}</div>, document.body) : null}</div>;
 }

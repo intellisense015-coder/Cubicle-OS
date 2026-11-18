@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { checkRateLimits, rateLimitResponse, recordSecurityAudit } from "@/lib/server-security";
+import { calculateInvoiceTotals } from "@/lib/invoice-calculations";
+import { workspaceInvoiceDescription } from "@/lib/invoice-description";
 
 export const runtime = "nodejs";
+
+const generationLeadMs = 30 * 60_000;
+const pakistanUtcOffsetMs = 5 * 60 * 60_000;
 
 function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -22,7 +27,12 @@ function isAuthorized(request: Request) {
 function localPakistanDateTime() {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Karachi", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return { date: `${values.year}-${values.month}-${values.day}`, day: Number(values.day), time: `${values.hour}:${values.minute}`, year: Number(values.year), month: Number(values.month) };
+  const year = Number(values.year);
+  const month = Number(values.month);
+  const day = Number(values.day);
+  const hour = Number(values.hour);
+  const minute = Number(values.minute);
+  return { date: dateKey(year, month, day), day, time: `${values.hour}:${values.minute}`, year, month, timeline: new Date(Date.UTC(year, month - 1, day, hour, minute, 0)) };
 }
 
 function dateParts(value: string) { const [year, month, day] = value.split("-").map(Number); return { year, month, day }; }
@@ -35,6 +45,28 @@ function addMonths(periodStart: string, months: number) {
 function billingPeriodFor(sendDate: string, sendDay: number, dueDay: number) {
   const currentPeriod = `${sendDate.slice(0, 7)}-01`;
   return sendDay > dueDay ? addMonths(currentPeriod, 1) : currentPeriod;
+}
+function scheduleForPeriod(periodStart: string, sendDay: number, sendTime: string) {
+  const { year, month } = dateParts(periodStart);
+  const monthEnd = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const day = Math.min(Math.max(sendDay, 1), monthEnd);
+  const [hour, minute] = sendTime.split(":").map(Number);
+  const localSendTimeline = new Date(Date.UTC(year, month - 1, day, Number.isFinite(hour) ? hour : 9, Number.isFinite(minute) ? minute : 0, 0));
+  return {
+    sendDate: dateKey(year, month, day),
+    generationTimeline: new Date(localSendTimeline.getTime() - generationLeadMs),
+    localSendTimeline,
+    scheduledFor: new Date(localSendTimeline.getTime() - pakistanUtcOffsetMs).toISOString(),
+  };
+}
+function targetScheduleFor(localNow: ReturnType<typeof localPakistanDateTime>, sendDay: number, sendTime: string) {
+  let periodStart = dateKey(localNow.year, localNow.month, 1);
+  let schedule = scheduleForPeriod(periodStart, sendDay, sendTime);
+  if (localNow.timeline.getTime() < schedule.generationTimeline.getTime()) {
+    periodStart = addMonths(periodStart, -1);
+    schedule = scheduleForPeriod(periodStart, sendDay, sendTime);
+  }
+  return { periodStart, ...schedule };
 }
 function lastDayOfMonth(periodStart: string) { const { year, month } = dateParts(periodStart); return dateKey(year, month, new Date(Date.UTC(year, month, 0)).getUTCDate()); }
 function dueDateFor(periodStart: string, dueDay: number, billingStartDate: string | null) {
@@ -66,10 +98,29 @@ async function claimPeriod(admin: any, periodStart: string) {
   return { claimed: true, completed: false };
 }
 
+async function expireNoticePeriods(admin: any, currentDate: string) {
+  const { data: expiringMembers, error } = await admin
+    .from("members")
+    .select("id")
+    .in("status", ["active", "activated"])
+    .eq("membership_status", "notice_period")
+    .lte("expected_leaving_date", currentDate);
+  if (error) throw error;
+  for (const expiring of expiringMembers || []) {
+    const { error: expiryError } = await admin.rpc("transition_member_lifecycle", {
+      p_member_id: expiring.id,
+      p_action: "expire_notice",
+      p_system: true,
+      p_effective_date: currentDate,
+    });
+    if (expiryError && String(expiryError.code) !== "P0002") throw expiryError;
+  }
+}
+
 export async function GET(request: Request) {
   let admin: ReturnType<typeof serviceClient> | null = null;
   const localNow = localPakistanDateTime();
-  const periodStart = `${localNow.year}-${String(localNow.month).padStart(2, "0")}-01`;
+  let periodStart = "";
   try {
     if (!isAuthorized(request)) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
     admin = serviceClient();
@@ -77,16 +128,19 @@ export async function GET(request: Request) {
     if (!rateLimit.allowed) { await recordSecurityAudit(admin, { action: "invoice.automation.run", outcome: "rate_limited", request, metadata: { scope: "invoice.automation.run" } }); return NextResponse.json({ error: "Too many automation requests. Please try again later." }, rateLimitResponse(rateLimit)); }
     const { data: settings, error: settingsError } = await admin.from("invoice_automation_settings").select("enabled,send_day,send_time,member_ids,timezone").eq("id", 1).maybeSingle();
     if (settingsError) throw settingsError;
+    await expireNoticePeriods(admin, localNow.date);
     if (!settings?.enabled) return NextResponse.json({ ok: true, skipped: "disabled" });
     const sendDay = Number(settings.send_day) || 1;
     const sendTime = String(settings.send_time || "09:00:00").slice(0, 5);
-    if (localNow.day < sendDay || localNow.time < sendTime) return NextResponse.json({ ok: true, skipped: "not_due", periodStart, localTime: localNow.time });
+    const schedule = targetScheduleFor(localNow, sendDay, sendTime);
+    periodStart = schedule.periodStart;
+    if (localNow.timeline.getTime() < schedule.generationTimeline.getTime()) return NextResponse.json({ ok: true, skipped: "not_due", periodStart, localTime: localNow.time, generateAt: schedule.generationTimeline.toISOString(), sendAt: schedule.scheduledFor });
     const memberIds = Array.isArray(settings.member_ids) ? [...new Set(settings.member_ids.map((id: unknown) => String(id)).filter(Boolean))] : [];
     if (!memberIds.length) return NextResponse.json({ error: "No invoice recipients are configured." }, { status: 409 });
     const claim = await claimPeriod(admin, periodStart);
     if (!claim.claimed) return NextResponse.json({ ok: true, skipped: claim.completed ? "already_completed" : "already_running", periodStart });
 
-    const { data: members, error: membersError } = await admin.from("members").select("id,member_name,email,company_name,assigned_space,monthly_rent,billing_start_date,due_day,status,membership_status").in("status", ["active", "activated"]).in("id", memberIds);
+    const { data: members, error: membersError } = await admin.from("members").select("id,member_name,email,company_name,assigned_space,monthly_rent,wht_enabled,wht_rate,sales_tax_enabled,sales_tax_rate,billing_start_date,due_day,status,membership_status").in("status", ["active", "activated"]).in("id", memberIds);
     if (membersError) throw membersError;
     const sequenceByYear = new Map<number, number>();
     let generatedCount = 0;
@@ -95,14 +149,32 @@ export async function GET(request: Request) {
     const failures: Array<{ member: string; error: string }> = [];
 
     for (const member of members || []) {
+      // Re-read the canonical row immediately before generation so a member
+      // deactivated after the initial selection cannot receive an invoice.
+      const { data: currentMember, error: currentMemberError } = await admin
+        .from("members")
+        .select("id,member_name,email,company_name,assigned_space,monthly_rent,wht_enabled,wht_rate,sales_tax_enabled,sales_tax_rate,billing_start_date,due_day,status,membership_status,expected_leaving_date")
+        .eq("id", member.id)
+        .maybeSingle();
+      if (currentMemberError) throw currentMemberError;
+      if (!currentMember || !["active", "activated"].includes(String(currentMember.status || "").toLowerCase())) { skippedCount += 1; continue; }
+      if (String(currentMember.membership_status || "active").toLowerCase() === "notice_period" && currentMember.expected_leaving_date && currentMember.expected_leaving_date < schedule.sendDate) { skippedCount += 1; continue; }
+      Object.assign(member, currentMember);
       const dueDay = Number(member.due_day) || 5;
-      const billingPeriodStart = billingPeriodFor(localNow.date, sendDay, dueDay);
+      const billingPeriodStart = billingPeriodFor(schedule.sendDate, sendDay, dueDay);
       const invoiceYear = dateParts(billingPeriodStart).year;
       const { data: existing, error: existingError } = await admin.from("invoices").select("id,invoice_number").eq("member_id", member.id).eq("period_start", billingPeriodStart).limit(1);
       if (existingError) throw existingError;
       if (existing?.length) { skippedCount += 1; continue; }
       const subtotal = amount(member.monthly_rent);
       if (subtotal <= 0) { failedCount += 1; failures.push({ member: member.member_name, error: "Monthly rent is zero." }); continue; }
+      const totals = calculateInvoiceTotals({
+        subtotal,
+        whtEnabled: member.wht_enabled === true,
+        whtRate: member.wht_rate,
+        salesTaxEnabled: member.sales_tax_enabled === true,
+        salesTaxRate: member.sales_tax_rate,
+      });
       if (!sequenceByYear.has(invoiceYear)) sequenceByYear.set(invoiceYear, await nextInvoiceNumber(admin, invoiceYear));
       const invoiceSequence = sequenceByYear.get(invoiceYear) as number;
       sequenceByYear.set(invoiceYear, invoiceSequence + 1);
@@ -110,18 +182,20 @@ export async function GET(request: Request) {
       const billingStartDate = member.billing_start_date || billingPeriodStart;
       const dueDate = dueDateFor(billingPeriodStart, dueDay, billingStartDate);
       const accountName = `${member.member_name} - ${member.company_name || "No company"}`;
-      const { data: invoice, error: invoiceError } = await admin.from("invoices").insert({ invoice_number: invoiceNumber, member_id: member.id, workspace_id: member.assigned_space || null, account_name: accountName, currency: "PKR", period_start: billingPeriodStart, period_end: lastDayOfMonth(billingPeriodStart), issue_date: localNow.date, due_date: dueDate, billing_start_date: billingStartDate, due_day: dueDay, subtotal, tax_enabled: false, tax_rate: 0, tax_amount: 0, sales_tax_enabled: false, sales_tax_rate: 0, sales_tax_amount: 0, total_amount: subtotal, payment_status: "due_soon", email_status: "not_sent", grace_until: null, manual_date_override: false }).select("id,invoice_number").single();
+      const { data: invoice, error: invoiceError } = await admin.from("invoices").insert({ invoice_number: invoiceNumber, member_id: member.id, workspace_id: member.assigned_space || null, account_name: accountName, currency: "PKR", period_start: billingPeriodStart, period_end: lastDayOfMonth(billingPeriodStart), issue_date: schedule.sendDate, due_date: dueDate, billing_start_date: billingStartDate, due_day: dueDay, subtotal: totals.subtotal, tax_enabled: member.wht_enabled === true && totals.whtAmount > 0, tax_rate: totals.whtRate, tax_amount: totals.whtAmount, sales_tax_enabled: member.sales_tax_enabled === true && totals.salesTaxAmount > 0, sales_tax_rate: totals.salesTaxRate, sales_tax_amount: totals.salesTaxAmount, total_amount: totals.total, payment_status: "due_soon", email_status: "not_sent", grace_until: null, manual_date_override: false }).select("id,invoice_number").single();
       if (invoiceError) { if (String(invoiceError.code) === "23505") { skippedCount += 1; continue; } failedCount += 1; failures.push({ member: member.member_name, error: "Invoice could not be created." }); continue; }
-      const { error: itemError } = await admin.from("invoice_items").insert({ invoice_id: invoice.id, description: member.assigned_space ? `${member.assigned_space} workspace service` : "Workspace monthly rent", quantity: 1, unit_price: subtotal, sort_order: 0 });
+      const { error: itemError } = await admin.from("invoice_items").insert({ invoice_id: invoice.id, description: workspaceInvoiceDescription(member.assigned_space, member.assigned_space), quantity: 1, unit_price: subtotal, sort_order: 0 });
       if (itemError) { await admin.from("invoices").delete().eq("id", invoice.id); failedCount += 1; failures.push({ member: member.member_name, error: "Invoice line item could not be created." }); continue; }
       const { error: queueError } = await admin.rpc("queue_invoice_email", { p_invoice_id: invoice.id, p_delivery_kind: "initial" });
       if (queueError) { await admin.from("invoices").update({ email_status: "failed" }).eq("id", invoice.id); failedCount += 1; failures.push({ member: member.member_name, error: "Invoice was created but could not be queued for email." }); continue; }
+      const { data: queuedEmail, error: scheduleError } = await admin.from("invoice_email_queue").update({ scheduled_for: schedule.scheduledFor, next_attempt_at: null, updated_at: new Date().toISOString() }).eq("invoice_id", invoice.id).eq("delivery_kind", "initial").eq("status", "queued").select("id").maybeSingle();
+      if (scheduleError || !queuedEmail) { await admin.from("invoices").update({ email_status: "failed" }).eq("id", invoice.id); failedCount += 1; failures.push({ member: member.member_name, error: "Invoice was created but its email schedule could not be set." }); continue; }
       generatedCount += 1;
     }
 
     const { error: completeError } = await admin.from("invoice_automation_runs").update({ status: "completed", generated_count: generatedCount, skipped_count: skippedCount, failed_count: failedCount, completed_at: new Date().toISOString(), last_error: failures.length ? JSON.stringify(failures).slice(0, 4000) : null }).eq("period_start", periodStart);
     if (completeError) throw completeError;
-    return NextResponse.json({ ok: true, periodStart, generatedCount, skippedCount, failedCount, failures });
+    return NextResponse.json({ ok: true, periodStart, generatedCount, skippedCount, failedCount, failures, generateAt: schedule.generationTimeline.toISOString(), sendAt: schedule.scheduledFor });
   } catch (error) {
     console.error("Recurring invoice generation failed:", error);
     if (admin) await admin.from("invoice_automation_runs").update({ status: "failed", completed_at: new Date().toISOString(), last_error: "Recurring invoice generation failed." }).eq("period_start", periodStart);

@@ -29,9 +29,10 @@ const nextConfig = {
         value: [
           "default-src 'self'",
           "img-src 'self' data: blob: https://*.supabase.co",
-          "style-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           `script-src ${scriptSources.join(" ")}`,
-          "font-src 'self' data:",
+          "font-src 'self' data: https://fonts.gstatic.com",
+          "media-src 'self' blob:",
           "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
           "frame-ancestors 'self'",
           "base-uri 'self'",

@@ -5,8 +5,6 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { ArrowUpRight, CalendarDays, CreditCard, Grid2X2, ListChecks, Receipt, Users } from "lucide-react";
 import { DataTable } from "@/components/ui/table";
-import { useTheme } from "@/components/theme-provider";
-import { sileo } from "sileo";
 
 const DashboardChart = dynamic(() => import("@/components/os/dashboard-charts").then((module) => module.DashboardChart), {
   ssr: false,
@@ -69,7 +67,6 @@ export function DashboardCleanView({
   formatDashboardVisitTime,
   getPaymentRowClick,
 }: DashboardCleanViewProps) {
-  const { theme } = useTheme();
   const availableSeats = dashboardMetrics.privateAvailable + dashboardMetrics.sharedAvailable;
   const availablePercentage = dashboardMetrics.totalSeats ? Math.round((availableSeats / dashboardMetrics.totalSeats) * 100) : 0;
   const occupancyStatus = occupancyPercentage >= 70 ? "good" : occupancyPercentage >= 35 ? "warning" : "danger";
@@ -91,25 +88,11 @@ export function DashboardCleanView({
   const animatedPrivateAveragePrice = useDashboardCount(Number(dashboardMetrics.privateAveragePrice), 2200);
   const animatedSharedAveragePrice = useDashboardCount(Number(dashboardMetrics.sharedAveragePrice), 2300);
 
-  const showSileoToastDemo = () => {
-    sileo.success({
-      title: "Dashboard toast preview",
-      description: "This is the new Sileo toast style used throughout the app.",
-      duration: 5000,
-      position: "top-right",
-      fill: theme === "dark" ? "#ffffff" : "#1e1e1e",
-      roundness: 28,
-      autopilot: { expand: 0, collapse: 5000 },
-    });
-  };
-
   return <>
     <style jsx global>{`
       .dashboard-clean-content { display: block !important; width: 100% !important; max-width: none !important; }
       .dashboard-clean-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 0 0 18px; }
       .dashboard-clean-heading-actions { display: flex; align-items: center; gap: 12px; }
-      .dashboard-clean-toast-demo { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; border: 1px solid var(--line); border-radius: 999px; padding: 0 12px; color: var(--ink); background: var(--paper); font-size: 10px; font-weight: 600; cursor: pointer; }
-      .dashboard-clean-toast-demo:hover { color: var(--brand); border-color: var(--brand); }
       @keyframes dashboard-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes dashboard-text-rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
       .dashboard-clean-heading { animation: dashboard-fade-up 800ms cubic-bezier(.16,1,.3,1) both; }
@@ -272,7 +255,6 @@ export function DashboardCleanView({
     <header className="dashboard-clean-heading">
       <div><h1>Dashboard</h1></div>
       <div className="dashboard-clean-heading-actions">
-        <button type="button" className="dashboard-clean-toast-demo" onClick={showSileoToastDemo}>Preview toast</button>
         <Link className="dashboard-clean-manage-link" href="/workspaces">Manage workspaces <ArrowUpRight size={14} /></Link>
       </div>
     </header>

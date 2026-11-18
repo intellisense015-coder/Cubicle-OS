@@ -1,4 +1,3 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { mergeLeadJourneyEntries, normalizeLeadJourney } from "@/lib/lead-journey";
 import { normalizeLeadStage } from "@/lib/lead-stages";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
@@ -21,7 +20,7 @@ const workflowMetadataKeys = [
 
 export type LeadsQuerySnapshot = {
   leads: any[];
-  dataSource: "supabase" | "demo";
+  dataSource: "supabase" | "error";
   errorMessage: string;
 };
 
@@ -33,36 +32,9 @@ function normalizeLeads(leads: any[]) {
   }));
 }
 
-function mergeLeadWorkflowMetadata(remoteLead: any, cachedLeads: any[]) {
-  const cached = cachedLeads.find((item) => item.id === remoteLead.id);
-  if (!cached) return remoteLead;
-
-  return workflowMetadataKeys.reduce((lead, key) => {
-    // The OS stage is now persisted on the Supabase lead row. Do not let an
-    // older browser cache overwrite a newer server-side workflow stage.
-    if (key === "stage" && remoteLead.backend === "supabase" && remoteLead.osStage) return lead;
-    if (key === "assignedTo" && remoteLead.backend === "supabase" && remoteLead.assignmentLoaded) return lead;
-    if (key === "journey" && remoteLead.backend === "supabase" && remoteLead.journeyLoaded) {
-      const remoteJourney = Array.isArray(lead[key]) ? lead[key] : [];
-      const cachedJourney = Array.isArray(cached[key]) ? cached[key] : [];
-      lead[key] = mergeLeadJourneyEntries(remoteJourney, cachedJourney);
-      return lead;
-    }
-    if (cached[key] !== undefined) lead[key] = cached[key];
-    return lead;
-  }, { ...remoteLead });
-}
-
-function readCachedLeads() {
-  const cached = getDemoValue("leads");
-  return Array.isArray(cached) ? normalizeLeads(cached) : [];
-}
-
-export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
-  const cachedLeads = readCachedLeads();
-
+async function fetchLeadsSnapshotInternal(): Promise<LeadsQuerySnapshot> {
   if (!isSupabaseLeadsEnabled()) {
-    return { leads: cachedLeads, dataSource: "demo", errorMessage: "" };
+    return { leads: [], dataSource: "error", errorMessage: "Supabase is required for lead records." };
   }
 
   try {
@@ -81,14 +53,11 @@ export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
       journeys.set(journey.lead_id, current);
     });
     const leads = normalizeLeads(rows.map((row) => {
-      const merged = mergeLeadWorkflowMetadata(
-        mapSupabaseLeadToOsLead(
-          row,
-          assignments.get(row.id) || null,
-          assignmentResult.available,
-          journeyResult.available ? journeys.get(row.id) || [] : null,
-        ),
-        cachedLeads,
+      const merged = mapSupabaseLeadToOsLead(
+        row,
+        assignments.get(row.id) || null,
+        assignmentResult.available,
+        journeyResult.available ? journeys.get(row.id) || [] : null,
       );
       const loss = losses.get(row.id);
       if (!loss) return merged;
@@ -100,14 +69,21 @@ export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
         lostAt: loss.lost_at || "",
       };
     }));
-    saveDemoValue("leads", leads);
     return { leads, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
     const message = error?.message || "Unable to load leads.";
     return {
-      leads: cachedLeads,
-      dataSource: "demo",
+      leads: [],
+      dataSource: "error",
       errorMessage: `Could not load leads: ${message}`,
     };
   }
+}
+
+export async function fetchLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
+  return fetchLeadsSnapshotInternal();
+}
+
+export async function fetchBackendLeadsSnapshot(): Promise<LeadsQuerySnapshot> {
+  return fetchLeadsSnapshotInternal();
 }

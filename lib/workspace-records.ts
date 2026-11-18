@@ -145,14 +145,27 @@ export function applyWorkspaceRecordsToFloor(records): FloorConfig {
   };
 }
 
-export function workspaceRecordsToAreaData(records, membersOverride?: readonly any[]): AreaLiveData[] {
+export function workspaceRecordsToAreaData(records, membersOverride?: readonly any[], invoiceRecipientIds?: ReadonlySet<string> | null): AreaLiveData[] {
   const byAreaId = new Map((Array.isArray(records) ? records : []).map((record) => [record.areaId || record.id, record]));
   const sourceMembers = Array.isArray(membersOverride) ? membersOverride : (getDemoValue("members") || []);
   const memberById = new Map<any, any>(sourceMembers.map((member: any) => [member.id, member]));
   const mappedFloor = applyWorkspaceRecordsToFloor(records);
-  return mappedFloor.areas.filter(isRentable).map((area) => {
+  // Include non-rentable areas as well so shared facilities can carry live
+  // operational and maintenance state in the floor-plan detail card.
+  return mappedFloor.areas.map((area) => {
     const record = byAreaId.get(area.id) || baseRecord(area);
     const assignedMember = memberById.get(record.memberId);
+    const areaId = String(area.id).trim().toLowerCase();
+    const areaName = String(area.name).trim().toLowerCase();
+    const memberBelongsToArea = (member: any) => {
+      const memberSpaceId = String(member?.spaceId || "").trim().toLowerCase();
+      const memberSpace = String(member?.space || "").trim().toLowerCase();
+      return memberSpaceId === areaId || (!memberSpaceId && memberSpace === areaName);
+    };
+    const invoiceMember = invoiceRecipientIds
+      ? sourceMembers.find((member: any) => invoiceRecipientIds.has(String(member.id)) && (memberBelongsToArea(member) || String(member.id) === String(record.memberId)))
+      : undefined;
+    const displayMember = invoiceRecipientIds == null ? assignedMember : invoiceMember;
     // A workspace without a member_id is not a valid member assignment.
     // Ignore stale occupant/status text left by older assignment flows.
     const occupied = record.status === "occupied" && Boolean(record.memberId);
@@ -184,7 +197,7 @@ export function workspaceRecordsToAreaData(records, membersOverride?: readonly a
       expectedLeavingDate: assignedMember?.expectedLeavingDate || record.expectedLeavingDate || "",
       noticeNotes: assignedMember?.noticeNotes || record.noticeNotes || "",
       paymentStatus: record.paymentStatus === "Overdue" ? "overdue" : record.paymentStatus === "Grace" ? "grace" : record.paymentStatus === "Due soon" ? "due-soon" : record.paymentStatus === "Paid" ? "paid" : "unknown",
-      ...(occupied ? { member: { id: record.memberId || area.id, name: assignedMember?.company || record.company || "No company", contactName: assignedMember?.member || record.occupant || undefined, email: assignedMember?.email || undefined, employees: record.capacity || undefined, monthlyRent: assignedMember?.rent || record.monthlyRent || undefined } } : {}),
+      ...(occupied && displayMember ? { member: { id: displayMember.id || area.id, name: displayMember.company || record.company || "No company", contactName: displayMember.member || record.occupant || undefined, email: displayMember.email || undefined, employees: record.capacity || undefined, monthlyRent: displayMember.rent || record.monthlyRent || undefined } } : {}),
       ...(maintenance ? { maintenance } : {})
     };
   });

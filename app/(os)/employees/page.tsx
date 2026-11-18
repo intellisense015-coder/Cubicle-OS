@@ -7,25 +7,22 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createColumnHelper } from "@tanstack/react-table";
 import { motion } from "motion/react";
-import { CheckCircle2, ChevronDown, CirclePlus, KeyRound, LoaderCircle, MailPlus, ShieldAlert, UserRoundCog } from "lucide-react";
+import { CheckCircle2, ChevronDown, CirclePlus, LoaderCircle, MailPlus, ShieldAlert, UserRoundCog } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/table";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { getDemoSession, getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { useToast } from "@/components/ui/toast-provider";
 import { getSupabaseBrowserClient, isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { inviteSupabaseAdminUser, mapSupabaseAdminUserToOsEmployee, updateSupabaseAdminUser, updateSupabaseAdminUserProfile } from "@/lib/supabase/admin-users";
 import { useHasPermission } from "@/lib/access-control";
 import { z } from "zod";
 import { queryKeys } from "@/lib/query-keys";
-import { fetchEmployeeRolesSnapshot, fetchEmployeesSnapshot, fallbackAdminRoles, type EmployeeQuerySnapshot } from "@/lib/employee-query";
-import { fetchApprovalsSnapshot } from "@/lib/approval-query";
+import { fetchEmployeeRolesSnapshot, fetchEmployeesSnapshot, type EmployeeQuerySnapshot } from "@/lib/employee-query";
 
 // TITLE: EMPLOYEE ROLE OPTIONS
-const roleOptions = ["Owner", "Editor", "Front Desk", "Operations", "Finance", "Member support", "Community manager", "Sales", "Facilities", "HR", "Other / custom role"];
 const normalizeEmployeeEmail = (value) => String(value || "").trim().toLowerCase();
 const normalizeEmployeePhone = (value) => { const digits = String(value || "").replace(/\D/g, ""); return digits.length > 10 ? digits.slice(-10) : digits; };
 
@@ -73,7 +70,7 @@ const employeeEditorSchema = z.object({
 });
 
 // TITLE: CUSTOM ROLE SELECT
-function RoleSelect({ value, onChange, options = roleOptions }) {
+function RoleSelect({ value, onChange, options = [] }) {
   const [open, setOpen] = useState(false);
   return <div className="settings-label lead-source-field"><span>Access role</span><div className="lead-source-select-wrap"><button type="button" className="text-select lead-source-trigger" onClick={() => setOpen((current) => !current)} aria-expanded={open}>{value}<ChevronDown size={14} /></button>{open && <div className="lead-source-menu">{options.map((role) => <button type="button" key={role} className={value === role ? "is-selected" : ""} onClick={() => { onChange(role); setOpen(false); }}>{role}</button>)}</div>}</div></div>;
 }
@@ -135,28 +132,22 @@ function EmployeeEditor({ employee, adminRoles, onSave, onToggleStatus }) {
     try { await onToggleStatus(); } finally { setStatusSaving(false); }
   };
   const emailError = formState.errors.email?.message;
-  return <motion.form className="inline-form-card employee-editor-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(onSubmit)}><div className="card-heading"><div><h2>{employee.name}</h2><p className="muted-copy">{isSupabaseUser ? "Update this employee’s identity and account access." : "Update the employee details before saving this account."}</p></div></div><div className="inline-form-grid"><label className="settings-label">Name<Input {...register("name")} /></label><label className="settings-label">Email<Input className={emailError ? "has-error" : ""} type="email" {...register("email")} disabled={isSupabaseUser && selectedRoleKey === "owner"} />{emailError && <span className="lead-form-error">{emailError}</span>}</label><label className="settings-label">Phone number<Input {...register("phone")} placeholder="+92" /></label><RoleSelect options={isSupabaseUser ? adminRoles.map((role) => role.label) : roleOptions} value={watch("role")} onChange={(role) => setValue("role", role, { shouldDirty: true, shouldValidate: true })} /></div><div className="inline-form-actions employee-editor-actions"><Button type="button" variant="ghost" loading={statusSaving} disabled={formState.isSubmitting} className={employee.status === "Disabled" ? "reactivate-account-button" : "suspend-account-button"} onClick={handleToggleStatus}>{employee.status === "Disabled" ? "Reactivate account" : "Suspend account"}</Button><Button type="submit" loading={formState.isSubmitting}>Save employee</Button></div></motion.form>;
+  return <motion.form className="inline-form-card employee-editor-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(onSubmit)}><div className="card-heading"><div><h2>{employee.name}</h2><p className="muted-copy">Update this employee’s identity and account access.</p></div></div><div className="inline-form-grid"><label className="settings-label">Name<Input {...register("name")} /></label><label className="settings-label">Email<Input className={emailError ? "has-error" : ""} type="email" {...register("email")} disabled={isSupabaseUser && selectedRoleKey === "owner"} />{emailError && <span className="lead-form-error">{emailError}</span>}</label><label className="settings-label">Phone number<Input {...register("phone")} placeholder="+92" /></label><RoleSelect options={adminRoles.map((role) => role.label)} value={watch("role")} onChange={(role) => setValue("role", role, { shouldDirty: true, shouldValidate: true })} /></div><div className="inline-form-actions employee-editor-actions"><Button type="button" variant="ghost" loading={statusSaving} disabled={formState.isSubmitting} className={employee.status === "Disabled" ? "reactivate-account-button" : "suspend-account-button"} onClick={handleToggleStatus}>{employee.status === "Disabled" ? "Reactivate account" : "Suspend account"}</Button><Button type="submit" loading={formState.isSubmitting}>Save employee</Button></div></motion.form>;
 }
 
 // TITLE: INVITE EMPLOYEE FORM
-function InviteEmployee({ onCancel, onSave, roleOptions: availableRoleOptions = roleOptions }) {
+function InviteEmployee({ employees, onCancel, onSave, roleOptions: availableRoleOptions = [] }) {
   const { showToast } = useToast();
-  const formApi = useForm({ resolver: zodResolver(employeeInviteSchema), defaultValues: { name: "", email: "", phone: "", role: availableRoleOptions.includes("Front Desk") ? "Front Desk" : availableRoleOptions[0] || "Front Desk", customRole: "" }, mode: "onBlur" });
+  const formApi = useForm({ resolver: zodResolver(employeeInviteSchema), defaultValues: { name: "", email: "", phone: "", role: availableRoleOptions[0] || "", customRole: "" }, mode: "onBlur" });
   const { register, handleSubmit, setError, setValue, watch, formState } = formApi;
-  const selectedRole = watch("role") === "Other / custom role" ? watch("customRole").trim() : watch("role");
+  const selectedRole = watch("role");
   const handleInvite = async (form) => {
     if (!selectedRole) { setError("customRole", { message: "Enter a custom role." }); showToast({ variant: "error", title: "Invitation was not sent", message: "Enter a role before sending the invitation." }); return; }
-    const savedEmployees = getDemoValue("employees");
-    const employees = Array.isArray(savedEmployees) ? savedEmployees : [];
     const email = normalizeEmployeeEmail(form.email);
     const phone = normalizeEmployeePhone(form.phone);
-    const ownerEmail = normalizeEmployeeEmail(getDemoSession().email);
-    const ownerPhone = normalizeEmployeePhone(getDemoValue("profilePhone") || "+92 300 0000000");
     let hasBusinessError = false;
     if (employees.some((employee) => normalizeEmployeeEmail(employee.email) === email)) { setError("email", { message: "An employee with this email address is already registered." }); hasBusinessError = true; }
-    else if (email === ownerEmail) { setError("email", { message: "This email address is already used by the owner or an employee." }); hasBusinessError = true; }
     if (phone && employees.some((employee) => normalizeEmployeePhone(employee.phone) === phone)) { setError("phone", { message: "An employee with this phone number is already registered." }); hasBusinessError = true; }
-    else if (phone && phone === ownerPhone) { setError("phone", { message: "This phone number is already used by the owner or an employee." }); hasBusinessError = true; }
     if (hasBusinessError) {
       showToast({ variant: "error", title: "Invitation was not sent", message: "Please fix the highlighted email or phone number and try again." });
       return;
@@ -174,17 +165,14 @@ export default function EmployeesPage() {
   const canView = useHasPermission("employees.read");
   const canManage = useHasPermission("admin_users.manage");
   const supabaseEnabled = isSupabaseLeadsEnabled();
-  const [employees, setEmployees] = useState(() => {
-    const saved = getDemoValue("employees");
-    return Array.isArray(saved) ? saved : [];
-  });
-  const [adminRoles, setAdminRoles] = useState(fallbackAdminRoles);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [adminRoles, setAdminRoles] = useState<any[]>([]);
   const [selected, setSelected] = useState(null);
   const [showInvite, setShowInvite] = useState(false);
   const [employeeView, setEmployeeView] = useState("active");
   const [managingEmployeeId, setManagingEmployeeId] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
-  const [currentUserEmail, setCurrentUserEmail] = useState(() => normalizeEmployeeEmail(getDemoSession().email));
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
 
   useEffect(() => {
     if (!supabaseEnabled) return undefined;
@@ -192,7 +180,7 @@ export default function EmployeesPage() {
     void getSupabaseBrowserClient().auth.getUser().then(({ data }) => {
       if (!mounted) return;
       setCurrentUserId(data.user?.id || "");
-      setCurrentUserEmail(normalizeEmployeeEmail(data.user?.email || getDemoSession().email));
+      setCurrentUserEmail(normalizeEmployeeEmail(data.user?.email));
     }).catch(() => undefined);
     return () => { mounted = false; };
   }, [supabaseEnabled]);
@@ -207,16 +195,12 @@ export default function EmployeesPage() {
     queryFn: fetchEmployeeRolesSnapshot,
     enabled: canManage,
   });
-  const approvalsQuery = useQuery({
-    queryKey: queryKeys.approvals.all,
-    queryFn: fetchApprovalsSnapshot,
-  });
 
   useEffect(() => {
     if (!employeesQuery.data) return;
     setEmployees(employeesQuery.data.employees);
     if (employeesQuery.data.errorMessage) {
-      showToast({ variant: "error", title: "Users could not be loaded", message: "Showing the saved employee data." });
+      showToast({ variant: "error", title: "Users could not be loaded", message: employeesQuery.data.errorMessage });
     }
   }, [employeesQuery.data, showToast]);
 
@@ -224,7 +208,7 @@ export default function EmployeesPage() {
     if (!rolesQuery.data) return;
     setAdminRoles(rolesQuery.data.roles);
     if (rolesQuery.data.errorMessage) {
-      showToast({ variant: "error", title: "Roles could not be loaded", message: "Showing the available fallback roles." });
+      showToast({ variant: "error", title: "Roles could not be loaded", message: rolesQuery.data.errorMessage });
     }
   }, [rolesQuery.data, showToast]);
 
@@ -232,41 +216,30 @@ export default function EmployeesPage() {
   const persist = (nextEmployees) => {
     setEmployees(nextEmployees);
     queryClient.setQueryData<EmployeeQuerySnapshot>(queryKeys.employees.all, (current) => ({
-      ...(current || { dataSource: supabaseEnabled ? "supabase" : "demo", errorMessage: "" }),
+      ...(current || { dataSource: "supabase", errorMessage: "" }),
       employees: nextEmployees,
       errorMessage: "",
     }));
-    saveDemoValue("employees", nextEmployees);
   };
   const saveEmployee = async (employee, action = "profile") => {
     try {
-      if (employee.backend === "supabase") {
-        const role = employee.roleKey || adminRoles.find((item) => item.label === employee.role)?.role_key;
-        if (!role) throw new Error("Select a valid access role.");
-        const userId = employee.userId || employee.id;
-        const emailChanged = normalizeEmployeeEmail(employee.email) !== normalizeEmployeeEmail(selected?.email);
-        const nameChanged = String(employee.name || "").trim() !== String(selected?.name || "").trim();
-        const phoneChanged = normalizeEmployeePhone(employee.phone) !== normalizeEmployeePhone(selected?.phone);
-        const profileRow = emailChanged || nameChanged || phoneChanged
-          ? await updateSupabaseAdminUserProfile(userId, {
-            ...(emailChanged ? { email: employee.email } : {}),
-            ...(nameChanged ? { fullName: employee.name } : {}),
-            ...(phoneChanged ? { phone: normalizeEmployeePhone(employee.phone) } : {}),
-          })
-          : null;
-        const row = await updateSupabaseAdminUser(userId, role, employee.status !== "Disabled");
-        const persistedEmployee = { ...mapSupabaseAdminUserToOsEmployee({ ...row, email: profileRow?.email || employee.email || row.email, phone: profileRow?.phone || employee.phone || row.phone, full_name: profileRow?.full_name || row.full_name || employee.name, last_sign_in_at: profileRow?.last_sign_in_at || row.last_sign_in_at }), name: employee.name, phone: normalizeEmployeePhone(employee.phone) };
-        persist(employees.map((item) => item.id === employee.id ? persistedEmployee : item));
-        setSelected(null);
-        if (action === "status") {
-          const statusLabel = employee.status === "Disabled" ? "suspended" : "activated";
-          showToast({ variant: "success", title: `Account ${statusLabel}`, message: `${persistedEmployee.name}'s account was ${statusLabel}.` });
-        } else {
-          showToast({ variant: "success", title: "Employee information updated", message: `${persistedEmployee.name}'s information was updated.` });
-        }
-        return;
-      }
-      persist(employees.map((item) => item.id === employee.id ? employee : item));
+      if (!supabaseEnabled || employee.backend !== "supabase") throw new Error("Supabase is required to update employee access.");
+      const role = employee.roleKey || adminRoles.find((item) => item.label === employee.role)?.role_key;
+      if (!role) throw new Error("Select a valid access role from the database.");
+      const userId = employee.userId || employee.id;
+      const emailChanged = normalizeEmployeeEmail(employee.email) !== normalizeEmployeeEmail(selected?.email);
+      const nameChanged = String(employee.name || "").trim() !== String(selected?.name || "").trim();
+      const phoneChanged = normalizeEmployeePhone(employee.phone) !== normalizeEmployeePhone(selected?.phone);
+      const profileRow = emailChanged || nameChanged || phoneChanged
+        ? await updateSupabaseAdminUserProfile(userId, {
+          ...(emailChanged ? { email: employee.email } : {}),
+          ...(nameChanged ? { fullName: employee.name } : {}),
+          ...(phoneChanged ? { phone: normalizeEmployeePhone(employee.phone) } : {}),
+        })
+        : null;
+      const row = await updateSupabaseAdminUser(userId, role, employee.status !== "Disabled");
+      const persistedEmployee = { ...mapSupabaseAdminUserToOsEmployee({ ...row, email: profileRow?.email || employee.email || row.email, phone: profileRow?.phone || employee.phone || row.phone, full_name: profileRow?.full_name || row.full_name || employee.name, last_sign_in_at: profileRow?.last_sign_in_at || row.last_sign_in_at }), name: employee.name, phone: normalizeEmployeePhone(employee.phone) };
+      persist(employees.map((item) => item.id === employee.id ? persistedEmployee : item));
       setSelected(null);
       if (action === "status") {
         const statusLabel = employee.status === "Disabled" ? "suspended" : "activated";
@@ -298,10 +271,7 @@ export default function EmployeesPage() {
       }
       return;
     }
-    const next = { ...form, email, id: `employee-${Date.now()}`, permissions: "Workspace access", status: "Pending invite", lastActivity: "Not started" };
-    persist([next, ...employees]);
-    setShowInvite(false);
-    showToast({ variant: "success", title: "Invitation sent", message: `Invitation sent to ${next.name}.` });
+    showToast({ variant: "error", title: "Invitation was not sent", message: "Supabase is required to invite employees." });
   };
   const employeesWithoutCurrentUser = useMemo(() => employees.filter((employee) => {
     const employeeId = String(employee.userId || employee.id || "");
@@ -312,10 +282,6 @@ export default function EmployeesPage() {
   const sortedEmployees = useMemo(() => [...employeesWithoutCurrentUser].sort((a, b) => Number(a.status === "Disabled") - Number(b.status === "Disabled")), [employeesWithoutCurrentUser]);
   const activeCount = employeesWithoutCurrentUser.filter((employee) => employee.status !== "Disabled").length;
   const suspendedCount = employeesWithoutCurrentUser.filter((employee) => employee.status === "Disabled").length;
-  const approvalRequiredCount = useMemo(
-    () => (approvalsQuery.data?.approvals || []).filter((approval) => approval.status === "Pending").length,
-    [approvalsQuery.data?.approvals],
-  );
   const visibleEmployees = sortedEmployees.filter((employee) => employeeView === "active" ? employee.status !== "Disabled" : employee.status === "Disabled");
 
   if (!canView && !canManage) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Employee records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Employees — View access.</div></motion.div>;
@@ -325,5 +291,5 @@ export default function EmployeesPage() {
     router.push(`/employees/${encodeURIComponent(employee.id)}/access`);
   };
 
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /><KpiCard icon={<KeyRound size={18} />} label="Approval-required" value={approvalRequiredCount} detail="Pending owner approvals" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable title="Employee directory" subtitle={canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."} columns={createEmployeeColumns(canManage ? openEmployeeAccess : () => undefined, canManage, managingEmployeeId)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee roleOptions={supabaseEnabled ? adminRoles.map((role) => role.label) : roleOptions} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Employees & Access</h1><p className="muted-copy">Control who can access the OS and what they can change.</p></div>{canManage ? <Button onClick={() => setShowInvite(true)}><CirclePlus size={16} /> Add employee</Button> : <span className="read-only-label">View only</span>}</div><section className="stat-grid module-stats"><KpiCard icon={<CheckCircle2 size={18} />} label="Active employees" value={activeCount} detail="All access checks healthy" /><KpiCard icon={<MailPlus size={18} />} label="Pending invitations" value={employees.filter((employee) => employee.status === "Pending invite").length} detail="Waiting for setup" /><KpiCard icon={<ShieldAlert size={18} />} label="Suspended accounts" value={suspendedCount} detail="Access removed" /></section><div className="section-heading"><div><h2>Employee directory</h2><p className="muted-copy">{canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."}</p></div><div className="directory-view-toggle" role="group" aria-label="Employee status filter"><button className={employeeView === "active" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("active")}>Active ({activeCount})</button><button className={employeeView === "suspended" ? "is-selected" : ""} type="button" onClick={() => setEmployeeView("suspended")}>Suspended ({suspendedCount})</button></div></div><DataTable title="Employee directory" subtitle={canManage ? "Select an employee row to edit details. Use the access action to manage permissions." : "Employee details are visible; account changes are restricted."} columns={createEmployeeColumns(canManage ? openEmployeeAccess : () => undefined, canManage, managingEmployeeId)} data={visibleEmployees} onRowClick={canManage ? setSelected : undefined} emptyMessage={employeeView === "active" ? "No active employees found." : "No suspended employees found."} /><Dialog open={showInvite && canManage} onClose={() => setShowInvite(false)} ariaLabel="Add employee"><InviteEmployee employees={employees} roleOptions={adminRoles.map((role) => role.label)} onCancel={() => setShowInvite(false)} onSave={invite} /></Dialog><Dialog open={Boolean(selected) && canManage} onClose={() => setSelected(null)} ariaLabel="Manage employee">{selected ? <EmployeeEditor employee={selected} adminRoles={adminRoles} onSave={saveEmployee} onToggleStatus={toggleStatus} /> : null}</Dialog></motion.div>;
 }

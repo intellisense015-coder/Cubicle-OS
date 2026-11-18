@@ -17,6 +17,7 @@ const PAGE_TITLES = {
   "/companies": "Companies",
   "/visits": "Visits",
   "/invoices": "Invoices",
+  "/member-ledgers": "Member Ledgers",
   "/quotations": "Quotations",
   "/proposals": "Proposals",
   "/employees": "Employees & Access",

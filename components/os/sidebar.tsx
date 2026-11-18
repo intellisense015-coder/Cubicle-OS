@@ -62,6 +62,7 @@ const DEFAULT_NAV_GROUPS: NavGroupItem[] = [
   {
     label: "Billing", icon: ReceiptText, items: [
       { label: "Invoices", href: "/invoices", icon: ReceiptText },
+      { label: "Member ledgers", href: "/member-ledgers", icon: History },
       { label: "Quotations", href: "/quotations", icon: FileText },
       { label: "Proposals", href: "/proposals", icon: FileText }
     ]
@@ -109,6 +110,7 @@ export function OsSidebar({ currentPath, onNavigate, onSignOut, mobileOpen = fal
     "/workspaces": navigationPermissions.workspaces,
     "/floor-plan": navigationPermissions.workspaces,
     "/invoices": navigationPermissions.invoices,
+    "/member-ledgers": navigationPermissions.invoices,
     "/quotations": navigationPermissions.quotations,
     "/proposals": navigationPermissions.proposals,
     "/employees": navigationPermissions.employees,

@@ -9,20 +9,19 @@ import { motion } from "motion/react";
 
 import { DataTable } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoValue } from "@/lib/demo-session";
-import { getWorkspaceRecords, isAssignableWorkspace } from "@/lib/workspace-records";
-import { syncWorkspaceBilling } from "@/lib/billing";
+import { isAssignableWorkspace } from "@/lib/workspace-records";
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { normalizeLeadStage } from "@/lib/lead-stages";
 import { useToast } from "@/components/ui/toast-provider";
 import { DashboardCleanView } from "@/components/os/dashboard-clean-view";
 import { queryKeys } from "@/lib/query-keys";
-import { fetchLeadsSnapshot } from "@/lib/lead-query";
+import { fetchBackendLeadsSnapshot } from "@/lib/lead-query";
 import { fetchVisitsSnapshot } from "@/lib/visit-query";
 import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
 import { fetchInvoicesSnapshot } from "@/lib/invoice-query";
-import { fetchApprovalsSnapshot } from "@/lib/approval-query";
+import { fetchMembersSnapshot } from "@/lib/member-query";
+import { fetchInvoiceAutomationSettings } from "@/lib/supabase/invoice-automation";
 import { usePermissionStatus } from "@/lib/access-control";
 
 function formatDashboardFollowUp(value) {
@@ -199,8 +198,8 @@ export default function DashboardPage() {
   const dashboardAccess = usePermissionStatus("dashboard.read");
   const canViewDashboard = dashboardAccess.allowed;
   const leadsQuery = useQuery({
-    queryKey: queryKeys.leads.all,
-    queryFn: fetchLeadsSnapshot,
+    queryKey: queryKeys.dashboard.leads,
+    queryFn: fetchBackendLeadsSnapshot,
     enabled: canViewDashboard,
   });
   const visitsQuery = useQuery({
@@ -218,9 +217,14 @@ export default function DashboardPage() {
     queryFn: fetchInvoicesSnapshot,
     enabled: canViewDashboard,
   });
-  const approvalsQuery = useQuery({
-    queryKey: queryKeys.approvals.all,
-    queryFn: fetchApprovalsSnapshot,
+  const invoiceAutomationQuery = useQuery({
+    queryKey: queryKeys.invoices.automation,
+    queryFn: fetchInvoiceAutomationSettings,
+    enabled: canViewDashboard,
+  });
+  const membersQuery = useQuery({
+    queryKey: queryKeys.members.all,
+    queryFn: fetchMembersSnapshot,
     enabled: canViewDashboard,
   });
   const [session, setSession] = useState(false);
@@ -228,8 +232,6 @@ export default function DashboardPage() {
   const [visitRows, setVisitRows] = useState<any[]>([]);
   const [workspaceRows, setWorkspaceRows] = useState<any[]>([]);
   const [invoiceRows, setInvoiceRows] = useState<any[]>([]);
-  const [approvalRows, setApprovalRows] = useState<any[]>([]);
-  const [spaceOccupancy, setSpaceOccupancy] = useState({ occupied: 0, total: 0 });
   const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   useEffect(() => {
@@ -238,80 +240,37 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!leadsQuery.data) return;
-    const leads = leadsQuery.data.leads;
+    const leads = leadsQuery.data.dataSource === "supabase" ? leadsQuery.data.leads : [];
     setFollowUpRows(leads.filter((lead) => lead.stage === "Follow-up due" && isFollowUpDueToday(lead.nextFollowUp)));
   }, [leadsQuery.data]);
 
   useEffect(() => {
     if (!visitsQuery.data) return;
-    const visits = visitsQuery.data.visits;
+    const visits = visitsQuery.data.dataSource === "supabase" ? visitsQuery.data.visits : [];
     setVisitRows(visits.filter((visit) => visit.status === "Scheduled" && isDateToday(visit.date)));
   }, [visitsQuery.data]);
 
   useEffect(() => {
     if (!workspacesQuery.data) return;
-    const synced = syncWorkspaceBilling(workspacesQuery.data.workspaces).workspaces.filter(isAssignableWorkspace);
+    // The dashboard is a backend read model. Do not render the browser demo
+    // cache when Supabase is disabled or when the live request falls back.
+    const synced = workspacesQuery.data.dataSource === "supabase"
+      ? workspacesQuery.data.workspaces.filter(isAssignableWorkspace)
+      : [];
     setWorkspaceRows(synced);
-    setSpaceOccupancy({
-      occupied: synced.filter((workspace) => workspace.status === "occupied").length,
-      total: synced.length,
-    });
   }, [workspacesQuery.data]);
 
   useEffect(() => {
     if (!invoicesQuery.data) return;
     const currentPeriod = dashboardDateKey(new Date()).slice(0, 7);
-    setInvoiceRows(invoicesQuery.data.invoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
+    const invoices = invoicesQuery.data.dataSource === "supabase" ? invoicesQuery.data.invoices : [];
+    setInvoiceRows(invoices.filter((invoice) => String(invoice.issueDate || "").startsWith(currentPeriod)));
     if (invoicesQuery.data.errorMessage) {
-      showToast({ variant: "error", title: "Dashboard invoices could not be loaded", message: "Showing the saved invoice data." });
+      showToast({ variant: "error", title: "Dashboard invoices could not be loaded", message: "No browser-cached invoice data is being used." });
     }
   }, [invoicesQuery.data, showToast]);
 
-  useEffect(() => {
-    if (!approvalsQuery.data) return;
-    setApprovalRows(approvalsQuery.data.approvals);
-  }, [approvalsQuery.data]);
-
-  useEffect(() => {
-    setSession(true);
-
-    const loadDashboardData = () => {
-      const workspaces = syncWorkspaceBilling(getWorkspaceRecords()).workspaces.filter(isAssignableWorkspace);
-      setWorkspaceRows(workspaces);
-      setSpaceOccupancy({
-        occupied: workspaces.filter((workspace) => workspace.status === "occupied").length,
-        total: workspaces.length,
-      });
-
-      const savedLeads = getDemoValue("leads");
-      if (Array.isArray(savedLeads)) {
-        const normalizedLeads = savedLeads.map((lead) => ({ ...lead, stage: normalizeLeadStage(lead.stage, lead) }));
-        setFollowUpRows(normalizedLeads.filter((lead) => lead.stage === "Follow-up due" && isFollowUpDueToday(lead.nextFollowUp)));
-      } else {
-        setFollowUpRows([]);
-      }
-
-      const savedVisits = getDemoValue("visits");
-      if (Array.isArray(savedVisits)) {
-        setVisitRows(savedVisits.filter((visit) => visit.status === "Scheduled" && isDateToday(visit.date)));
-      } else {
-        setVisitRows([]);
-      }
-
-    };
-
-    loadDashboardData();
-    const refreshOnFocus = () => loadDashboardData();
-    const refreshOnVisibility = () => { if (document.visibilityState === "visible") loadDashboardData(); };
-    const refreshTimer = window.setInterval(loadDashboardData, 60 * 1000);
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnVisibility);
-    return () => {
-      window.clearInterval(refreshTimer);
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnVisibility);
-    };
-  }, [router, showToast]);
+  useEffect(() => setSession(true), []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60 * 1000);
@@ -336,22 +295,46 @@ export default function DashboardPage() {
     .filter((invoice) => invoice.paymentStatus !== "Paid")
     .reduce((total, invoice) => total + dashboardAmount(invoice.amount), 0), [invoiceRows]);
 
-  const recurringAmount = useMemo(() => workspaceRows
-    .filter((workspace) => workspace.status === "occupied")
-    .reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0), [workspaceRows]);
-
   const dashboardMetrics = useMemo(() => {
     const privateWorkspaces = workspaceRows.filter((workspace) => dashboardWorkspaceGroup(workspace) === "private");
     const sharedWorkspaces = workspaceRows.filter((workspace) => dashboardWorkspaceGroup(workspace) === "shared");
     const totalSeats = workspaceRows.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
     const privateSeats = privateWorkspaces.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
     const sharedSeats = sharedWorkspaces.reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
-    const occupiedSeatsFor = (rows) => rows.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardWorkspaceSeats(workspace), 0);
-    const privateOccupied = occupiedSeatsFor(privateWorkspaces);
-    const sharedOccupied = occupiedSeatsFor(sharedWorkspaces);
+    const backendMembers = membersQuery.data?.dataSource === "supabase" ? membersQuery.data.members : [];
+    const invoiceRecipientIds = new Set(
+      invoiceAutomationQuery.data?.enabled
+        ? (invoiceAutomationQuery.data.memberIds || []).map((id) => String(id))
+        : [],
+    );
+    const workspaceById = new Map(workspaceRows.map((workspace) => [String(workspace.id || workspace.areaId), workspace]));
+    const activeAssignedMembers = backendMembers.filter((member) => {
+      const status = String(member.status || "").trim().toLowerCase();
+      const workspaceId = String(member.spaceId || "").trim();
+      return status === "active" && workspaceId && workspaceById.has(workspaceId);
+    });
+    const privateOccupied = activeAssignedMembers
+      .filter((member) => dashboardWorkspaceGroup(workspaceById.get(String(member.spaceId))) === "private")
+      .length;
+    const sharedOccupied = activeAssignedMembers
+      .filter((member) => dashboardWorkspaceGroup(workspaceById.get(String(member.spaceId))) === "shared")
+      .length;
     const totalOccupied = privateOccupied + sharedOccupied;
-    const privateMrr = privateWorkspaces.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0);
-    const sharedMrr = sharedWorkspaces.filter((workspace) => workspace.status === "occupied").reduce((total, workspace) => total + dashboardAmount(workspace.monthlyRent), 0);
+    const billableMembers = backendMembers.filter((member) => {
+      const status = String(member.status || "").trim().toLowerCase();
+      const workspaceId = String(member.spaceId || "").trim();
+      return status === "active"
+        && invoiceRecipientIds.has(String(member.id))
+        && workspaceId
+        && workspaceById.has(workspaceId)
+        && dashboardAmount(member.rent) > 0;
+    });
+    const privateMrr = billableMembers
+      .filter((member) => dashboardWorkspaceGroup(workspaceById.get(String(member.spaceId))) === "private")
+      .reduce((total, member) => total + dashboardAmount(member.rent), 0);
+    const sharedMrr = billableMembers
+      .filter((member) => dashboardWorkspaceGroup(workspaceById.get(String(member.spaceId))) === "shared")
+      .reduce((total, member) => total + dashboardAmount(member.rent), 0);
     const privateAveragePrice = privateOccupied ? privateMrr / privateOccupied : 0;
     const sharedAveragePrice = sharedOccupied ? sharedMrr / sharedOccupied : 0;
     const averagePrice = totalOccupied ? (privateMrr + sharedMrr) / totalOccupied : 0;
@@ -375,7 +358,7 @@ export default function DashboardPage() {
       averagePrice,
       opportunityLoss: Math.round(opportunityLoss),
     };
-  }, [workspaceRows, leadsQuery.data?.leads]);
+  }, [invoiceAutomationQuery.data, membersQuery.data, workspaceRows, leadsQuery.data?.leads]);
 
   const paymentRows = useMemo(() => [...invoiceRows]
     .sort((a, b) => {
@@ -391,9 +374,6 @@ export default function DashboardPage() {
       amount: formatDashboardAmount(invoice.amount),
     })), [invoiceRows]);
 
-  const pendingApprovals = useMemo(() => approvalRows.filter((approval) => approval.status === "Pending").length, [approvalRows]);
-  const activeMemberCount = useMemo(() => workspaceRows.filter((workspace) => workspace.status === "occupied").length, [workspaceRows]);
-
   if (dashboardAccess.isLoading || !canViewDashboard) return <AppSkeleton />;
   if (!session) return <AppSkeleton />;
 
@@ -408,7 +388,7 @@ export default function DashboardPage() {
     sortedFollowUpRows={sortedFollowUpRows}
     sortedVisitRows={sortedVisitRows}
     currentTime={currentTime}
-    pendingApprovals={pendingApprovals}
+    pendingApprovals={0}
     formatDashboardAmount={formatDashboardAmount}
     formatDashboardCompactAmount={formatDashboardCompactAmount}
     formatDashboardFollowUpAge={formatDashboardFollowUpAge}

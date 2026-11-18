@@ -1,6 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { secureOsMutation } from "@/lib/supabase/secure-mutations";
-import { getDemoValue } from "@/lib/demo-session";
 
 export type SupabaseAdminUserRow = {
   user_id: string;
@@ -39,16 +38,6 @@ export type SupabaseAdminInviteInput = {
   phone?: string;
   roleKey: string;
 };
-
-function savedInvitationTemplate() {
-  const value = getDemoValue("email-template-employee-invitation");
-  if (!value || typeof value !== "object") return undefined;
-  const template = value as { subject?: unknown; body?: unknown };
-  return {
-    subject: typeof template.subject === "string" ? template.subject : undefined,
-    body: typeof template.body === "string" ? template.body : undefined,
-  };
-}
 
 export async function fetchSupabaseAdminUsers() {
   const { data, error } = await getSupabaseBrowserClient().rpc("list_visible_admin_users");
@@ -141,7 +130,7 @@ export async function inviteSupabaseAdminUser(input: SupabaseAdminInviteInput) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ ...input, template: savedInvitationTemplate() }),
+    body: JSON.stringify(input),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(payload?.error || "Supabase could not send the invitation.");

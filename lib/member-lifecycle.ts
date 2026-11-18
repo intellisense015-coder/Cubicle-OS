@@ -60,10 +60,17 @@ export function createMembershipPeriod(values: any, existingMember: any = null, 
 
 export function closeCurrentMembership(member: any, endDate = new Date().toISOString().slice(0, 10)) {
   const periods = Array.isArray(member?.membershipPeriods) ? member.membershipPeriods : [];
-  if (!periods.length) return member;
+  const closedPeriods = periods.length
+    ? periods.map((period, index) => index === periods.length - 1 && period.status === "Active" ? { ...period, status: "Completed", endDate } : period)
+    : [createMembershipPeriod({ ...member, endDate }, member, "Completed")];
   return {
     ...member,
-    membershipPeriods: periods.map((period, index) => index === periods.length - 1 && period.status === "Active" ? { ...period, status: "Completed", endDate } : period),
+    status: "Inactive",
+    membershipStatus: "Active",
+    noticeStartDate: "",
+    expectedLeavingDate: "",
+    noticeNotes: "",
+    membershipPeriods: closedPeriods,
     currentMembershipId: null,
   };
 }
@@ -86,6 +93,7 @@ export function reactivateMember(member: any, values: any) {
     id: member.id,
     leadId: values?.leadId || member?.leadId || "",
     status: "Active",
+    membershipStatus: "Active",
     phone: newPhone,
     email: newEmail,
     firstJoined: member.firstJoined || member.joined || values?.joined,

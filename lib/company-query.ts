@@ -1,35 +1,26 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { fetchSupabaseCompanies, mapSupabaseCompanyToOsCompany } from "@/lib/supabase/companies";
 
 export type CompaniesQuerySnapshot = {
   companies: any[];
-  dataSource: "supabase" | "demo";
+  dataSource: "supabase" | "error";
   errorMessage: string;
 };
 
-function readCachedCompanies() {
-  const cached = getDemoValue("companies");
-  return Array.isArray(cached) ? cached : [];
-}
-
 export async function fetchCompaniesSnapshot(): Promise<CompaniesQuerySnapshot> {
-  const cachedCompanies = readCachedCompanies();
-
   if (!isSupabaseLeadsEnabled()) {
-    return { companies: cachedCompanies, dataSource: "demo", errorMessage: "" };
+    return { companies: [], dataSource: "error", errorMessage: "Supabase is required for company records." };
   }
 
   try {
     const rows = await fetchSupabaseCompanies();
     const companies = rows.map(mapSupabaseCompanyToOsCompany);
-    saveDemoValue("companies", companies, { notify: false });
     return { companies, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
     const message = error?.message || "Unable to load companies.";
     return {
-      companies: cachedCompanies,
-      dataSource: "demo",
+      companies: [],
+      dataSource: "error",
       errorMessage: `Could not load companies: ${message}`,
     };
   }

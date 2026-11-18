@@ -8,7 +8,7 @@ import { SelectField } from "@/components/ui/primitives";
 import { addLeadLostReason, getLeadLostReasons } from "@/lib/lead-lost-reasons";
 
 export function LostReasonSelect({ value, hint, onChange }: { value: string; hint?: string; onChange: (value: string) => void }) {
-  const [reasons, setReasons] = useState(() => getLeadLostReasons());
+  const [reasons, setReasons] = useState<string[]>(() => getLeadLostReasons());
   const [isAdding, setIsAdding] = useState(false);
   const [newReason, setNewReason] = useState("");
   const [addError, setAddError] = useState("");

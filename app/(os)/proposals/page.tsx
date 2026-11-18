@@ -16,7 +16,6 @@ import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { useToast } from "@/components/ui/toast-provider";
 import { numericField, numericString } from "@/lib/number-input";
 import { getSupabaseBrowserClient, isSupabaseLeadsEnabled } from "@/lib/supabase/client";
@@ -57,13 +56,7 @@ function whatsappPhone(value: unknown) {
 }
 
 function proposalEmailTemplate() {
-  const saved = getDemoValue("email-template-send-proposal");
-  if (!saved || typeof saved !== "object") return undefined;
-  const template = saved as { subject?: unknown; body?: unknown };
-  return {
-    subject: typeof template.subject === "string" ? template.subject : undefined,
-    body: typeof template.body === "string" ? template.body : undefined,
-  };
+  return undefined;
 }
 
 async function renderProposalPdf(frameRef: { current: HTMLIFrameElement | null }, proposal: any) {
@@ -223,23 +216,25 @@ export default function ProposalsPage() {
       showToast({ variant: "error", title: "Proposal leads could not be refreshed", message: leadsQuery.data.errorMessage });
     }
   }, [leadsQuery.data, showToast]);
-  const updateProposalCache = (next: any[], dataSource: "supabase" | "demo") => {
+  const updateProposalCache = (next: any[]) => {
     setProposals(next);
-    if (dataSource === "demo") saveDemoValue("proposals", next);
     queryClient.setQueryData<ProposalsQuerySnapshot>(queryKeys.proposals.all, (current) => ({
-      ...(current || { proposals: [], dataSource, errorMessage: "" }),
+      ...(current || { proposals: [], dataSource: "supabase", errorMessage: "" }),
       proposals: next,
-      dataSource,
+      dataSource: "supabase",
       errorMessage: "",
     }));
   };
-  const persist = (next: any[]) => updateProposalCache(next, "demo");
   const saveProposal = async (form: any) => {
     if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot create or edit proposals." }); return; }
     if (!form?.account?.trim() || !form?.title?.trim()) { showToast({ variant: "error", title: "Proposal was not saved", message: "Choose a recipient and add a proposal title." }); return; }
     const leadRecipient = leads.find((lead) => `${lead.name} - ${lead.company || "No company"}` === form.account);
     const memberRecipient = members.find((member) => `${member.member} - ${member.company || "No company"}` === form.account);
-    if (isSupabaseLeadsEnabled() && !leadRecipient && !memberRecipient) {
+    if (!isSupabaseLeadsEnabled()) {
+      showToast({ variant: "error", title: "Proposal was not saved", message: "Supabase is required to create or edit proposals." });
+      return;
+    }
+    if (!leadRecipient && !memberRecipient) {
       showToast({ variant: "error", title: "Proposal was not saved", message: "Choose a valid lead or member from the recipient list." });
       return;
     }
@@ -258,29 +253,21 @@ export default function ProposalsPage() {
     };
 
     try {
-      if (isSupabaseLeadsEnabled()) {
-        const savedProposal = wasEditing && editing?.id
-          ? await updateSupabaseProposal(editing.id, proposalInput)
-          : await createSupabaseProposal(proposalInput);
-        const next = wasEditing
-          ? proposals.map((item) => item.id === savedProposal.id ? savedProposal : item)
-          : [savedProposal, ...proposals];
-        updateProposalCache(next, "supabase");
-        setCreating(false); setEditing(null); setSelected(savedProposal);
-        showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: wasEditing ? `${savedProposal.proposalNumber} was updated successfully.` : `${savedProposal.proposalNumber} was created successfully.` });
-        return;
-      }
-
-      const proposal = { ...proposalInput, proposalNumber: form.proposalNumber || `PROP-2026-${1001 + proposals.length}` };
-      persist(wasEditing ? proposals.map((item) => item.proposalNumber === editing.proposalNumber ? proposal : item) : [proposal, ...proposals]);
-      setCreating(false); setEditing(null); setSelected(proposal);
-      showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: `${proposal.proposalNumber} was saved successfully.` });
+      const savedProposal = wasEditing && editing?.id
+        ? await updateSupabaseProposal(editing.id, proposalInput)
+        : await createSupabaseProposal(proposalInput);
+      const next = wasEditing
+        ? proposals.map((item) => item.id === savedProposal.id ? savedProposal : item)
+        : [savedProposal, ...proposals];
+      updateProposalCache(next);
+      setCreating(false); setEditing(null); setSelected(savedProposal);
+      showToast({ variant: "success", title: wasEditing ? "Proposal updated" : "Proposal created", message: wasEditing ? `${savedProposal.proposalNumber} was updated successfully.` : `${savedProposal.proposalNumber} was created successfully.` });
     } catch (error) {
       showToast({ variant: "error", title: "Proposal was not saved", message: error?.message || "Proposal could not be saved." });
     }
   };
-  const updatePreview = (payload: any) => { if (!canWrite || !selected || !payload || typeof payload !== "object") return; const seats = Math.max(1, Math.floor(Number(payload.seats) || amountValue(selected.totalSeats) || 1)); const rate = Math.max(0, Number(payload.rate) || amountValue(selected.pricePerSeat)); const discount = Math.min(Math.max(0, Number(payload.discount) || 0), seats * rate); const next = { ...selected, selection: payload.selection, total: money(Math.max(0, seats * rate - discount)), totalSeats: String(seats), pricePerSeat: money(rate), discount: money(discount) }; setSelected(next); persist(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); };
-   const markSelectedAsSent = async () => { if (!selected) return; const synced = canWrite && isSupabaseLeadsEnabled() && selected.id; const next = synced ? await updateSupabaseProposalStatus(selected.id, "Sent") : { ...selected, status: "Sent" }; setSelected(next); if (synced) updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item), "supabase"); else persist(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); return next; };
+  const updatePreview = (payload: any) => { if (!canWrite || !selected || !payload || typeof payload !== "object") return; const seats = Math.max(1, Math.floor(Number(payload.seats) || amountValue(selected.totalSeats) || 1)); const rate = Math.max(0, Number(payload.rate) || amountValue(selected.pricePerSeat)); const discount = Math.min(Math.max(0, Number(payload.discount) || 0), seats * rate); const next = { ...selected, selection: payload.selection, total: money(Math.max(0, seats * rate - discount)), totalSeats: String(seats), pricePerSeat: money(rate), discount: money(discount) }; setSelected(next); updateProposalCache(proposals.map((item) => item.proposalNumber === selected.proposalNumber ? next : item)); };
+  const markSelectedAsSent = async () => { if (!selected || !canWrite || !isSupabaseLeadsEnabled() || !selected.id) throw new Error("This proposal is not ready to use yet. Refresh the register and try again."); const next = await updateSupabaseProposalStatus(selected.id, "Sent"); setSelected(next); updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item)); return next; };
   const savePdf = () => { frameRef.current?.contentWindow?.postMessage({ type: "proposal-template-action", action: "save-pdf" }, "*"); showToast({ variant: "success", title: "Save as PDF", message: "The print dialog was opened. Choose ‘Save as PDF’ to download the proposal." }); };
   const sendPdf = () => { if (selected) setSendOpen(true); };
   const sendProposal = async (channel: "whatsapp" | "email") => {
@@ -317,7 +304,7 @@ export default function ProposalsPage() {
       if (!response.ok) throw new Error(result.error || "The proposal email could not be delivered.");
       const next = { ...selected, status: "Sent" };
       setSelected(next);
-       updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item), "supabase");
+      updateProposalCache(proposals.map((item) => item.id === selected.id ? next : item));
       setSendOpen(false);
       showToast({ variant: "success", title: "Proposal sent", message: `${selected.proposalNumber} was delivered to ${result.delivery?.recipientEmail || "the recipient"} with a PDF attachment.` });
     } catch (error) {

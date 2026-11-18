@@ -1,11 +1,7 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
-import {
-  getMaintenanceCategories,
-  getMaintenanceEvents,
-  getMaintenanceRecords,
-  type MaintenanceCategory,
-  type MaintenanceEvent,
-  type MaintenanceRecord,
+import type {
+  MaintenanceCategory,
+  MaintenanceEvent,
+  MaintenanceRecord,
 } from "@/lib/maintenance";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import {
@@ -19,7 +15,7 @@ import {
   mapSupabaseMaintenanceRecordToOsRecord,
 } from "@/lib/supabase/maintenance";
 
-type MaintenanceDataSource = "supabase" | "demo";
+type MaintenanceDataSource = "supabase" | "error";
 
 export type MaintenanceCategoriesQuerySnapshot = {
   categories: MaintenanceCategory[];
@@ -45,60 +41,54 @@ function errorMessage(error: unknown, resource: string) {
 }
 
 export async function fetchMaintenanceCategoriesSnapshot(): Promise<MaintenanceCategoriesQuerySnapshot> {
-  const cachedCategories = getMaintenanceCategories();
   if (!isSupabaseLeadsEnabled()) {
-    return { categories: cachedCategories, dataSource: "demo", errorMessage: "" };
+    return { categories: [], dataSource: "error", errorMessage: "Supabase is required for maintenance categories." };
   }
 
   try {
     const rows = await fetchSupabaseMaintenanceCategories();
     const categories = rows.map(mapSupabaseMaintenanceCategoryToOsCategory);
-    saveDemoValue("maintenanceCategories", categories, { notify: false });
     return { categories, dataSource: "supabase", errorMessage: "" };
   } catch (error) {
     return {
-      categories: cachedCategories,
-      dataSource: "demo",
+      categories: [],
+      dataSource: "error",
       errorMessage: errorMessage(error, "maintenance categories"),
     };
   }
 }
 
 export async function fetchMaintenanceRecordsSnapshot(): Promise<MaintenanceRecordsQuerySnapshot> {
-  const cachedRecords = getMaintenanceRecords();
   if (!isSupabaseLeadsEnabled()) {
-    return { records: cachedRecords, dataSource: "demo", errorMessage: "" };
+    return { records: [], dataSource: "error", errorMessage: "Supabase is required for maintenance records." };
   }
 
   try {
     const rows = await fetchSupabaseMaintenanceRecords();
     const records = rows.map(mapSupabaseMaintenanceRecordToOsRecord);
-    saveDemoValue("maintenanceRecords", records, { notify: false });
     return { records, dataSource: "supabase", errorMessage: "" };
   } catch (error) {
     return {
-      records: cachedRecords,
-      dataSource: "demo",
+      records: [],
+      dataSource: "error",
       errorMessage: errorMessage(error, "maintenance records"),
     };
   }
 }
 
 export async function fetchMaintenanceEventsSnapshot(): Promise<MaintenanceEventsQuerySnapshot> {
-  const cachedEvents = getMaintenanceEvents();
   if (!isSupabaseLeadsEnabled()) {
-    return { events: cachedEvents, dataSource: "demo", errorMessage: "" };
+    return { events: [], dataSource: "error", errorMessage: "Supabase is required for maintenance events." };
   }
 
   try {
     const rows = await fetchSupabaseMaintenanceEvents();
     const events = rows.map(mapSupabaseMaintenanceEventToOsEvent);
-    saveDemoValue("maintenanceEvents", events, { notify: false });
     return { events, dataSource: "supabase", errorMessage: "" };
   } catch (error) {
     return {
-      events: cachedEvents,
-      dataSource: "demo",
+      events: [],
+      dataSource: "error",
       errorMessage: errorMessage(error, "maintenance events"),
     };
   }

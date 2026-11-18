@@ -68,7 +68,7 @@ export async function GET(request: Request) {
       .in("status", ["queued", "processing"])
       .lte("scheduled_for", now)
       .order("scheduled_for", { ascending: true })
-      .limit(20);
+      .limit(50);
     if (queueError) throw queueError;
 
     const results: Array<Record<string, unknown>> = [];
@@ -98,8 +98,16 @@ export async function GET(request: Request) {
           continue;
         }
 
-        const { data: member, error: memberError } = await admin.from("members").select("member_name,email").eq("id", invoice.member_id).maybeSingle();
+        const { data: member, error: memberError } = await admin.from("members").select("member_name,email,status,membership_status,expected_leaving_date").eq("id", invoice.member_id).maybeSingle();
         if (memberError) throw memberError;
+        const memberStatus = String(member?.status || "").toLowerCase();
+        const membershipStatus = String(member?.membership_status || "active").toLowerCase();
+        const noticeExpired = membershipStatus === "notice_period" && member?.expected_leaving_date && String(member.expected_leaving_date) < new Date().toISOString().slice(0, 10);
+        if (!member || !["active", "activated"].includes(memberStatus) || noticeExpired) {
+          await admin.from("invoice_email_queue").update({ status: "cancelled", next_attempt_at: null, last_error: "Member is no longer eligible for automatic invoice delivery.", updated_at: new Date().toISOString() }).eq("id", claimed.id);
+          results.push({ invoice: invoice.invoice_number, status: "skipped_inactive_member" });
+          continue;
+        }
         const recipientEmail = String(member?.email || candidate.recipient_email || "").trim().toLowerCase();
         if (!validEmail(recipientEmail)) throw new Error("The client does not have a valid email address.");
         const { data: items, error: itemError } = await admin.from("invoice_items").select("description,quantity,unit_price,line_total").eq("invoice_id", invoice.id).order("sort_order", { ascending: true });
@@ -120,18 +128,32 @@ export async function GET(request: Request) {
           totalAmount: invoice.total_amount,
         };
         const attachment = createInvoicePdfAttachment({ ...emailInput, accountName: invoice.account_name, issueDate: invoice.issue_date });
-        const storedTemplate = await getOsEmailTemplate(admin, "payment-reminder");
+        const storedTemplate = await getOsEmailTemplate(admin, "send-invoice");
         const templatedEmailInput = { ...emailInput, body: storedTemplate.body };
-        const sender = await resolveOsEmailSender({ client: admin, purpose: "payment_reminders" });
+        const sender = await resolveOsEmailSender({ client: admin, purpose: "invoices" });
         const activity = claimed.created_by
-          ? await admin.from("activity_log").insert({ action: "invoice.email_reminder", entity_type: "invoice", entity_id: invoice.id, actor_user_id: claimed.created_by, recipient_email: recipientEmail, delivery_status: "pending", metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, sender: sender.from, attachment_filename: attachment.filename } }).select("id").maybeSingle()
+          ? await admin.from("activity_log").insert({ action: "invoice.email", entity_type: "invoice", entity_id: invoice.id, actor_user_id: claimed.created_by, recipient_email: recipientEmail, delivery_status: "pending", metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, sender: sender.from, attachment_filename: attachment.filename } }).select("id").maybeSingle()
           : { data: null, error: null };
         if (activity.error) throw activity.error;
         activityId = activity.data?.id || null;
-        const emailResult = await sendResendEmail({ from: sender.from, replyTo: sender.replyTo, to: [recipientEmail], subject: renderInvoiceEmailSubject(storedTemplate.subject, templatedEmailInput), html: renderInvoiceEmailHtml(templatedEmailInput), attachments: [{ filename: attachment.filename, content: attachment.content }] });
+        const emailResult = await sendResendEmail({
+          from: sender.from,
+          replyTo: sender.replyTo,
+          to: [recipientEmail],
+          subject: renderInvoiceEmailSubject(storedTemplate.subject, templatedEmailInput),
+          html: renderInvoiceEmailHtml(templatedEmailInput),
+          attachments: [{ filename: attachment.filename, content: attachment.content }],
+          idempotencyKey: `invoice/${invoice.id}/queue/${claimed.id}`,
+          tags: [
+            { name: "app", value: "cubicle-os" },
+            { name: "invoice_id", value: invoice.id },
+            { name: "queue_id", value: claimed.id },
+            ...(activityId ? [{ name: "activity_id", value: activityId }] : []),
+          ],
+        });
         const providerMessageId = emailResult.id.trim();
         const activityUpdate = activityId
-          ? await admin.from("activity_log").update({ delivery_status: "sent", completed_at: new Date().toISOString(), metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, provider: "resend", provider_message_id: providerMessageId, sender: sender.from, attachment_filename: attachment.filename } }).eq("id", activityId)
+          ? await admin.from("activity_log").update({ delivery_status: "sent", completed_at: new Date().toISOString(), metadata: { invoice_number: invoice.invoice_number, delivery_kind: candidate.delivery_kind, provider: "resend", provider_message_id: providerMessageId, resend_email_id: providerMessageId, sender: sender.from, attachment_filename: attachment.filename } }).eq("id", activityId)
           : { error: null };
         if (activityUpdate.error) throw activityUpdate.error;
         const queueUpdate = await admin.from("invoice_email_queue").update({ status: "sent", sent_at: new Date().toISOString(), provider_message_id: providerMessageId, last_error: null, updated_at: new Date().toISOString() }).eq("id", claimed.id);

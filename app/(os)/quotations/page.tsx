@@ -7,7 +7,7 @@ import { createColumnHelper } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import { FileText, LoaderCircle, Mail, MessageCircle, Pencil, PlusCircle, ReceiptText, Send } from "lucide-react";
+import { FileText, LoaderCircle, Mail, MessageCircle, Pencil, PlusCircle, Printer, ReceiptText, Send, X } from "lucide-react";
 import { motion } from "motion/react";
 
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,6 @@ import { Input } from "@/components/ui/input";
 import { DatePickerField, SelectField } from "@/components/ui/primitives";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDemoValue, getDemoSession, saveDemoValue } from "@/lib/demo-session";
-import { leadRows } from "@/lib/module-b-data";
 import DynamicInvoiceTemplate, { invoiceFromRecord } from "@/components/invoices/invoice-template";
 import { ChargeEditor, chargeAmount, chargesTotal, getEditableCharges } from "@/components/invoices/charge-editor";
 import { useToast } from "@/components/ui/toast-provider";
@@ -99,13 +97,7 @@ function pdfToBase64(pdf) {
 }
 
 function quotationEmailTemplate() {
-  const saved = getDemoValue("email-template-send-quotation");
-  if (!saved || typeof saved !== "object") return undefined;
-  const template = saved as { subject?: unknown; body?: unknown };
-  return {
-    subject: typeof template.subject === "string" ? template.subject : undefined,
-    body: typeof template.body === "string" ? template.body : undefined,
-  };
+  return undefined;
 }
 
 function getLocalDateTime() {
@@ -139,7 +131,7 @@ function addQuotationJourneyEntry(lead, quotation, outcome) {
       nextFollowUpDate: "",
       nextFollowUpTime: "",
       communicationMode: "Email / WhatsApp",
-      followedUpBy: String(getDemoValue("profileName") || getDemoSession().email || "Only me").trim() || "Only me",
+      followedUpBy: "Current user",
       conversionProbability: "High",
       conversionReason: "",
       notes: `${quotation.quotation} ${outcome.toLowerCase()}.`,
@@ -150,11 +142,17 @@ function addQuotationJourneyEntry(lead, quotation, outcome) {
 
 function createQuotationColumns(onOpen, onEdit, canEdit) {
   const columnHelper = createColumnHelper<any>();
+  const quotationStatusDescription = (status) => ({
+    Draft: "This quotation is still being prepared.",
+    Sent: "The quotation has been shared with the client.",
+    Accepted: "The client accepted this quotation.",
+    Expired: "This quotation is no longer valid.",
+  }[String(status || "Draft")] || "Quotation status");
   return [
     columnHelper.accessor("quotation", { header: "Quotation / account", cell: ({ row }) => <div className="table-primary"><strong>{row.original.quotation}</strong><span>{row.original.account}</span></div> }),
     columnHelper.accessor("date", { header: "Date", cell: ({ getValue }) => formatQuotationDate(getValue()) }),
     columnHelper.accessor("amount", { header: "Amount", cell: ({ getValue }) => <strong className="invoice-amount">{formatQuotationAmount(getValue())}</strong> }),
-    columnHelper.accessor("status", { header: "Status", cell: ({ getValue }) => <StatusBadge tone={getValue() === "Accepted" || getValue() === "Sent" ? "success" : getValue() === "Expired" ? "danger" : "accent"}>{getValue()}</StatusBadge> }),
+    columnHelper.accessor("status", { header: "Status", cell: ({ getValue }) => <StatusBadge title={quotationStatusDescription(getValue())} tone={getValue() === "Accepted" || getValue() === "Sent" ? "success" : getValue() === "Expired" ? "danger" : "accent"}>{getValue()}</StatusBadge> }),
     columnHelper.display({ id: "actions", header: "Action", cell: ({ row }) => <div className="lead-table-actions"><button className="action-icon-btn" type="button" onClick={() => onOpen(row.original)} aria-label={`Open ${row.original.quotation}`} title="Quotation"><FileText size={16} /></button>{canEdit ? <button className="action-icon-btn" type="button" onClick={() => onEdit(row.original)} aria-label={`Edit ${row.original.quotation}`} title="Edit quotation"><Pencil size={16} /></button> : <span className="read-only-label">View only</span>}</div> }),
   ];
 }
@@ -189,6 +187,54 @@ function QuotationForm({ initialQuotation, eligibleLeads, onCancel, onSave }) {
   return <div className="dialog-content quotation-form lead-create-form"><div className="card-heading"><div><h2>{initialQuotation ? "Edit quotation" : "Create quotation"}</h2><p className="muted-copy">Sales Tax is included in the total; WHT is withheld from the subtotal when enabled.</p></div></div><form className="inline-form-grid" onSubmit={handleSubmit(save)}><div className="quotation-form-section-heading"><h3>Recipient</h3></div><SelectField className="quotation-to-select" label="To" aria-label="To" value={watch("leadId")} hint={error("leadId")} disabled={!leadOptions.length} onChange={(event) => setValue("leadId", event.target.value, { shouldDirty: true, shouldValidate: true })}><option value="">{leadOptions.length ? "Select a lead" : "No eligible leads"}</option>{leadOptions.map((lead) => <option value={lead.id} key={lead.id}>{lead.company} - {lead.name}</option>)}</SelectField><DatePickerField label="Date" value={watch("date")} hint={error("date")} onChange={(value) => setValue("date", value, { shouldDirty: true, shouldValidate: true })} /><input type="hidden" {...register("date")} /><div className="quotation-form-section-heading"><h3>Monthly rent</h3></div><div className="quotation-monthly-rent-fields"><label className="settings-label">Description<Input className={error("monthlyRentDescription") ? "has-error" : ""} {...register("monthlyRentDescription")} placeholder="Monthly workspace rent" />{error("monthlyRentDescription") && <span className="lead-form-error">{error("monthlyRentDescription")}</span>}</label><label className="settings-label">Amount (PKR)<Input className={error("monthlyRent") ? "has-error" : ""} {...numericField(register, "monthlyRent")} placeholder="0" />{error("monthlyRent") && <span className="lead-form-error">{error("monthlyRent")}</span>}</label></div><input type="hidden" {...register("itemDescription")} /><input type="hidden" {...register("amount")} /><ChargeEditor charges={charges} onChange={updateCharges} title="Extra charges" compact />{error("itemDescription") && <span className="lead-form-error charge-editor-error">{error("itemDescription")}</span>}{error("amount") && <span className="lead-form-error charge-editor-error">{error("amount")}</span>}<div className="quotation-form-section-heading"><h3>Taxation</h3></div><div className="quotation-tax-options"><div className="quotation-tax-option"><label className="quotation-tax-toggle"><input type="checkbox" {...register("salesTaxEnabled")} /><span>Include Sales Tax</span></label><label className="settings-label">Sales Tax rate (%)<Input className={error("salesTaxRate") ? "has-error" : ""} disabled={!watch("salesTaxEnabled")} {...numericField(register, "salesTaxRate")} placeholder="0" />{error("salesTaxRate") && <span className="lead-form-error">{error("salesTaxRate")}</span>}</label></div><div className="quotation-tax-option"><label className="quotation-tax-toggle"><input type="checkbox" {...register("taxEnabled")} /><span>Include WHT</span></label><label className="settings-label">WHT rate (%)<Input className={error("taxRate") ? "has-error" : ""} disabled={!watch("taxEnabled")} {...numericField(register, "taxRate")} placeholder="10" />{error("taxRate") && <span className="lead-form-error">{error("taxRate")}</span>}</label></div></div><div className="quotation-form-section-heading"><h3>Totals</h3></div><label className="settings-label">Net total<Input {...netTotalField} inputMode="numeric" onChange={(event) => { event.target.value = sanitizeNumericInput(event.target.value, true); netTotalEditedRef.current = true; netTotalField.onChange(event); }} placeholder="0" /></label><div className="dialog-actions"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting} disabled={!leadOptions.length}><ReceiptText size={15} /> {initialQuotation ? "Save changes" : "Create quotation"}</Button></div></form></div>;
 }
 
+async function renderQuotationPdf() {
+  const invoiceElement = document.getElementById("printable-invoice");
+  if (!invoiceElement) throw new Error("The quotation preview is not ready.");
+  const previewSheet = invoiceElement.closest<HTMLElement>(".invoice-preview-sheet");
+  const previewFrame = invoiceElement.closest<HTMLElement>(".invoice-preview-frame");
+  const originalSheetTransform = previewSheet?.style.transform || "";
+  const originalFrameWidth = previewFrame?.style.width || "";
+  const originalFrameHeight = previewFrame?.style.height || "";
+  const originalFrameOverflow = previewFrame?.style.overflow || "";
+  invoiceElement.classList.add("pdf-exporting");
+  try {
+    if (previewSheet) previewSheet.style.transform = "none";
+    if (previewFrame) {
+      previewFrame.style.width = "210mm";
+      previewFrame.style.height = "auto";
+      previewFrame.style.overflow = "visible";
+    }
+    if (document.fonts?.ready) await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const canvas = await html2canvas(invoiceElement, {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      width: Math.ceil(invoiceElement.scrollWidth),
+      height: Math.ceil(invoiceElement.scrollHeight),
+      windowWidth: 1200,
+      windowHeight: 1200,
+    });
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imageRatio = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
+    const imageWidth = canvas.width * imageRatio;
+    const imageHeight = canvas.height * imageRatio;
+    pdf.addImage(canvas.toDataURL("image/png"), "PNG", (pageWidth - imageWidth) / 2, 0, imageWidth, imageHeight);
+    return pdf;
+  } finally {
+    if (previewSheet) previewSheet.style.transform = originalSheetTransform;
+    if (previewFrame) {
+      previewFrame.style.width = originalFrameWidth;
+      previewFrame.style.height = originalFrameHeight;
+      previewFrame.style.overflow = originalFrameOverflow;
+    }
+    invoiceElement.classList.remove("pdf-exporting");
+  }
+}
+
 export default function QuotationsPage() {
   const { showToast } = useToast();
   const canView = useHasPermission("quotations.read");
@@ -206,6 +252,29 @@ export default function QuotationsPage() {
   const [sendingChannel, setSendingChannel] = useState<"whatsapp" | "email" | null>(null);
   const [loadError, setLoadError] = useState("");
   useEffect(() => {
+    const viewport = document.querySelector<HTMLElement>(".invoice-preview-dialog .invoice-detail-only");
+    if (!viewport) return undefined;
+    const fitPreview = () => {
+      const { width, height } = viewport.getBoundingClientRect();
+      if (!width || !height) return;
+      const widthZoom = (width * 1.02) / 794;
+      const heightZoom = height / 1123;
+      const fitZoom = Math.min(1, Math.max(0.25, Number(Math.min(widthZoom, heightZoom).toFixed(2))));
+      const heightScale = Math.max(1, Number((heightZoom / fitZoom).toFixed(3)));
+      const frame = viewport.querySelector<HTMLElement>(".invoice-preview-frame");
+      const sheet = viewport.querySelector<HTMLElement>(".invoice-preview-sheet");
+      if (frame) {
+        frame.style.width = `${794 * fitZoom}px`;
+        frame.style.height = `${1123 * fitZoom * heightScale}px`;
+      }
+      if (sheet) sheet.style.transform = `scale(${fitZoom}) scaleY(${heightScale})`;
+    };
+    const observer = new ResizeObserver(fitPreview);
+    observer.observe(viewport);
+    fitPreview();
+    return () => observer.disconnect();
+  }, [selected?.quotation]);
+  useEffect(() => {
     if (!canView) {
       setQuotations([]);
       setEligibleLeads([]);
@@ -220,58 +289,46 @@ export default function QuotationsPage() {
   }, [canView, quotationsQuery.data, showToast]);
   useEffect(() => {
     if (!leadsQuery.data) return;
-    const leads = !isSupabaseLeadsEnabled() && leadsQuery.data.leads.length === 0 ? leadRows : leadsQuery.data.leads;
+    const leads = leadsQuery.data.leads;
     setAllLeads(leads);
     setEligibleLeads(getEligibleLeads(leads));
     if (leadsQuery.data.errorMessage) {
       showToast({ variant: "error", title: "Quotation leads could not be refreshed", message: leadsQuery.data.errorMessage });
     }
   }, [leadsQuery.data, showToast]);
-  const updateQuotationCache = (next: any[], dataSource: "supabase" | "demo") => {
+  const updateQuotationCache = (next: any[]) => {
     setQuotations(next);
-    if (dataSource === "demo") saveDemoValue("quotations", next);
     queryClient.setQueryData<QuotationsQuerySnapshot>(queryKeys.quotations.all, (current) => ({
-      ...(current || { quotations: [], dataSource, errorMessage: "" }),
+      ...(current || { quotations: [], dataSource: "supabase", errorMessage: "" }),
       quotations: next,
-      dataSource,
+      dataSource: "supabase",
       errorMessage: "",
     }));
   };
-  const persist = (next: any[]) => updateQuotationCache(next, "demo");
   const saveQuotation = async (form) => {
     if (!canWrite) { showToast({ variant: "error", title: "View-only access", message: "Your account cannot create or edit quotations." }); return; }
-    const storedLeadRows = getDemoValue("leads");
-    const allLeads = Array.isArray(storedLeadRows) ? storedLeadRows : leadRows;
     const lead = eligibleLeads.find((item) => item.id === form.leadId) || (editing ? allLeads.find((item) => item.id === form.leadId || item.id === editing.leadId) : null);
     if (!lead) { showToast({ variant: "error", title: "Quotation was not saved", message: "Choose a lead who requested a quotation." }); return; }
     const wasEditing = Boolean(editing);
     const quotationInput = { ...form, id: editing?.id, leadId: lead.id, account: lead.company || "Company", customerName: lead.name, customerPhone: lead.phone || "", customerEmail: lead.email || "", quotation: editing?.quotation, status: editing?.status || "Draft", validUntil: editing?.validUntil };
     try {
-      if (isSupabaseLeadsEnabled()) {
-        const savedQuotation = wasEditing && editing?.id
-          ? await updateSupabaseQuotation(editing.id, quotationInput)
-          : await createSupabaseQuotation(quotationInput);
-        const next = wasEditing
-          ? quotations.map((item) => item.id === savedQuotation.id ? savedQuotation : item)
-          : [savedQuotation, ...quotations];
-        updateQuotationCache(next, "supabase");
-        setCreating(false); setEditing(null); setSelected(savedQuotation);
-        showToast({ variant: "success", title: wasEditing ? "Quotation updated" : "Quotation created", message: wasEditing ? `${savedQuotation.quotation} was updated successfully.` : `${savedQuotation.quotation} was created successfully.` });
-        return;
-      }
-
-      const quotation = { ...quotationInput, quotation: editing?.quotation || `QUO-2026-${1001 + quotations.length}` };
-      persist(wasEditing ? quotations.map((item) => item.quotation === editing.quotation ? quotation : item) : [quotation, ...quotations]);
-      setCreating(false); setEditing(null); setSelected(quotation);
-      showToast({ variant: "success", title: wasEditing ? "Quotation updated" : "Quotation created", message: `${quotation.quotation} was saved successfully.` });
+      if (!isSupabaseLeadsEnabled()) throw new Error("Supabase is required to save quotation records.");
+      const savedQuotation = wasEditing && editing?.id
+        ? await updateSupabaseQuotation(editing.id, quotationInput)
+        : await createSupabaseQuotation(quotationInput);
+      const next = wasEditing
+        ? quotations.map((item) => item.id === savedQuotation.id ? savedQuotation : item)
+        : [savedQuotation, ...quotations];
+      updateQuotationCache(next);
+      setCreating(false); setEditing(null); setSelected(savedQuotation);
+      showToast({ variant: "success", title: wasEditing ? "Quotation updated" : "Quotation created", message: wasEditing ? `${savedQuotation.quotation} was updated successfully.` : `${savedQuotation.quotation} was created successfully.` });
     } catch (error) {
       showToast({ variant: "error", title: "Quotation was not saved", message: error?.message || "Quotation could not be saved." });
     }
   };
   const sendQuotation = async (channel) => {
     if (!selected || sendingChannel) return;
-    const storedLeads = getDemoValue("leads");
-    const currentLeads = allLeads.length ? allLeads : (Array.isArray(storedLeads) ? storedLeads : eligibleLeads);
+    const currentLeads = allLeads.length ? allLeads : eligibleLeads;
     const selectedLead = currentLeads.find((lead) => lead.id === selected.leadId || (lead.company === selected.account && (!selected.customerName || lead.name === selected.customerName)));
     const recipientEmail = selectedLead?.email || selected.customerEmail || "";
     const recipientPhone = whatsappPhone(selectedLead?.phone || selected.customerPhone);
@@ -283,32 +340,16 @@ export default function QuotationsPage() {
       showToast({ variant: "error", title: "WhatsApp was not opened", message: "This lead does not have a phone number saved." });
       return;
     }
-    const invoiceElement = document.getElementById("printable-invoice");
-    if (!invoiceElement) return;
     setSendingChannel(channel);
-    invoiceElement.classList.add("pdf-exporting");
     const filename = `${selected.quotation}.pdf`;
     const message = `Hello ${selected.customerName || selected.account}, please find your quotation from The Cubicle attached.`;
     try {
-      const canvas = await html2canvas(invoiceElement, { backgroundColor: "#ffffff", scale: 2, useCORS: true });
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imageRatio = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
-      const imageWidth = canvas.width * imageRatio;
-      const imageHeight = canvas.height * imageRatio;
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", (pageWidth - imageWidth) / 2, 0, imageWidth, imageHeight);
+      const pdf = await renderQuotationPdf();
       const blob = pdf.output("blob");
-      const sentQuotation = channel === "whatsapp"
-        ? canWrite && isSupabaseLeadsEnabled() && selected.id
-          ? await updateSupabaseQuotationStatus(selected.id, "Sent")
-          : { ...selected, status: "Sent" }
-        : { ...selected, status: "Sent" };
+      if (!canWrite || !isSupabaseLeadsEnabled() || !selected.id) throw new Error("This quotation is not ready to use yet. Refresh the register and try again.");
+      const sentQuotation = await updateSupabaseQuotationStatus(selected.id, "Sent");
 
       if (channel === "email") {
-        if (!canWrite || !isSupabaseLeadsEnabled() || !selected.id) {
-          throw new Error("This quotation is not ready to use yet. Refresh the register and try again.");
-        }
         const { data: sessionData } = await getSupabaseBrowserClient().auth.getSession();
         const token = sessionData.session?.access_token;
         if (!token) throw new Error("Your session has expired. Sign in again before sending a quotation.");
@@ -325,23 +366,15 @@ export default function QuotationsPage() {
         downloadBlob(blob, filename);
       }
 
-      if (canWrite && isSupabaseLeadsEnabled() && selected.id) {
-        updateQuotationCache(quotations.map((quotation) => quotation.id === selected.id ? sentQuotation : quotation), "supabase");
-      } else {
-        persist(quotations.map((quotation) => quotation.quotation === selected.quotation ? sentQuotation : quotation));
-      }
+      updateQuotationCache(quotations.map((quotation) => quotation.id === selected.id ? sentQuotation : quotation));
       setSelected(sentQuotation);
       const journeyLeads = currentLeads;
       if (selectedLead && Array.isArray(journeyLeads)) {
-        const cachedLead = Array.isArray(storedLeads)
-          ? storedLeads.find((lead) => lead.id === selectedLead.id)
-          : null;
         const nextLeads = journeyLeads.map((lead) => {
           if (lead.id !== selectedLead.id) return lead;
           const existingJourney = mergeLeadJourneyEntries(
             lead.journey,
             selectedLead.journey,
-            cachedLead?.journey,
           );
           return addQuotationJourneyEntry(
             transitionLead({ ...lead, journey: existingJourney }, { type: "quotation-sent" }),
@@ -349,8 +382,7 @@ export default function QuotationsPage() {
             "Quotation sent",
           );
         });
-        saveDemoValue("leads", nextLeads);
-        queryClient.setQueryData(queryKeys.leads.all, (current: any) => ({ ...(current || { dataSource: isSupabaseLeadsEnabled() ? "supabase" : "demo", errorMessage: "" }), leads: nextLeads, errorMessage: "" }));
+        queryClient.setQueryData(queryKeys.leads.all, (current: any) => ({ ...(current || { dataSource: "supabase", errorMessage: "" }), leads: nextLeads, errorMessage: "" }));
         setEligibleLeads(getEligibleLeads(nextLeads));
         const persistedLead = nextLeads.find((lead) => lead.id === selectedLead.id);
         const journeyEntry = persistedLead?.journey?.find((entry) => entry.entryType === "quotation" && entry.quotationNumber === sentQuotation.quotation && entry.outcome === "Quotation sent");
@@ -370,11 +402,10 @@ export default function QuotationsPage() {
     } catch (error) {
       showToast({ variant: "error", title: channel === "email" ? "Quotation was not sent" : "Quotation was not prepared", message: error?.message || "The quotation could not be prepared. Please try again." });
     } finally {
-      invoiceElement.classList.remove("pdf-exporting");
       setSendingChannel(null);
     }
   };
   const closeForm = () => { setCreating(false); setEditing(null); };
   if (!canView) return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Quotation records are restricted for this account.</p></div><span className="read-only-label">No view access</span></div><div className="table-empty-state">Ask an owner or administrator to grant Quotations — View access.</div></motion.div>;
-  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Prepare and share workspace quotations using the invoice template.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div>{canWrite ? <Button className="quotation-create-button" onClick={() => setCreating(true)}><PlusCircle size={16} /> Create quotation</Button> : <span className="read-only-label">View only — print and send enabled</span>}</div><section className="stat-grid finance-stat-grid module-stats quotation-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total quotations" value={quotations.length} detail={isSupabaseLeadsEnabled() ? "Live data" : "Created in this session"} /></section><DataTable title="Quotation register" subtitle="Select a quotation to preview, print, or send it." columns={createQuotationColumns(setSelected, setEditing, canWrite)} data={quotations} onRowClick={setSelected} emptyMessage="No quotations created yet." /><Dialog open={creating && canWrite || Boolean(editing) && canWrite} onClose={closeForm} ariaLabel={editing ? "Edit quotation" : "Create quotation"}><QuotationForm initialQuotation={editing} eligibleLeads={eligibleLeads} onCancel={closeForm} onSave={saveQuotation} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Quotation preview">{selected ? <div className="dialog-content invoice-detail-only"><div className="invoice-preview-frame"><DynamicInvoiceTemplate invoice={invoiceFromRecord({ ...selected, invoice: selected.quotation, issueDate: selected.date })} documentTitle="QUOTATION" /></div><div className="dialog-actions invoice-preview-actions quotation-preview-actions"><Button className="quotation-preview-cancel" variant="ghost" onClick={() => { setSendOpen(false); setSelected(null); }}>Cancel</Button><Button className="quotation-preview-print" onClick={() => window.print()}>Print quotation</Button><Button className="quotation-preview-send" onClick={() => setSendOpen(true)}><Send size={15} /> Send quotation</Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => setSendOpen(false)} ariaLabel="Send quotation"><div className="dialog-content quotation-send-dialog inline-form-card"><div className="card-heading"><div><h2>Send quotation</h2><p className="muted-copy">Choose how you want to share this quotation.</p></div></div><div className="quotation-send-options"><button type="button" className="quotation-send-option" onClick={() => sendQuotation("whatsapp")} disabled={Boolean(sendingChannel)}>{sendingChannel === "whatsapp" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <MessageCircle size={18} />}<span><strong>WhatsApp</strong><small>Open the chat with a pre-filled message.</small></span></button><button type="button" className="quotation-send-option" onClick={() => sendQuotation("email")} disabled={Boolean(sendingChannel)}>{sendingChannel === "email" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <Mail size={18} />}<span><strong>Email</strong><small>Open an email with a pre-filled message.</small></span></button></div><div className="dialog-actions quotation-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={Boolean(sendingChannel)}>Cancel</Button></div></div></Dialog></motion.div>;
+  return <motion.div className="module-content" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}><div className="module-header"><div><h1>Quotations</h1><p className="muted-copy">Prepare and share workspace quotations using the invoice template.</p>{loadError ? <p className="lead-form-error">{loadError}</p> : null}</div>{canWrite ? <Button className="quotation-create-button" onClick={() => setCreating(true)}><PlusCircle size={16} /> Create quotation</Button> : <span className="read-only-label">View only — print and send enabled</span>}</div><section className="stat-grid finance-stat-grid module-stats quotation-kpi-grid"><KpiCard icon={<FileText size={18} />} label="Total quotations" value={quotations.length} detail={isSupabaseLeadsEnabled() ? "Live data" : "Created in this session"} /></section><DataTable title="Quotation register" subtitle="Select a quotation to preview, print, or send it." columns={createQuotationColumns(setSelected, setEditing, canWrite)} data={quotations} onRowClick={setSelected} emptyMessage="No quotations created yet." /><Dialog open={creating && canWrite || Boolean(editing) && canWrite} onClose={closeForm} ariaLabel={editing ? "Edit quotation" : "Create quotation"}><QuotationForm initialQuotation={editing} eligibleLeads={eligibleLeads} onCancel={closeForm} onSave={saveQuotation} /></Dialog><Dialog open={Boolean(selected)} onClose={() => setSelected(null)} ariaLabel="Quotation preview" className="invoice-preview-dialog">{selected ? <div className="dialog-content invoice-detail-only"><div className="invoice-preview-frame"><div className="invoice-preview-sheet"><DynamicInvoiceTemplate invoice={invoiceFromRecord({ ...selected, invoice: selected.quotation, issueDate: selected.date })} documentTitle="QUOTATION" /></div></div><div className="dialog-actions invoice-preview-actions quotation-preview-actions"><Button className="quotation-preview-cancel" variant="ghost" aria-label="Close quotation" title="Close quotation" onClick={() => { setSendOpen(false); setSelected(null); }}><X size={16} /></Button><Button className="quotation-preview-print" aria-label="Print quotation" title="Print quotation" onClick={() => window.print()}><Printer size={16} /></Button><Button className="quotation-preview-send" aria-label="Send quotation" title="Send quotation" onClick={() => setSendOpen(true)}><Send size={16} /></Button></div></div> : null}</Dialog><Dialog open={sendOpen} onClose={() => setSendOpen(false)} ariaLabel="Send quotation"><div className="dialog-content quotation-send-dialog inline-form-card"><div className="card-heading"><div><h2>Send quotation</h2><p className="muted-copy">Choose how you want to share this quotation.</p></div></div><div className="quotation-send-options"><button type="button" className="quotation-send-option" onClick={() => sendQuotation("whatsapp")} disabled={Boolean(sendingChannel)}>{sendingChannel === "whatsapp" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <MessageCircle size={18} />}<span><strong>WhatsApp</strong><small>Open the chat with a pre-filled message.</small></span></button><button type="button" className="quotation-send-option" onClick={() => sendQuotation("email")} disabled={Boolean(sendingChannel)}>{sendingChannel === "email" ? <LoaderCircle size={18} className="sign-in-spinner" /> : <Mail size={18} />}<span><strong>Email</strong><small>Open an email with a pre-filled message.</small></span></button></div><div className="dialog-actions quotation-send-actions"><Button variant="ghost" onClick={() => setSendOpen(false)} disabled={Boolean(sendingChannel)}>Cancel</Button></div></div></Dialog></motion.div>;
 }

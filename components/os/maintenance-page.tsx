@@ -10,18 +10,34 @@ import { Modal } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
 import { TablePagination } from "@/components/ui/table";
-import { getMaintenanceCategories, getMaintenanceRecords, isActiveMaintenanceRecord, MAINTENANCE_RECORD_STATUS_LABELS, MAINTENANCE_SEVERITY_LABELS, saveMaintenanceCategories, type MaintenanceCategory, type MaintenanceRecord } from "@/lib/maintenance";
+import type { MaintenanceCategory, MaintenanceRecord } from "@/lib/maintenance";
 import { useHasPermission } from "@/lib/access-control";
 import { useToast } from "@/components/ui/toast-provider";
-import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { createSupabaseMaintenanceCategory, mapSupabaseMaintenanceCategoryToOsCategory, updateSupabaseMaintenanceCategory } from "@/lib/supabase/maintenance-categories";
-import { getWorkspaceRecords } from "@/lib/workspace-records";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchMaintenanceCategoriesSnapshot, fetchMaintenanceRecordsSnapshot, type MaintenanceCategoriesQuerySnapshot } from "@/lib/maintenance-query";
 import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
 import { WorkspaceBadge } from "@/components/ui/workspace-badge";
 
 type MaintenanceView = "overview" | "requests" | "categories";
+
+const MAINTENANCE_RECORD_STATUS_LABELS: Record<string, string> = {
+  OPEN: "Open",
+  IN_PROGRESS: "In progress",
+  RESOLVED: "Resolved",
+  CANCELLED: "Cancelled",
+};
+
+const MAINTENANCE_SEVERITY_LABELS: Record<string, string> = {
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  CRITICAL: "Critical",
+};
+
+function isActiveMaintenanceRecord(record?: Partial<MaintenanceRecord> | null) {
+  return Boolean(record && ["OPEN", "IN_PROGRESS"].includes(String(record.status)));
+}
 
 function formatMaintenanceDate(value: string | undefined) {
   if (!value) return "—";
@@ -34,7 +50,7 @@ function workspaceLabel(workspace: any, workspaceId: string) {
   return workspace?.label || workspace?.name || workspaceId || "Unknown workspace";
 }
 
-function MaintenanceCategoryCards({ categories, canEditCategories, categorySaving, editingId, draftName, draftSubtitle, pageTitle, pageDescription, dataSource, onOpenCategory, onCloseCategory, onSaveCategory, onToggleCategory, onNameChange, onSubtitleChange }: { categories: MaintenanceCategory[]; canEditCategories: boolean; categorySaving: boolean; editingId: string | null; draftName: string; draftSubtitle: string; pageTitle: string; pageDescription: string; dataSource: "local" | "supabase" | "loading"; onOpenCategory: (category?: MaintenanceCategory) => void; onCloseCategory: () => void; onSaveCategory: (event: React.FormEvent<HTMLFormElement>) => Promise<void>; onToggleCategory: (category: MaintenanceCategory) => Promise<void>; onNameChange: (value: string) => void; onSubtitleChange: (value: string) => void }) {
+function MaintenanceCategoryCards({ categories, canEditCategories, categorySaving, editingId, draftName, draftSubtitle, pageTitle, pageDescription, dataSource, onOpenCategory, onCloseCategory, onSaveCategory, onToggleCategory, onNameChange, onSubtitleChange }: { categories: MaintenanceCategory[]; canEditCategories: boolean; categorySaving: boolean; editingId: string | null; draftName: string; draftSubtitle: string; pageTitle: string; pageDescription: string; dataSource: "error" | "supabase" | "loading"; onOpenCategory: (category?: MaintenanceCategory) => void; onCloseCategory: () => void; onSaveCategory: (event: React.FormEvent<HTMLFormElement>) => Promise<void>; onToggleCategory: (category: MaintenanceCategory) => Promise<void>; onNameChange: (value: string) => void; onSubtitleChange: (value: string) => void }) {
   return <>
     <motion.div className="module-content maintenance-page" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
       <div className="module-header"><div><h1>{pageTitle}</h1><p className="muted-copy">{pageDescription} {dataSource === "supabase" ? "Connected." : dataSource === "loading" ? "Loading maintenance data…" : "Showing saved maintenance data."}</p></div>{canEditCategories ? <Button onClick={() => onOpenCategory()}><Plus size={16} /> Add category</Button> : null}</div>
@@ -78,30 +94,20 @@ export default function MaintenancePage({ view = "overview" }: { view?: Maintena
     queryFn: fetchWorkspacesSnapshot,
     enabled: view !== "categories",
   });
-  const [records, setRecords] = useState<MaintenanceRecord[]>(() => getMaintenanceRecords());
-  const [categories, setCategories] = useState<MaintenanceCategory[]>(() => getMaintenanceCategories());
-  const [workspaces, setWorkspaces] = useState<any[]>(() => getWorkspaceRecords());
+  const [records, setRecords] = useState<MaintenanceRecord[]>([]);
+  const [categories, setCategories] = useState<MaintenanceCategory[]>([]);
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftSubtitle, setDraftSubtitle] = useState("");
   const [categorySaving, setCategorySaving] = useState(false);
-  const [categoryRecordCheck, setCategoryRecordCheck] = useState<"ready" | "checking" | "failed">(() => isSupabaseLeadsEnabled() ? "checking" : "ready");
-  const [dataSource, setDataSource] = useState<"local" | "supabase" | "loading">("local");
-
-  useEffect(() => {
-    const refresh = () => {
-      setRecords(getMaintenanceRecords());
-      setCategories(getMaintenanceCategories());
-      setWorkspaces(getWorkspaceRecords());
-    };
-    window.addEventListener("cubicle-demo-change", refresh);
-    return () => window.removeEventListener("cubicle-demo-change", refresh);
-  }, []);
+  const [categoryRecordCheck, setCategoryRecordCheck] = useState<"ready" | "checking" | "failed">("checking");
+  const [dataSource, setDataSource] = useState<"error" | "supabase" | "loading">("loading");
 
   useEffect(() => {
     if (!recordsQuery.data) return;
     setRecords(recordsQuery.data.records);
-    setDataSource(recordsQuery.data.dataSource === "supabase" ? "supabase" : "local");
+    setDataSource(recordsQuery.data.dataSource === "supabase" ? "supabase" : "error");
     if (view === "categories") {
       setCategoryRecordCheck(recordsQuery.data.errorMessage ? "failed" : "ready");
       if (recordsQuery.data.errorMessage) {
@@ -115,7 +121,7 @@ export default function MaintenancePage({ view = "overview" }: { view?: Maintena
   useEffect(() => {
     if (!categoriesQuery.data) return;
     setCategories(categoriesQuery.data.categories);
-    setDataSource(categoriesQuery.data.dataSource === "supabase" ? "supabase" : "local");
+    setDataSource(categoriesQuery.data.dataSource === "supabase" ? "supabase" : "error");
     if (categoriesQuery.data.errorMessage) {
       showToast({ variant: "error", title: "Categories could not be loaded", message: "Showing the saved maintenance categories." });
     }
@@ -171,15 +177,13 @@ export default function MaintenancePage({ view = "overview" }: { view?: Maintena
     }
     setCategorySaving(true);
     try {
-      const savedCategory = isSupabaseLeadsEnabled()
-        ? mapSupabaseMaintenanceCategoryToOsCategory(editingId === "new" ? await createSupabaseMaintenanceCategory(name, subtitle) : await updateSupabaseMaintenanceCategory(editingId || "", { name, description: subtitle, active: categories.find((category) => category.id === editingId)?.active !== false }))
-        : { id: editingId === "new" ? `maintenance-category-${Date.now()}` : editingId || `maintenance-category-${Date.now()}`, name, subtitle, active: categories.find((category) => category.id === editingId)?.active !== false };
+      const savedCategory = mapSupabaseMaintenanceCategoryToOsCategory(editingId === "new" ? await createSupabaseMaintenanceCategory(name, subtitle) : await updateSupabaseMaintenanceCategory(editingId || "", { name, description: subtitle, active: categories.find((category) => category.id === editingId)?.active !== false }));
       const next = editingId === "new" ? [savedCategory, ...categories] : categories.map((category) => category.id === editingId ? savedCategory : category);
-      const nextCategories = saveMaintenanceCategories(next);
+      const nextCategories = next;
       setCategories(nextCategories);
       queryClient.setQueryData<MaintenanceCategoriesQuerySnapshot>(queryKeys.maintenance.categories, (current) => ({
         categories: nextCategories,
-        dataSource: current?.dataSource || (isSupabaseLeadsEnabled() ? "supabase" : "demo"),
+        dataSource: current?.dataSource || "supabase",
         errorMessage: "",
       }));
       setEditingId(null);
@@ -217,14 +221,12 @@ export default function MaintenancePage({ view = "overview" }: { view?: Maintena
     }
     setCategorySaving(true);
     try {
-      const savedCategory = isSupabaseLeadsEnabled()
-        ? mapSupabaseMaintenanceCategoryToOsCategory(await updateSupabaseMaintenanceCategory(category.id, { name: category.name, description: category.subtitle, active: !category.active }))
-        : { ...category, active: !category.active, subtitle: category.subtitle || (!category.active ? "Available for maintenance requests" : "Deactivated for new requests") };
-      const nextCategories = saveMaintenanceCategories(categories.map((item) => item.id === category.id ? savedCategory : item));
+      const savedCategory = mapSupabaseMaintenanceCategoryToOsCategory(await updateSupabaseMaintenanceCategory(category.id, { name: category.name, description: category.subtitle, active: !category.active }));
+      const nextCategories = categories.map((item) => item.id === category.id ? savedCategory : item);
       setCategories(nextCategories);
       queryClient.setQueryData<MaintenanceCategoriesQuerySnapshot>(queryKeys.maintenance.categories, (current) => ({
         categories: nextCategories,
-        dataSource: current?.dataSource || (isSupabaseLeadsEnabled() ? "supabase" : "demo"),
+        dataSource: current?.dataSource || "supabase",
         errorMessage: "",
       }));
       showToast({ variant: "success", title: category.active ? "Category deactivated" : "Category activated", message: `${category.name} is ${category.active ? "hidden from new requests" : "available for new requests"}.` });

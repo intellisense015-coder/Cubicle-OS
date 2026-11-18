@@ -132,8 +132,9 @@ function formatPickerTime(value?: string) {
 function pickerMenuPosition(trigger: HTMLButtonElement, menu: HTMLDivElement | null, fallbackHeight: number) {
   const rect = trigger.getBoundingClientRect();
   const menuHeight = menu?.getBoundingClientRect().height || fallbackHeight;
+  const menuWidth = menu?.getBoundingClientRect().width || rect.width;
   const opensAbove = rect.bottom + menuHeight + 8 > window.innerHeight && rect.top - menuHeight - 8 >= 16;
-  return { top: opensAbove ? rect.top - menuHeight - 8 : rect.bottom + 8, left: Math.max(16, Math.min(rect.left, window.innerWidth - rect.width - 16)), width: rect.width };
+  return { top: opensAbove ? rect.top - menuHeight - 8 : rect.bottom + 8, left: Math.max(16, Math.min(rect.left, window.innerWidth - menuWidth - 16)), width: rect.width };
 }
 
 export function DatePickerField({ label, hint, value = "", min, disabled, onChange }: PickerFieldProps) {

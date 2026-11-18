@@ -259,45 +259,14 @@ const baseFloor4 = {
       "id": "floor4-office20",
       "name": "Office 20",
       "kind": "office",
-      "capacity": 24,
+      "capacity": 20,
       "shape": {
         "type": "polygon",
         "points": [
           [
-            1287,
-            234
-          ],
-          [
-            1287,
-            452
-          ],
-          [
-            1008,
-            452
-          ],
-          [
             1008,
             81
           ],
-          [
-            1155,
-            81
-          ],
-          [
-            1155,
-            234
-          ]
-        ]
-      }
-    },
-    {
-      "id": "floor4-cabin02",
-      "name": "Cabin 02",
-      "kind": "cabin",
-      "capacity": null,
-      "shape": {
-        "type": "polygon",
-        "points": [
           [
             1235,
             82
@@ -311,12 +280,16 @@ const baseFloor4 = {
             227
           ],
           [
-            1161,
-            227
+            1287,
+            234
           ],
           [
-            1161,
-            82
+            1287,
+            452
+          ],
+          [
+            1008,
+            452
           ]
         ]
       }
@@ -477,6 +450,58 @@ const baseFloor4 = {
         "y": 233,
         "width": 231,
         "height": 219
+      }
+    },
+    {
+      "id": "floor4-ladies-restroom",
+      "name": "Ladies Restroom",
+      "kind": "amenity",
+      "capacity": null,
+      "shape": {
+        "type": "rect",
+        "x": 393,
+        "y": 81,
+        "width": 155,
+        "height": 151
+      }
+    },
+    {
+      "id": "floor4-gents-restroom",
+      "name": "Gents Restroom",
+      "kind": "amenity",
+      "capacity": null,
+      "shape": {
+        "type": "rect",
+        "x": 793,
+        "y": 1047,
+        "width": 208,
+        "height": 148
+      }
+    },
+    {
+      "id": "floor4-lift01",
+      "name": "Lift 1",
+      "kind": "amenity",
+      "capacity": null,
+      "shape": {
+        "type": "rect",
+        "x": 550,
+        "y": 119,
+        "width": 67,
+        "height": 111
+      }
+    },
+    {
+      "id": "floor4-lift02",
+      "name": "Lift 2",
+      "kind": "amenity",
+      "capacity": null,
+      "shape": {
+        "type": "rect",
+        "x": 628,
+        "y": 119,
+        "width": 67,
+        "height": 111
       }
     },
     {

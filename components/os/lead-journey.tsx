@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { motion } from "motion/react";
-import { CalendarClock, CalendarDays, Clock3, Plus, UserRound } from "lucide-react";
+import { CalendarClock, CalendarDays, Clock3, Plus, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DatePickerField, SelectField, TimePickerField } from "@/components/ui/primitives";
-import { getDemoSession, getDemoValue } from "@/lib/demo-session";
+import { useQuery } from "@tanstack/react-query";
 import { LostReasonSelect } from "@/components/os/lost-reason-select";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { communicationModes, followUpOutcomes, moodOptions, probabilityOptions } from "@/lib/lead-journey";
 import { getLocalDateInputValue, getLocalTimeInputValue, isDateBeforeToday, isTimeBeforeNow } from "@/lib/follow-up-time";
 import { z } from "zod";
+import { fetchEmployeesSnapshot } from "@/lib/employee-query";
+import { queryKeys } from "@/lib/query-keys";
+import { createSupabaseLeadRecordingSignedUrl, validateLeadRecordingFile } from "@/lib/supabase/lead-recordings";
+import FileUpload from "@/components/ui/file-upload";
+import MusicToggle from "@/components/smoothui/components/music-toggle";
 
 const journeySchema = z.object({
   visitorIdentity: z.string(),
@@ -96,7 +101,7 @@ const followUpSchema = z.object({
 
 // TITLE: JOURNEY FORM DEFAULTS
 function getJourneyFormDefaults(lead, initialValues = {}) {
-  return { visitorIdentity: lead.name, occurredDate: "2026-10-02", occurredTime: "10:00", purpose: "", companions: "None", source: lead.source || "Website", mood: "Interested", certainty: "Unsure", objections: "", nextFollowUpDate: "", nextFollowUpTime: "", communicationMode: "WhatsApp", conversionProbability: "Medium", conversionReason: "", notes: "", ...initialValues };
+  return { visitorIdentity: lead.name, occurredDate: getLocalDateInputValue(), occurredTime: getLocalTimeInputValue(), purpose: "", companions: "None", source: lead.source || "Website", mood: "Interested", certainty: "Unsure", objections: "", nextFollowUpDate: "", nextFollowUpTime: "", communicationMode: "WhatsApp", conversionProbability: "Medium", conversionReason: "", notes: "", ...initialValues };
 }
 
 // TITLE: LEAD JOURNEY FORM
@@ -146,36 +151,38 @@ function leadStageTone(stage) {
   return stage === "Converted" || stage === "Quotation Approved" ? "success" : stage === "Follow-up due" || stage === "Quote Sent" ? "accent" : "neutral";
 }
 
-function isCurrentUserIdentity(value, ownerName, ownerEmail) {
-  const normalizedValue = String(value || "").trim().toLowerCase();
-  return Boolean(normalizedValue) && (normalizedValue === String(ownerName || "").trim().toLowerCase() || normalizedValue === String(ownerEmail || "").trim().toLowerCase());
-}
-
 // TITLE: FOLLOW-UP FORM
 export function LeadFollowUpForm({ lead, onCancel, onSave, canScheduleVisit = true }) {
-  const ownerName = String(getDemoValue("profileName") || "").trim();
-  const ownerEmail = String(getDemoSession().email || "").trim();
-  const assignedByOtherUser = lead.assignedTo && !isCurrentUserIdentity(lead.assignedTo, ownerName, ownerEmail) ? lead.assignedTo : "";
+  const employeesQuery = useQuery({ queryKey: queryKeys.employees.all, queryFn: fetchEmployeesSnapshot, enabled: canScheduleVisit });
+  const assignedByOtherUser = lead.assignedTo || "";
   const visitDefaults = getLocalDateTimeDefaults();
   const formApi = useForm({ resolver: zodResolver(followUpSchema), defaultValues: { followedUpBy: assignedByOtherUser || "Only me", occurredDate: "", occurredTime: "", communicationMode: "WhatsApp", conversationSummary: "", outcome: "Interested", nextFollowUpDate: "", nextFollowUpTime: "", currentStage: lead.stage || "", visitDate: visitDefaults.date, visitTime: visitDefaults.time, visitHost: assignedByOtherUser || "Only me", lostReason: lead.lostReason || "", lostMonthlyValue: lead.lostMonthlyValue ? String(lead.lostMonthlyValue) : "" }, mode: "onBlur" });
   const { register, handleSubmit, setError, setValue, watch, formState } = formApi;
   const [employeeOptions, setEmployeeOptions] = useState(["Only me"]);
+  const [recordingFile, setRecordingFile] = useState<File | null>(null);
+  const [recordingError, setRecordingError] = useState("");
   const today = getLocalDateInputValue();
   const currentTime = getLocalTimeInputValue();
 
   useEffect(() => {
     const defaults = getLocalDateTimeDefaults();
-    const savedEmployees = getDemoValue("employees");
-    const names = Array.isArray(savedEmployees) ? savedEmployees.filter((employee) => employee.status !== "Disabled" && employee.name && !isCurrentUserIdentity(employee.name, ownerName, ownerEmail) && !isCurrentUserIdentity(employee.email, ownerName, ownerEmail)).map((employee) => employee.name) : [];
+    const names = (employeesQuery.data?.employees || []).filter((employee) => employee.status !== "Disabled" && employee.name).map((employee) => employee.name);
     setEmployeeOptions([...new Set(["Only me", assignedByOtherUser, ...names].filter(Boolean))]);
     if (!watch("occurredDate")) setValue("occurredDate", defaults.date, { shouldValidate: true });
     if (!watch("occurredTime")) setValue("occurredTime", defaults.time, { shouldValidate: true });
-  }, [lead.assignedTo]);
+  }, [assignedByOtherUser, employeesQuery.data?.employees, setValue, watch]);
 
   const save = async (form) => {
     if (form.outcome === "Schedule a visit" && !canScheduleVisit) {
       setError("visitHost", { message: "Your account cannot schedule visits." });
       return;
+    }
+    if (recordingFile) {
+      const validation = validateLeadRecordingFile(recordingFile);
+      if (!validation.ok) {
+        setRecordingError(validation.message);
+        return;
+      }
     }
     const entry = {
       id: `journey-${Date.now()}`,
@@ -212,7 +219,8 @@ export function LeadFollowUpForm({ lead, onCancel, onSave, canScheduleVisit = tr
       visitTime: form.outcome === "Schedule a visit" ? form.visitTime : "",
       visitHost: form.outcome === "Schedule a visit" ? form.visitHost : "",
       lostReason: form.outcome === "Not interested" ? form.lostReason : "",
-      lostMonthlyValue: form.outcome === "Not interested" ? form.lostMonthlyValue : null
+      lostMonthlyValue: form.outcome === "Not interested" ? form.lostMonthlyValue : null,
+      recordingFile
     });
   };
 
@@ -222,7 +230,123 @@ export function LeadFollowUpForm({ lead, onCancel, onSave, canScheduleVisit = tr
   const isNextStepOutcome = nextStepOutcomes.includes(selectedOutcome);
   const visitBookedStage = ["Visit scheduled", "Visit booked"].includes(String(lead.stage || ""));
   const showNextFollowUp = !scheduleVisitNext && !visitBookedStage && !isNextStepOutcome;
-  return <motion.form className="inline-form-card lead-create-form lead-follow-up-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}><div className="card-heading"><div><h2>Log follow-up</h2><p className="muted-copy">Record what happened and decide the lead’s next step.</p></div></div><div className="ledger-summary"><div><span>Lead</span><strong>{lead.name}</strong></div><div><span>Company</span><strong>{lead.company || "—"}</strong></div><div><span>Current stage</span><StatusBadge tone={leadStageTone(lead.stage)}>{lead.stage}</StatusBadge></div></div><div className="inline-form-grid"><input type="hidden" {...register("currentStage")} /><SelectField label="Followed up by" value={watch("followedUpBy")} hint={error("followedUpBy")} onChange={(event) => setValue("followedUpBy", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><DatePickerField label="Follow-up date" value={watch("occurredDate")} hint={error("occurredDate")} onChange={(value) => setValue("occurredDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Follow-up time" value={watch("occurredTime")} hint={error("occurredTime")} onChange={(value) => setValue("occurredTime", value, { shouldDirty: true, shouldValidate: true })} /><SelectField label="Communication channel" value={watch("communicationMode")} hint={error("communicationMode")} onChange={(event) => setValue("communicationMode", event.target.value, { shouldDirty: true, shouldValidate: true })}>{communicationModes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField><SelectField label="Outcome" value={selectedOutcome} hint={error("outcome")} onChange={(event) => { const outcome = event.target.value; setValue("outcome", outcome, { shouldDirty: true, shouldValidate: true }); if (nextStepOutcomes.includes(outcome)) { setValue("nextFollowUpDate", "", { shouldDirty: true, shouldValidate: true }); setValue("nextFollowUpTime", "", { shouldDirty: true, shouldValidate: true }); } }}>{followUpOutcomes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>{selectedOutcome === "Not interested" ? <><LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label"><span>Estimated monthly loss</span><Input type="number" min="0.01" step="0.01" placeholder="e.g. 40000" {...register("lostMonthlyValue")} />{error("lostMonthlyValue") && <span className="lead-form-error">{error("lostMonthlyValue")}</span>}</label></> : null}{scheduleVisitNext ? <><DatePickerField label="Visit date" value={watch("visitDate")} min={today} hint={error("visitDate")} onChange={(value) => setValue("visitDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Visit time" value={watch("visitTime")} min={watch("visitDate") === today ? currentTime : undefined} hint={error("visitTime")} onChange={(value) => setValue("visitTime", value, { shouldDirty: true, shouldValidate: true })} /><SelectField label="Assign to" value={watch("visitHost")} hint={error("visitHost")} onChange={(event) => setValue("visitHost", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></> : null}{showNextFollowUp ? <><DatePickerField label="Next follow-up date" value={watch("nextFollowUpDate")} min={today} disabled={isNextStepOutcome} hint={error("nextFollowUpDate")} onChange={(value) => setValue("nextFollowUpDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Next follow-up time" value={watch("nextFollowUpTime")} min={watch("nextFollowUpDate") === today ? currentTime : undefined} disabled={isNextStepOutcome} hint={error("nextFollowUpTime")} onChange={(value) => setValue("nextFollowUpTime", value, { shouldDirty: true, shouldValidate: true })} /></> : null}<label className="settings-label journey-field-wide"><span>Conversation summary</span><textarea className={`floating-input follow-up-summary ${error("conversationSummary") ? "has-error" : ""}`} {...register("conversationSummary")} placeholder="What was discussed, decided or requested?" />{error("conversationSummary") && <span className="lead-form-error">{error("conversationSummary")}</span>}</label></div>{scheduleVisitNext ? <p className="lead-form-info">This will save the follow-up and book the visit for the selected lead.</p> : null}<div className="inline-form-actions"><Button variant="ghost" type="button" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarDays size={15} /> {scheduleVisitNext ? "Schedule visit" : "Save follow-up"}</Button></div></motion.form>;
+  return <motion.form className="inline-form-card lead-create-form lead-follow-up-form" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} onSubmit={handleSubmit(save)}>
+    <div className="card-heading"><div><h2>Log follow-up</h2><p className="muted-copy">Record what happened and decide the lead’s next step.</p></div></div>
+    <div className="ledger-summary"><div><span>Lead</span><strong>{lead.name}</strong></div><div><span>Company</span><strong>{lead.company || "—"}</strong></div><div><span>Current stage</span><StatusBadge tone={leadStageTone(lead.stage)}>{lead.stage}</StatusBadge></div></div>
+    <div className="inline-form-grid">
+      <input type="hidden" {...register("currentStage")} />
+      <SelectField label="Followed up by" value={watch("followedUpBy")} hint={error("followedUpBy")} onChange={(event) => setValue("followedUpBy", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>
+      <DatePickerField label="Follow-up date" value={watch("occurredDate")} hint={error("occurredDate")} onChange={(value) => setValue("occurredDate", value, { shouldDirty: true, shouldValidate: true })} />
+      <TimePickerField label="Follow-up time" value={watch("occurredTime")} hint={error("occurredTime")} onChange={(value) => setValue("occurredTime", value, { shouldDirty: true, shouldValidate: true })} />
+      <SelectField label="Communication channel" value={watch("communicationMode")} hint={error("communicationMode")} onChange={(event) => setValue("communicationMode", event.target.value, { shouldDirty: true, shouldValidate: true })}>{communicationModes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>
+      <SelectField label="Outcome" value={selectedOutcome} hint={error("outcome")} onChange={(event) => { const outcome = event.target.value; setValue("outcome", outcome, { shouldDirty: true, shouldValidate: true }); if (nextStepOutcomes.includes(outcome)) { setValue("nextFollowUpDate", "", { shouldDirty: true, shouldValidate: true }); setValue("nextFollowUpTime", "", { shouldDirty: true, shouldValidate: true }); } }}>{followUpOutcomes.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField>
+      {selectedOutcome === "Not interested" ? <><LostReasonSelect value={watch("lostReason")} hint={error("lostReason")} onChange={(value) => setValue("lostReason", value, { shouldDirty: true, shouldValidate: true })} /><label className="settings-label"><span>Estimated monthly loss</span><Input type="number" min="0.01" step="0.01" placeholder="e.g. 40000" {...register("lostMonthlyValue")} />{error("lostMonthlyValue") && <span className="lead-form-error">{error("lostMonthlyValue")}</span>}</label></> : null}
+      {scheduleVisitNext ? <><DatePickerField label="Visit date" value={watch("visitDate")} min={today} hint={error("visitDate")} onChange={(value) => setValue("visitDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Visit time" value={watch("visitTime")} min={watch("visitDate") === today ? currentTime : undefined} hint={error("visitTime")} onChange={(value) => setValue("visitTime", value, { shouldDirty: true, shouldValidate: true })} /><SelectField label="Assign to" value={watch("visitHost")} hint={error("visitHost")} onChange={(event) => setValue("visitHost", event.target.value, { shouldDirty: true, shouldValidate: true })}>{employeeOptions.map((option) => <option value={option} key={option}>{option}</option>)}</SelectField></> : null}
+      {showNextFollowUp ? <><DatePickerField label="Next follow-up date" value={watch("nextFollowUpDate")} min={today} disabled={isNextStepOutcome} hint={error("nextFollowUpDate")} onChange={(value) => setValue("nextFollowUpDate", value, { shouldDirty: true, shouldValidate: true })} /><TimePickerField label="Next follow-up time" value={watch("nextFollowUpTime")} min={watch("nextFollowUpDate") === today ? currentTime : undefined} disabled={isNextStepOutcome} hint={error("nextFollowUpTime")} onChange={(value) => setValue("nextFollowUpTime", value, { shouldDirty: true, shouldValidate: true })} /></> : null}
+      <label className="settings-label journey-field-wide"><span>Conversation summary</span><textarea className={`floating-input follow-up-summary ${error("conversationSummary") ? "has-error" : ""}`} {...register("conversationSummary")} placeholder="What was discussed, decided or requested?" />{error("conversationSummary") && <span className="lead-form-error">{error("conversationSummary")}</span>}</label>
+      <div className="settings-label journey-field-wide"><span>Call recording <span className="muted-copy">(optional)</span></span><FileUpload className="lead-recording-upload" acceptedFileTypes={["audio/*", ".aac", ".m4a", ".mp3", ".mp4", ".oga", ".ogg", ".wav", ".webm"]} maxFileSize={25 * 1024 * 1024} multiple={false} maxFiles={1} validateFile={(file) => { const validation = validateLeadRecordingFile(file); return validation.ok ? null : { message: validation.message, code: "INVALID_RECORDING" }; }} onUpload={async (file, helpers) => { setRecordingError(""); setRecordingFile(file); helpers.onProgress(100); }} onUploadError={(uploadError) => setRecordingError(uploadError.message)} onFileRemove={() => { setRecordingFile(null); setRecordingError(""); }} />{recordingError ? <span className="lead-form-error">{recordingError}</span> : null}</div>
+    </div>
+    {scheduleVisitNext ? <p className="lead-form-info">This will save the follow-up and book the visit for the selected lead.</p> : null}
+    <div className="inline-form-actions"><Button variant="ghost" type="button" onClick={onCancel}>Cancel</Button><Button type="submit" loading={formState.isSubmitting}><CalendarDays size={15} /> {scheduleVisitNext ? "Schedule visit" : "Save follow-up"}</Button></div>
+  </motion.form>;
+}
+
+export function LeadJourneyRecordingPlayer({ recordings = [] }) {
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [loadingId, setLoadingId] = useState("");
+  const [error, setError] = useState("");
+  const [playerStates, setPlayerStates] = useState<Record<string, { playing: boolean; progress: number }>>({});
+  const [pendingPlayId, setPendingPlayId] = useState("");
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const objectUrls = useRef<string[]>([]);
+
+  useEffect(() => () => {
+    objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  useEffect(() => {
+    if (!pendingPlayId || !signedUrls[pendingPlayId]) return;
+    const audio = audioRefs.current[pendingPlayId];
+    if (!audio) return;
+    setPendingPlayId("");
+    audio.play().then(() => {
+      setPlayerStates((current) => ({ ...current, [pendingPlayId]: { ...(current[pendingPlayId] || { progress: 0 }), playing: true } }));
+    }).catch(() => {
+      setPlayerStates((current) => ({ ...current, [pendingPlayId]: { ...(current[pendingPlayId] || { progress: 0 }), playing: false } }));
+      setError("The recording could not be played by this browser.");
+    });
+  }, [pendingPlayId, signedUrls]);
+
+  if (!recordings.length) return null;
+
+  const openRecording = async (recording) => {
+    if (signedUrls[recording.id]) return true;
+    setError("");
+    setLoadingId(recording.id);
+    try {
+      const url = await createSupabaseLeadRecordingSignedUrl({ leadId: recording.lead_id, recordingId: recording.id });
+      objectUrls.current.push(url);
+      setSignedUrls((current) => ({ ...current, [recording.id]: url }));
+      return true;
+    } catch (nextError) {
+      setError(nextError?.message || "The recording could not be opened.");
+      return false;
+    } finally {
+      setLoadingId("");
+    }
+  };
+
+  const updatePlayerState = (recordingId, patch) => {
+    setPlayerStates((current) => ({
+      ...current,
+      [recordingId]: { playing: false, progress: 0, ...(current[recordingId] || {}), ...patch },
+    }));
+  };
+
+  const stopOtherPlayers = (recordingId) => {
+    Object.entries(audioRefs.current).forEach(([otherId, audio]) => {
+      if (otherId !== recordingId && audio) {
+        audio.pause();
+        updatePlayerState(otherId, { playing: false });
+      }
+    });
+  };
+
+  const handlePlayingChange = async (recording, nextPlaying) => {
+    const recordingId = recording.id;
+    const audio = audioRefs.current[recordingId];
+    if (!nextPlaying) {
+      audio?.pause();
+      updatePlayerState(recordingId, { playing: false });
+      return;
+    }
+    stopOtherPlayers(recordingId);
+    if (!signedUrls[recordingId]) {
+      updatePlayerState(recordingId, { playing: true });
+      setPendingPlayId(recordingId);
+      const opened = await openRecording(recording);
+      if (!opened) updatePlayerState(recordingId, { playing: false });
+      return;
+    }
+    if (!audio) return;
+    try {
+      await audio.play();
+      updatePlayerState(recordingId, { playing: true });
+    } catch {
+      updatePlayerState(recordingId, { playing: false });
+      setError("The recording could not be played by this browser.");
+    }
+  };
+
+  const handleSeek = (recordingId, progress) => {
+    const audio = audioRefs.current[recordingId];
+    if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+      audio.currentTime = progress * audio.duration;
+    }
+    updatePlayerState(recordingId, { progress });
+  };
+
+  return <div className="journey-entry-recordings"><span>Call recording</span>{recordings.map((recording) => { const state = playerStates[recording.id] || { playing: false, progress: 0 }; return <div className="journey-recording-item" key={recording.id}><MusicToggle className="journey-recording-music-toggle" artist={loadingId === recording.id ? "Opening recording…" : "Call recording"} onPlayingChange={(nextPlaying) => void handlePlayingChange(recording, nextPlaying)} onSeek={(progress) => handleSeek(recording.id, progress)} playing={state.playing} progress={state.progress} size={58} title={recording.file_name} /><audio aria-label={`Audio recording ${recording.file_name}`} className="journey-recording-audio" preload="metadata" ref={(element) => { audioRefs.current[recording.id] = element; }} src={signedUrls[recording.id] || undefined} onDurationChange={(event) => { const audio = event.currentTarget; if (audio.duration > 0) updatePlayerState(recording.id, { progress: audio.currentTime / audio.duration }); }} onTimeUpdate={(event) => { const audio = event.currentTarget; if (audio.duration > 0) updatePlayerState(recording.id, { progress: audio.currentTime / audio.duration }); }} onPlay={() => updatePlayerState(recording.id, { playing: true })} onPause={() => updatePlayerState(recording.id, { playing: false })} onEnded={() => updatePlayerState(recording.id, { playing: false, progress: 1 })} onError={() => { updatePlayerState(recording.id, { playing: false }); setError("The recording could not be played by this browser."); }}><track kind="captions" /></audio></div>; })}{error ? <small className="lead-form-error">{error}</small> : null}</div>;
 }
 
 // TITLE: LEAD JOURNEY TIMELINE

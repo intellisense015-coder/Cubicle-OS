@@ -1,35 +1,26 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { fetchSupabaseVisits, mapSupabaseVisitToOsVisit } from "@/lib/supabase/visits";
 
 export type VisitsQuerySnapshot = {
   visits: any[];
-  dataSource: "supabase" | "demo";
+  dataSource: "supabase" | "error";
   errorMessage: string;
 };
 
-function readCachedVisits() {
-  const cached = getDemoValue("visits");
-  return Array.isArray(cached) ? cached : [];
-}
-
 export async function fetchVisitsSnapshot(): Promise<VisitsQuerySnapshot> {
-  const cachedVisits = readCachedVisits();
-
   if (!isSupabaseLeadsEnabled()) {
-    return { visits: cachedVisits, dataSource: "demo", errorMessage: "" };
+    return { visits: [], dataSource: "error", errorMessage: "Supabase is required for visit records." };
   }
 
   try {
     const rows = await fetchSupabaseVisits();
     const visits = rows.map(mapSupabaseVisitToOsVisit);
-    saveDemoValue("visits", visits, { notify: false });
     return { visits, dataSource: "supabase", errorMessage: "" };
   } catch (error: any) {
     const message = error?.message || "Unable to load visits.";
     return {
-      visits: cachedVisits,
-      dataSource: "demo",
+      visits: [],
+      dataSource: "error",
       errorMessage: `Could not load visits: ${message}`,
     };
   }

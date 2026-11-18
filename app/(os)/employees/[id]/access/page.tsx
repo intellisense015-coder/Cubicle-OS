@@ -9,13 +9,12 @@ import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast-provider";
 import { useHasPermission } from "@/lib/access-control";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { fetchEmployeesSnapshot } from "@/lib/employee-query";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchSupabaseUserPermissions, updateSupabaseUserPermission, type SupabaseAdminUserPermissionRow } from "@/lib/supabase/admin-users";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 
-const DEMO_ACCESS_OPTIONS = [
+const ACCESS_PERMISSION_CATALOGUE = [
   { permission_key: "dashboard.read", label: "Dashboard", description: "View workspace performance and operating summaries.", group: "Overview" },
   { permission_key: "leads.read", label: "Leads — View", description: "View the lead pipeline and lead details.", group: "Leads" },
   { permission_key: "leads.write", label: "Leads — Edit", description: "Create, update and assign leads.", group: "Leads" },
@@ -75,15 +74,6 @@ function normalizeRows(rows: SupabaseAdminUserPermissionRow[]) {
     .sort((a, b) => `${a.group}:${a.label}`.localeCompare(`${b.group}:${b.label}`));
 }
 
-function demoRows(employeeId: string): AccessRow[] {
-  const saved = getDemoValue(`employee-permissions-${employeeId}`);
-  return DEMO_ACCESS_OPTIONS.map((row) => ({
-    ...row,
-    granted: typeof saved?.[row.permission_key] === "boolean" ? saved[row.permission_key] : true,
-    overridden: true,
-  }));
-}
-
 function AccessSwitch({ checked, disabled, loading, onChange, label }: { checked: boolean; disabled?: boolean; loading?: boolean; onChange: () => void; label: string }) {
   return <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`employee-access-switch${checked ? " is-on" : ""}${loading ? " is-loading" : ""}`} disabled={disabled || loading} onClick={onChange}><span /></button>;
 }
@@ -121,9 +111,8 @@ export default function EmployeeAccessPage() {
   useEffect(() => {
     if (!employee) return;
     if (employee.backend !== "supabase" || !supabaseEnabled) {
-      const nextRows = demoRows(employeeId);
-      setRows(nextRows);
-      setSavedRows(nextRows);
+      setRows([]);
+      setSavedRows([]);
       setPendingChanges({});
       return;
     }
@@ -131,7 +120,7 @@ export default function EmployeeAccessPage() {
       // Owner permission overrides are intentionally never fetched or written.
       // Render the protected permission catalogue as enabled so the owner can
       // still audit the effective access without being offered unsafe toggles.
-      const nextRows = DEMO_ACCESS_OPTIONS.map((row) => ({ ...row, granted: true, overridden: false }));
+      const nextRows = ACCESS_PERMISSION_CATALOGUE.map((row) => ({ ...row, granted: true, overridden: false }));
       setRows(nextRows);
       setSavedRows(nextRows);
       setPendingChanges({});
@@ -194,14 +183,9 @@ export default function EmployeeAccessPage() {
     const changes = { ...pendingChanges };
     setIsSaving(true);
     try {
-      if (employee.backend === "supabase" && supabaseEnabled) {
-        await Promise.all(Object.entries(changes).map(([permissionKey, granted]) => updateSupabaseUserPermission(employee.userId || employee.id, permissionKey, granted)));
-        await permissionsQuery.refetch();
-      } else {
-        const current = getDemoValue(`employee-permissions-${employeeId}`) || {};
-        saveDemoValue(`employee-permissions-${employeeId}`, { ...current, ...changes });
-        setSavedRows(rows);
-      }
+      if (employee.backend !== "supabase" || !supabaseEnabled) throw new Error("Supabase is required to update employee access.");
+      await Promise.all(Object.entries(changes).map(([permissionKey, granted]) => updateSupabaseUserPermission(employee.userId || employee.id, permissionKey, granted)));
+      await permissionsQuery.refetch();
       setPendingChanges({});
       showToast({ variant: "success", title: "Access updated", message: `${employee.name}'s permissions were updated.` });
     } catch (error) {

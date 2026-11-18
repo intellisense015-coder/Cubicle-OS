@@ -3,6 +3,11 @@ export type ResendAttachment = {
   content: string;
 };
 
+export type ResendTag = {
+  name: string;
+  value: string;
+};
+
 export type EmailSender = {
   from: string;
   replyTo?: string;
@@ -69,6 +74,8 @@ export async function sendResendEmail({
   html,
   text,
   attachments = [],
+  tags = [],
+  idempotencyKey,
 }: {
   from: string;
   replyTo?: string;
@@ -77,6 +84,8 @@ export async function sendResendEmail({
   html: string;
   text?: string;
   attachments?: ResendAttachment[];
+  tags?: ResendTag[];
+  idempotencyKey?: string;
 }) {
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) throw new Error("Email delivery is not configured. Set RESEND_API_KEY.");
@@ -89,13 +98,18 @@ export async function sendResendEmail({
     ...(text ? { text } : {}),
     ...(replyTo ? { reply_to: replyTo } : {}),
     ...(attachments.length ? { attachments } : {}),
+    ...(tags.length ? { tags } : {}),
   };
 
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${resendKey}`,
+      "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30000),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result?.message || "The email provider rejected the message.");

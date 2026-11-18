@@ -1,6 +1,7 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { secureOsMutation } from "@/lib/supabase/secure-mutations";
 import { normalizeLeadStage } from "@/lib/lead-stages";
+import type { SupabaseLeadJourneyRecordingRow } from "@/lib/supabase/lead-recordings";
 
 export type SupabaseLeadRow = {
   id: string;
@@ -38,6 +39,7 @@ export type SupabaseLeadJourneyRow = {
   occurred_date: string;
   occurred_time: string | null;
   entry_data: Record<string, unknown>;
+  recordings?: SupabaseLeadJourneyRecordingRow[];
 };
 
 const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
@@ -75,6 +77,7 @@ function mapSupabaseLeadJourneyRow(row: SupabaseLeadJourneyRow) {
     entryType: row.entry_type,
     occurredDate: row.occurred_date,
     occurredTime: timeValue(row.occurred_time),
+    recordings: row.recordings || [],
   };
 }
 
@@ -162,16 +165,36 @@ export async function fetchSupabaseLeadAssignments() {
 }
 
 export async function fetchSupabaseLeadJourneys() {
-  const { data, error } = await getSupabaseBrowserClient()
-    .from("os_lead_journey")
-    .select("id,lead_id,client_entry_id,entry_type,occurred_date,occurred_time,entry_data")
-    .order("occurred_date", { ascending: false })
-    .order("occurred_time", { ascending: false });
+  const supabase = getSupabaseBrowserClient();
+  const [journeyResult, recordingResult] = await Promise.all([
+    supabase
+      .from("os_lead_journey")
+      .select("id,lead_id,client_entry_id,entry_type,occurred_date,occurred_time,entry_data")
+      .order("occurred_date", { ascending: false })
+      .order("occurred_time", { ascending: false }),
+    supabase
+      .from("os_lead_journey_recordings")
+      .select("id,lead_id,journey_client_entry_id,storage_path,file_name,mime_type,file_size,created_at")
+      .order("created_at", { ascending: false }),
+  ]);
 
   // Keep the leads page usable until the durable journey migration is applied.
-  if (error?.code === "PGRST205") return { rows: [] as SupabaseLeadJourneyRow[], available: false };
-  if (error) throw error;
-  return { rows: (data || []) as SupabaseLeadJourneyRow[], available: true };
+  if (journeyResult.error?.code === "PGRST205") return { rows: [] as SupabaseLeadJourneyRow[], available: false };
+  if (journeyResult.error) throw journeyResult.error;
+  if (recordingResult.error && recordingResult.error.code !== "PGRST205") throw recordingResult.error;
+
+  const recordingsByEntry = new Map<string, SupabaseLeadJourneyRecordingRow[]>();
+  for (const recording of (recordingResult.data || []) as SupabaseLeadJourneyRecordingRow[]) {
+    const key = `${recording.lead_id}:${recording.journey_client_entry_id}`;
+    const current = recordingsByEntry.get(key) || [];
+    current.push(recording);
+    recordingsByEntry.set(key, current);
+  }
+  const rows = ((journeyResult.data || []) as SupabaseLeadJourneyRow[]).map((row) => ({
+    ...row,
+    recordings: recordingsByEntry.get(`${row.lead_id}:${row.client_entry_id}`) || [],
+  }));
+  return { rows, available: true };
 }
 
 export async function fetchSupabaseLead(id: string) {

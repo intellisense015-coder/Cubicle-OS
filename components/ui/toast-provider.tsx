@@ -34,6 +34,8 @@ const toastCreators = {
 function getClientToastMessage(message: unknown) {
   if (message == null) return undefined;
   const text = String(message);
+  if (/database migration has not been applied|lifecycle columns are missing/i.test(text)) return text;
+  if (/audio storage is not configured|recording upload failed|permission to upload recordings/i.test(text)) return text;
   if (/supabase|postgrest|postgres|row[- ]level security|schema cache|foreign key|violates|duplicate key/i.test(text)) {
     return "We couldn’t complete that request. Please try again.";
   }

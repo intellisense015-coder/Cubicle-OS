@@ -1,7 +1,7 @@
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { fetchSupabaseInvoices } from "@/lib/supabase/invoices";
 
-type InvoiceDataSource = "supabase" | "demo";
+type InvoiceDataSource = "supabase" | "error";
 
 export type InvoiceQuerySnapshot = {
   invoices: any[];
@@ -16,7 +16,7 @@ function errorMessage(error: unknown) {
 
 export async function fetchInvoicesSnapshot(): Promise<InvoiceQuerySnapshot> {
   if (!isSupabaseLeadsEnabled()) {
-    return { invoices: [], dataSource: "demo", errorMessage: "Supabase is required for invoice records." };
+    return { invoices: [], dataSource: "error", errorMessage: "Supabase is required for invoice records." };
   }
 
   try {
@@ -25,7 +25,7 @@ export async function fetchInvoicesSnapshot(): Promise<InvoiceQuerySnapshot> {
   } catch (error) {
     return {
       invoices: [],
-      dataSource: "supabase",
+      dataSource: "error",
       errorMessage: errorMessage(error),
     };
   }

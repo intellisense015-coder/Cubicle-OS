@@ -42,6 +42,10 @@ export function getAreaStatus(area: FloorArea, live?: AreaLiveData): MapStatus {
   if (live.operationalStatus === "UNDER_MAINTENANCE") return "maintenance";
   const maintenanceStatus = String(live.maintenance?.status || "").toUpperCase();
   if (["OPEN", "IN_PROGRESS", "ACTIVE", "LOCKED", "BLOCKED"].includes(maintenanceStatus)) return "maintenance";
+  // Faculty-use areas such as lifts, reception facilities and meeting rooms
+  // are not member workspaces. They remain neutral shared facilities while
+  // still allowing maintenance issues to be reported.
+  if (!isRentable(area)) return "shared";
   if (live.occupancy === "available") return "available";
   if (live.occupancy === "reserved") return "reserved";
   if (live.occupancy === "maintenance") return "maintenance";

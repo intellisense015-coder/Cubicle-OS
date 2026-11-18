@@ -1,11 +1,23 @@
 "use client";
 
-import { Moon, Sun } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
+import { LiquidToggle, NimbusToggleIcons } from "@/components/nimbus/liquid-toggle";
 
 // TITLE: THEME TOGGLE
 export function ThemeToggle({ variant = "default" }) {
   const { theme, toggleTheme } = useTheme();
-  if (variant === "segmented") return <button className="theme-toggle auth-theme-toggle" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}><span className={theme === "light" ? "is-active" : ""}><Sun size={13} />Light</span><span className={theme === "dark" ? "is-active" : ""}><Moon size={13} />Dark</span></button>;
-  return <button className="theme-toggle" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === "light" ? "Dark" : "Light"}</span></button>;
+  const isDarkMode = theme === "dark";
+  return (
+    <LiquidToggle
+      checked={isDarkMode}
+      onCheckedChange={(nextTheme) => {
+        if (nextTheme !== isDarkMode) toggleTheme();
+      }}
+      tone={isDarkMode ? "dark" : "light"}
+      size={40}
+      icons={{ off: NimbusToggleIcons.sun, on: NimbusToggleIcons.moon }}
+      label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+      className={variant === "segmented" ? "auth-theme-liquid-toggle" : "theme-liquid-toggle"}
+    />
+  );
 }

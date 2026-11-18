@@ -27,6 +27,12 @@ function isMissingSalesTaxColumn(error: unknown) {
   return message.includes("sales_tax_enabled") || message.includes("sales_tax_rate") || message.includes("sales_tax_amount");
 }
 
+function isProviderTimeout(error: unknown) {
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const message = String(candidate?.message || error || "").toLowerCase();
+  return candidate?.name === "TimeoutError" || candidate?.code === 23 || message.includes("timed out") || message.includes("timeout") || message.includes("operation was aborted");
+}
+
 function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -60,13 +66,14 @@ async function updateDelivery(admin, eventId: string, invoiceId: string, status:
 function parsePdfAttachment(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const record = value as { filename?: unknown; content?: unknown };
-  let content = String(record.content || "")
-    .replace(/^data:[^,]*,/i, "")
-    .replace(/\s+/g, "")
-    .trim();
+  let content = String(record.content || "").replace(/^data:[^,]*,/i, "").replaceAll(" ", "").replaceAll("\t", "").replaceAll("\r", "").replaceAll("\n", "").trim();
   if (!content) return null;
   if (content.length > 25_000_000) throw new Error("The invoice PDF attachment is too large.");
-  if (!/^[A-Za-z0-9+/_=-]+$/.test(content)) throw new Error("The invoice PDF attachment is invalid.");
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    const valid = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 43 || code === 47 || code === 95 || code === 61 || code === 45;
+    if (!valid) throw new Error("The invoice PDF attachment is invalid.");
+  }
   content = content.replaceAll("-", "+").replaceAll("_", "/");
   const decoded = Buffer.from(content, "base64");
   const pdfHeader = decoded.indexOf(Buffer.from("%PDF-", "ascii"));
@@ -88,6 +95,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   let invoiceId = "";
   let eventId = "";
   let actorUserId = "";
+  let recipientEmail = "";
   try {
     const { id } = await params;
     invoiceId = String(id || "").trim();
@@ -137,7 +145,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const { data: member, error: memberError } = await admin.from("members").select("member_name,email").eq("id", invoice.member_id).maybeSingle();
     if (memberError) throw memberError;
-    const recipientEmail = String(member?.email || "").trim().toLowerCase();
+    recipientEmail = String(member?.email || "").trim().toLowerCase();
     if (!validEmail(recipientEmail)) return NextResponse.json({ error: "The client does not have a valid email address." }, { status: 422 });
 
     const { data: items, error: itemError } = await admin.from("invoice_items").select("description,quantity,line_total").eq("invoice_id", invoiceId).order("sort_order", { ascending: true });
@@ -161,17 +169,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const actorEmail = String(userData.user.email || "").trim().toLowerCase();
     const sender = await resolveOsEmailSender({ client: admin, purpose: "invoices", actorEmail });
 
-    const { data: activity, error: activityError } = await admin.from("activity_log").insert({
-      action: "invoice.email_delivery",
-      entity_type: "invoice",
-      entity_id: invoiceId,
-      actor_user_id: userData.user.id,
-      recipient_email: recipientEmail,
-      delivery_status: "pending",
-      metadata: { invoice_number: invoice.invoice_number, sender: sender.from, reply_to: sender.replyTo || null, attachment_filename: attachment?.filename || null },
-    }).select("id").single();
-    if (activityError) throw activityError;
-    eventId = activity.id;
+    const { data: retryActivity, error: retryActivityError } = await admin
+      .from("activity_log")
+      .select("id,metadata")
+      .eq("action", "invoice.email_delivery")
+      .eq("entity_id", invoiceId)
+      .eq("delivery_status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (retryActivityError) throw retryActivityError;
+    const retryMetadata = retryActivity?.metadata && typeof retryActivity.metadata === "object" ? retryActivity.metadata as Record<string, unknown> : {};
+    if (retryActivity && (retryMetadata.status === "provider_timeout" || retryMetadata.status === "retrying")) {
+      eventId = retryActivity.id;
+      const { error: retryUpdateError } = await admin.from("activity_log").update({
+        actor_user_id: userData.user.id,
+        recipient_email: recipientEmail,
+        metadata: { ...retryMetadata, status: "retrying", retry_requested_at: new Date().toISOString() },
+      }).eq("id", eventId);
+      if (retryUpdateError) throw retryUpdateError;
+    } else {
+      const { data: activity, error: activityError } = await admin.from("activity_log").insert({
+        action: "invoice.email_delivery",
+        entity_type: "invoice",
+        entity_id: invoiceId,
+        actor_user_id: userData.user.id,
+        recipient_email: recipientEmail,
+        delivery_status: "pending",
+        metadata: { invoice_number: invoice.invoice_number, sender: sender.from, reply_to: sender.replyTo || null, attachment_filename: attachment?.filename || null },
+      }).select("id").single();
+      if (activityError) throw activityError;
+      eventId = activity.id;
+    }
 
     const emailInput = {
       memberName: member?.member_name || invoice.account_name,
@@ -186,10 +215,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       whtEnabled: invoice.tax_enabled === true,
       whtAmount: invoice.tax_amount,
       totalAmount: invoice.total_amount,
-      body: templateValue(parsedBody.data.template, "body") || storedTemplate.body,
+      body: storedTemplate.body,
     };
     const html = renderInvoiceEmailHtml(emailInput);
-    const subject = renderInvoiceEmailSubject(templateValue(parsedBody.data.template, "subject") || storedTemplate.subject, emailInput);
+    const subject = renderInvoiceEmailSubject(storedTemplate.subject, emailInput);
     const text = renderInvoiceEmailText(emailInput);
 
     const emailResult = await sendResendEmail({
@@ -200,13 +229,30 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       html,
       text,
       attachments: attachment ? [{ filename: attachment.filename, content: attachment.content }] : [],
+      idempotencyKey: `invoice/${invoiceId}/activity/${eventId}`,
+      tags: [
+        { name: "app", value: "cubicle-os" },
+        { name: "invoice_id", value: invoiceId },
+        { name: "activity_id", value: eventId },
+      ],
     });
 
-    await updateDelivery(admin, eventId, invoiceId, "sent", { provider: "resend", provider_message_id: emailResult?.id || null, sender: sender.from, reply_to: sender.replyTo || null, attachment_filename: attachment?.filename || null });
+    await updateDelivery(admin, eventId, invoiceId, "sent", { provider: "resend", provider_message_id: emailResult?.id || null, resend_email_id: emailResult?.id || null, sender: sender.from, reply_to: sender.replyTo || null, attachment_filename: attachment?.filename || null });
     await recordSecurityAudit(admin, { action: "invoice.send", outcome: "success", actorUserId: userData.user.id, entityType: "invoice", entityId: invoiceId, request, metadata: { attachment: Boolean(attachment) } });
     return NextResponse.json({ ok: true, delivery: { status: "sent", recipientEmail, sender: sender.from, replyTo: sender.replyTo || null, attachmentFilename: attachment?.filename || null, providerMessageId: emailResult?.id || null } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invoice email delivery failed.";
+    if (isProviderTimeout(error) && admin && eventId && invoiceId) {
+      try {
+        await admin.from("activity_log").update({ metadata: { status: "provider_timeout", error: message, provider: "resend", invoice_id: invoiceId, activity_id: eventId } }).eq("id", eventId);
+        await admin.from("invoices").update({ email_status: "queued" }).eq("id", invoiceId);
+        await recordSecurityAudit(admin, { action: "invoice.send", outcome: "failure", actorUserId: actorUserId || null, entityType: "invoice", entityId: invoiceId, request, metadata: { reason: "provider_timeout", delivery_status: "pending" } });
+      } catch (timeoutLoggingError) {
+        console.error("Invoice provider timeout could not be recorded:", timeoutLoggingError);
+      }
+      console.warn("Invoice email provider timed out after the request may have been accepted:", { invoiceId, recipientEmail });
+      return NextResponse.json({ ok: true, delivery: { status: "queued", recipientEmail, warning: "The email provider did not confirm the request. The invoice may already have been delivered; verify before retrying." } }, { status: 202 });
+    }
     if (admin && eventId && invoiceId) {
       try { await updateDelivery(admin, eventId, invoiceId, "failed", { error: message }); } catch (loggingError) { console.error("Invoice delivery failure could not be finalized:", loggingError); }
     }

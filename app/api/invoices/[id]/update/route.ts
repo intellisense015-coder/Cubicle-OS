@@ -82,7 +82,7 @@ function validInvoiceItems(value: unknown) {
 
 const invoiceUpdateKeys = new Set([
   "id", "invoice", "workspaceId", "memberId", "account", "period", "amount", "unitPrice", "qty", "itemDescription",
-  "issueDate", "dueDate", "billingStartDate", "dueDay", "manualDateOverride", "subtotal", "charges", "items", "taxEnabled",
+  "issueDate", "dueDate", "billingStartDate", "periodStart", "periodEnd", "dueDay", "manualDateOverride", "subtotal", "charges", "items", "taxEnabled",
   "taxRate", "taxAmount", "taxLabel", "whtEnabled", "whtRate", "whtAmount", "salesTaxEnabled", "salesTaxRate", "salesTaxAmount",
   "graceUntil", "paymentStatus", "emailStatus", "manualTotalOverride",
 ]);
@@ -139,9 +139,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const issueDate = dateKey(invoice.issueDate || invoice.billingStartDate);
     const dueDate = dateKey(invoice.dueDate);
     const billingStartDate = dateKey(invoice.billingStartDate);
+    const periodStart = dateKey(invoice.periodStart);
+    const periodEnd = dateKey(invoice.periodEnd);
     const memberId = String(invoice.memberId || "").trim();
     if (!z.string().uuid().safeParse(memberId).success || !issueDate || !dueDate || !validDate(issueDate) || !validDate(dueDate) || (billingStartDate && !validDate(billingStartDate))) return errorResponse("A valid member and invoice dates are required.", 400);
     if (billingStartDate && dueDate < billingStartDate) return errorResponse("Due date cannot be earlier than the billing start date.", 400);
+    if (Boolean(periodStart) !== Boolean(periodEnd) || (periodStart && !validDate(periodStart)) || (periodEnd && !validDate(periodEnd))) return errorResponse("A valid invoice period requires both a start and end date.", 400);
+    if (periodStart && periodEnd && periodEnd < periodStart) return errorResponse("Invoice period end cannot be before its start.", 400);
+    const resolvedPeriodStart = periodStart || `${issueDate.slice(0, 7)}-01`;
+    const resolvedPeriodEnd = periodEnd || lastDayOfMonth(resolvedPeriodStart);
     if (!boundedNumeric(invoice.subtotal ?? invoice.amount) || (invoice.salesTaxRate !== undefined && !boundedNumeric(invoice.salesTaxRate, 1000)) || (invoice.whtRate !== undefined && !boundedNumeric(invoice.whtRate, 1000))) return errorResponse("Invoice amounts and rates are invalid.", 400);
     if (invoice.charges !== undefined && !validInvoiceItems(invoice.charges)) return errorResponse("Invoice charges are invalid.", 400);
     if (invoice.items !== undefined && !validInvoiceItems(invoice.items)) return errorResponse("Invoice items are invalid.", 400);
@@ -192,8 +198,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       member_id: memberId,
       workspace_id: invoice.workspaceId || null,
       account_name: String(invoice.account || "").trim(),
-      period_start: `${issueDate.slice(0, 7)}-01`,
-      period_end: lastDayOfMonth(`${issueDate.slice(0, 7)}-01`),
+      period_start: resolvedPeriodStart,
+      period_end: resolvedPeriodEnd,
       issue_date: issueDate,
       due_date: dueDate,
       billing_start_date: billingStartDate || null,

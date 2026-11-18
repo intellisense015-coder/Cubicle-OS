@@ -140,6 +140,11 @@ function paymentStatus(value: unknown) {
 
 function emailStatus(value: unknown) {
   const normalized = String(value || "not_sent").toLowerCase();
+  if (normalized === "delivered") return "Delivered";
+  if (normalized === "delayed" || normalized === "delivery_delayed") return "Delayed";
+  if (normalized === "bounced") return "Bounced";
+  if (normalized === "complained") return "Complained";
+  if (normalized === "suppressed") return "Suppressed";
   if (normalized === "sent") return "Sent";
   if (normalized === "queued") return "Queued";
   if (normalized === "failed") return "Failed";
@@ -158,6 +163,8 @@ export function mapSupabaseInvoiceToOsInvoice(row: SupabaseInvoiceRow, items: Su
     memberId: row.member_id,
     account: row.account_name,
     period: monthLabel(row.period_start),
+    periodStart: dateKey(row.period_start),
+    periodEnd: dateKey(row.period_end),
     amount: money(row.total_amount),
     unitPrice: money(row.subtotal),
     qty: "1",

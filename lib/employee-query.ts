@@ -1,4 +1,3 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import {
   fetchSupabaseAdminRoles,
@@ -7,7 +6,7 @@ import {
   type SupabaseAdminRoleRow,
 } from "@/lib/supabase/admin-users";
 
-type EmployeeDataSource = "supabase" | "demo";
+type EmployeeDataSource = "supabase" | "error";
 
 export type EmployeeQuerySnapshot = {
   employees: any[];
@@ -27,36 +26,24 @@ export function isAssignableEmployee(employee: any) {
   return status === "active" && invitationStatus === "accepted" && Boolean(String(employee?.name || "").trim());
 }
 
-export const fallbackAdminRoles: SupabaseAdminRoleRow[] = [
-  { role_key: "owner", label: "Owner", description: "" },
-  { role_key: "editor", label: "Editor", description: "" },
-];
-
-function cachedEmployees() {
-  const saved = getDemoValue("employees");
-  return Array.isArray(saved) ? saved : [];
-}
-
 function errorMessage(error: unknown, resource: string) {
   const message = error instanceof Error ? error.message : "The saved data could not be loaded.";
   return `Could not load ${resource}: ${message}`;
 }
 
 export async function fetchEmployeesSnapshot(): Promise<EmployeeQuerySnapshot> {
-  const cached = cachedEmployees();
   if (!isSupabaseLeadsEnabled()) {
-    return { employees: cached, dataSource: "demo", errorMessage: "" };
+    return { employees: [], dataSource: "error", errorMessage: "Supabase is required for employee records." };
   }
 
   try {
     const rows = await fetchSupabaseAdminUsers();
     const employees = rows.map(mapSupabaseAdminUserToOsEmployee);
-    if (employees.length) saveDemoValue("employees", employees, { notify: false });
     return { employees, dataSource: "supabase", errorMessage: "" };
   } catch (error) {
     return {
-      employees: cached,
-      dataSource: "demo",
+      employees: [],
+      dataSource: "error",
       errorMessage: errorMessage(error, "employees"),
     };
   }
@@ -64,16 +51,16 @@ export async function fetchEmployeesSnapshot(): Promise<EmployeeQuerySnapshot> {
 
 export async function fetchEmployeeRolesSnapshot(): Promise<EmployeeRolesQuerySnapshot> {
   if (!isSupabaseLeadsEnabled()) {
-    return { roles: fallbackAdminRoles, dataSource: "demo", errorMessage: "" };
+    return { roles: [], dataSource: "error", errorMessage: "Supabase is required for employee roles." };
   }
 
   try {
     const roles = await fetchSupabaseAdminRoles();
-    return { roles: roles.length ? roles : fallbackAdminRoles, dataSource: "supabase", errorMessage: "" };
+    return { roles, dataSource: "supabase", errorMessage: "" };
   } catch (error) {
     return {
-      roles: fallbackAdminRoles,
-      dataSource: "demo",
+      roles: [],
+      dataSource: "error",
       errorMessage: errorMessage(error, "employee roles"),
     };
   }

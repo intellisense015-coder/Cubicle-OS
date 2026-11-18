@@ -7,11 +7,9 @@ import { motion } from "motion/react";
 
 import { AppSkeleton } from "@/components/ui/skeleton";
 import { Dialog } from "@/components/ui/dialog";
-import { LeadFollowUpForm } from "@/components/os/lead-journey";
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
+import { LeadFollowUpForm, LeadJourneyRecordingPlayer } from "@/components/os/lead-journey";
 import { mergeLeadJourneyEntries, normalizeLeadJourney } from "@/lib/lead-journey";
 import { normalizeLeadStage, transitionLead } from "@/lib/lead-stages";
-import { leadRows } from "@/lib/module-b-data";
 import { useToast } from "@/components/ui/toast-provider";
 import { DetailPageHeader } from "@/components/ui/detail-page-header";
 import { queryKeys } from "@/lib/query-keys";
@@ -20,6 +18,7 @@ import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { updateSupabaseLead } from "@/lib/supabase/leads";
 import { useHasPermission } from "@/lib/access-control";
 import { scheduleLeadVisit } from "@/lib/visit-scheduling";
+import { uploadSupabaseLeadRecording } from "@/lib/supabase/lead-recordings";
 
 function formatJourneyDate(date, time) {
   if (!date) return "—";
@@ -102,7 +101,7 @@ function JourneyEntryDetails({ entry, onClose }) {
   const isLeadAdded = entry.entryType === "lead-added";
   const isVisit = entry.entryType === "visit";
   const isCancelled = stage === "Visit Cancelled";
-  return <div className="inline-form-card journey-entry-details"><div className="card-heading"><div><h2>{stage}</h2><p className="muted-copy">{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close journey step details"><X size={17} /></button></div><div className="journey-entry-details-grid"><div><span>Stage</span><strong>{stage}</strong></div><div><span>Date and time</span><strong>{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</strong></div>{isLeadAdded ? <><div><span>Lead</span><strong>{entry.visitorIdentity || "—"}</strong></div><div><span>Email</span><strong>{entry.email || "—"}</strong></div><div><span>Company</span><strong>{entry.company || "—"}</strong></div><div><span>Source</span><strong>{entry.source || "—"}</strong></div><div><span>Assigned to</span><strong>{entry.assignedTo || "—"}</strong></div></> : <><div><span>{isVisit ? "Assigned to" : "Followed up by"}</span><strong>{entry.followedUpBy || entry.assignedTo || "—"}</strong></div><div><span>Communication channel</span><strong>{journeyEntryChannel(entry)}</strong></div>{isCancelled ? <><div><span>Cancellation reason</span><strong>{cancellationReason(entry)}</strong></div><div className="journey-entry-detail-wide"><span>Cancellation details</span><strong>{cancellationDetail(entry)}</strong></div></> : <><div><span>Purpose</span><strong>{journeyEntryValue(entry, entry.purpose)}</strong></div><div><span>Outcome</span><strong>{entry.outcome || "—"}</strong></div><div><span>Next follow-up</span><strong>{formatJourneyDate(entry.nextFollowUpDate, entry.nextFollowUpTime)}</strong></div><div><span>Conversation summary</span><strong>{entry.conversationSummary || entry.notes || entry.purpose || "—"}</strong></div><div><span>Companions</span><strong>{journeyEntryValue(entry, entry.companions)}</strong></div><div><span>Mood</span><strong>{journeyEntryValue(entry, entry.mood)}</strong></div></>}</>}</div></div>;
+  return <div className="inline-form-card journey-entry-details"><div className="card-heading"><div><h2>{stage}</h2><p className="muted-copy">{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close journey step details"><X size={17} /></button></div><div className="journey-entry-details-grid"><div><span>Stage</span><strong>{stage}</strong></div><div><span>Date and time</span><strong>{formatJourneyDate(entry.occurredDate, entry.occurredTime)}</strong></div>{isLeadAdded ? <><div><span>Lead</span><strong>{entry.visitorIdentity || "—"}</strong></div><div><span>Email</span><strong>{entry.email || "—"}</strong></div><div><span>Company</span><strong>{entry.company || "—"}</strong></div><div><span>Source</span><strong>{entry.source || "—"}</strong></div><div><span>Assigned to</span><strong>{entry.assignedTo || "—"}</strong></div></> : <><div><span>{isVisit ? "Assigned to" : "Followed up by"}</span><strong>{entry.followedUpBy || entry.assignedTo || "—"}</strong></div><div><span>Communication channel</span><strong>{journeyEntryChannel(entry)}</strong></div>{isCancelled ? <><div><span>Cancellation reason</span><strong>{cancellationReason(entry)}</strong></div><div className="journey-entry-detail-wide"><span>Cancellation details</span><strong>{cancellationDetail(entry)}</strong></div></> : <><div><span>Purpose</span><strong>{journeyEntryValue(entry, entry.purpose)}</strong></div><div><span>Outcome</span><strong>{entry.outcome || "—"}</strong></div><div><span>Next follow-up</span><strong>{formatJourneyDate(entry.nextFollowUpDate, entry.nextFollowUpTime)}</strong></div><div><span>Conversation summary</span><strong>{entry.conversationSummary || entry.notes || entry.purpose || "—"}</strong></div><div><span>Companions</span><strong>{journeyEntryValue(entry, entry.companions)}</strong></div><div><span>Mood</span><strong>{journeyEntryValue(entry, entry.mood)}</strong></div></>}</>}</div><LeadJourneyRecordingPlayer recordings={entry.recordings || []} /></div>;
 }
 
 function journeyHoverSummary(entry) {
@@ -134,38 +133,26 @@ export default function LeadJourneyPage({ params }) {
 
   useEffect(() => {
     const rows = leadsQuery.data?.leads ?? [];
-    const cachedRows = getDemoValue("leads");
-    const cachedLead = Array.isArray(cachedRows)
-      ? cachedRows.find((item) => item.id === routeParams.id)
-      : null;
     const selectedIndex = rows.findIndex((item) => item.id === routeParams.id);
-    const selected = selectedIndex >= 0 ? rows[selectedIndex] : cachedLead;
+    const selected = selectedIndex >= 0 ? rows[selectedIndex] : null;
     if (!selected) return;
-    const cachedJourney = Array.isArray(cachedLead?.journey) ? cachedLead.journey : [];
     const remoteJourney = Array.isArray(selected.journey) ? selected.journey : [];
-    const journey = selected.backend === "supabase" && selected.journeyLoaded
-      ? mergeLeadJourneyEntries(remoteJourney, cachedJourney)
-      : cachedJourney.length
-        ? mergeLeadJourneyEntries(cachedJourney, remoteJourney)
-        : normalizeLeadJourney(selected, selectedIndex >= 0 ? selectedIndex : 0);
+    const journey = selected.journeyLoaded ? remoteJourney : normalizeLeadJourney(selected, selectedIndex);
     setLead({ ...selected, stage: normalizeLeadStage(selected.stage, selected), journey });
   }, [leadsQuery.data, routeParams.id]);
 
-  const saveFollowUp = async ({ entry, outcome, lostReason, lostMonthlyValue, nextFollowUpDate, nextFollowUpTime, nextFollowUp, visitDate, visitTime, visitHost }) => {
+  const saveFollowUp = async ({ entry, recordingFile, outcome, lostReason, lostMonthlyValue, nextFollowUpDate, nextFollowUpTime, nextFollowUp, visitDate, visitTime, visitHost }) => {
     if (!lead || !canWriteJourney) {
       showToast({ variant: "error", title: "View-only access", message: "You can view this journey, but your account cannot edit it." });
       return;
     }
-    const stored = getDemoValue("leads");
-    const cachedRows = Array.isArray(stored) ? stored : [];
-    const cachedLead = cachedRows.find((item) => item.id === lead.id);
+    if (!isSupabaseLeadsEnabled() || lead.backend !== "supabase") {
+      showToast({ variant: "error", title: "Follow-up was not saved", message: "Supabase is required to update this lead journey." });
+      return;
+    }
     const currentSnapshot = queryClient.getQueryData<LeadsQuerySnapshot>(queryKeys.leads.all);
     const snapshotLead = currentSnapshot?.leads?.find((item) => item.id === lead.id);
-    const existingJourney = mergeLeadJourneyEntries(
-      lead.journey,
-      snapshotLead?.journey,
-      cachedLead?.journey,
-    );
+    const existingJourney = mergeLeadJourneyEntries(lead.journey, snapshotLead?.journey);
     const leadWithJourney = { ...lead, journey: existingJourney };
     const transitioned = transitionLead(leadWithJourney, { type: "follow-up-logged", outcome, lostReason, nextFollowUpDate, nextFollowUpTime, nextFollowUp });
     const updated = {
@@ -183,28 +170,30 @@ export default function LeadJourneyPage({ params }) {
         scheduledVisit = await scheduleLeadVisit({ lead: updated, date: visitDate, time: visitTime, host: visitHost });
         leadToPersist = transitionLead(updated, { type: "visit-scheduled", nextFollowUp: "Not scheduled" });
       }
-      if (isSupabaseLeadsEnabled() && lead.backend === "supabase") {
-        await updateSupabaseLead(leadToPersist.id, {
-          workspace: leadToPersist.workspace,
-          stage: leadToPersist.stage,
-          lostReason: leadToPersist.lostReason,
-          lostMonthlyValue: leadToPersist.lostMonthlyValue,
-          journeyEntry: entry,
-          ...(scheduledVisit ? { visitDate: scheduledVisit.date, visitTime: scheduledVisit.time } : {}),
-        }, "lead.journey.update");
+      await updateSupabaseLead(leadToPersist.id, {
+        workspace: leadToPersist.workspace,
+        stage: leadToPersist.stage,
+        lostReason: leadToPersist.lostReason,
+        lostMonthlyValue: leadToPersist.lostMonthlyValue,
+        journeyEntry: entry,
+        ...(scheduledVisit ? { visitDate: scheduledVisit.date, visitTime: scheduledVisit.time } : {}),
+      }, "lead.journey.update");
+      let recordingWarning = "";
+      if (recordingFile) {
+        try {
+          const recording = await uploadSupabaseLeadRecording({ leadId: leadToPersist.id, journeyEntryId: entry.id, file: recordingFile });
+          entry.recordings = [recording];
+          leadToPersist = { ...leadToPersist, journey: [{ ...entry }, ...existingJourney] };
+        } catch (recordingError) {
+          recordingWarning = recordingError?.message || "The follow-up was saved, but the recording could not be uploaded.";
+        }
       }
-      const rows: any[] = cachedRows.length
-        ? cachedRows
-        : currentSnapshot?.leads || [];
-      const nextLeads = rows.map((item) => item.id === leadToPersist.id ? leadToPersist : item);
-      if (!nextLeads.some((item) => item.id === leadToPersist.id)) nextLeads.push(leadToPersist);
-      saveDemoValue("leads", nextLeads);
       queryClient.setQueryData<LeadsQuerySnapshot>(queryKeys.leads.all, (current) => current ? {
         ...current,
         leads: current.leads.map((item) => item.id === leadToPersist.id ? leadToPersist : item),
       } : current);
       setLead(leadToPersist);
-      showToast({ variant: "success", title: scheduledVisit ? "Visit scheduled" : "Follow-up logged", message: scheduledVisit ? `${scheduledVisit.visitor} was added to the visit schedule.` : `${leadToPersist.name}'s journey was updated successfully.` });
+      showToast({ variant: recordingWarning ? "warning" : "success", title: scheduledVisit ? "Visit scheduled" : "Follow-up logged", message: recordingWarning ? `${leadToPersist.name}'s journey was updated. ${recordingWarning}` : scheduledVisit ? `${scheduledVisit.visitor} was added to the visit schedule.` : `${leadToPersist.name}'s journey was updated successfully.` });
     } catch (error) {
       showToast({ variant: "error", title: scheduledVisit ? "Visit scheduled with a lead warning" : outcome === "Schedule a visit" ? "Visit was not scheduled" : "Follow-up was not saved", message: error?.message || (scheduledVisit ? "The visit was saved, but the lead could not be updated." : outcome === "Schedule a visit" ? "The visit could not be scheduled." : "The follow-up could not be saved.") });
     }

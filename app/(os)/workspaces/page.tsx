@@ -173,7 +173,7 @@ export default function WorkspacesPage() {
     saveDemoValue("workspaces", nextWorkspaces, { notify: false });
     queryClient.setQueryData<WorkspacesQuerySnapshot>(queryKeys.workspaces.all, (current) => ({
       workspaces: nextWorkspaces,
-      dataSource: current?.dataSource || "demo",
+      dataSource: current?.dataSource || "error",
       errorMessage: "",
     }));
   };
@@ -248,12 +248,12 @@ export default function WorkspacesPage() {
     setMaintenanceEvents(nextEvents);
     queryClient.setQueryData<MaintenanceRecordsQuerySnapshot>(queryKeys.maintenance.records, (current) => ({
       records: nextRecords,
-      dataSource: current?.dataSource || "demo",
+      dataSource: current?.dataSource || "error",
       errorMessage: "",
     }));
     queryClient.setQueryData<MaintenanceEventsQuerySnapshot>(queryKeys.maintenance.events, (current) => ({
       events: nextEvents,
-      dataSource: current?.dataSource || "demo",
+      dataSource: current?.dataSource || "error",
       errorMessage: "",
     }));
     const nextWorkspace = nextWorkspaces.find((item) => String(item.areaId || item.id) === String(workspaceId));

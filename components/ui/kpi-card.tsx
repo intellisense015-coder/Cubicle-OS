@@ -19,7 +19,7 @@ export interface KpiCardProps {
 function getKpiValueTone(label: string) {
   const normalizedLabel = label.toLowerCase();
   if (/(pending|approval-required|due soon|grace|waiting)/.test(normalizedLabel)) return "warning";
-  if (/(suspended|rejected|overdue|declined|failed)/.test(normalizedLabel)) return "danger";
+  if (/(suspended|rejected|overdue|outstanding|balance due|declined|failed)/.test(normalizedLabel)) return "danger";
   if (/(active|approved|paid|completed|available)/.test(normalizedLabel)) return "success";
   return "neutral";
 }

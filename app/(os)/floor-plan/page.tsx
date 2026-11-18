@@ -15,6 +15,8 @@ import { useToast } from "@/components/ui/toast-provider";
 import { queryKeys } from "@/lib/query-keys";
 import { fetchWorkspacesSnapshot } from "@/lib/workspace-query";
 import { fetchMembersSnapshot } from "@/lib/member-query";
+import { fetchCompaniesSnapshot } from "@/lib/company-query";
+import { fetchInvoiceAutomationSettings } from "@/lib/supabase/invoice-automation";
 import { assignSupabaseMemberToWorkspace } from "@/lib/supabase/workspaces";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { isActiveMember } from "@/lib/member-lifecycle";
@@ -31,6 +33,15 @@ export default function FloorPlanPage() {
   const membersQuery = useQuery({
     queryKey: queryKeys.members.all,
     queryFn: fetchMembersSnapshot,
+  });
+  const companiesQuery = useQuery({
+    queryKey: queryKeys.companies.all,
+    queryFn: fetchCompaniesSnapshot,
+  });
+  const automationQuery = useQuery({
+    queryKey: ["invoice-automation-settings"],
+    queryFn: fetchInvoiceAutomationSettings,
+    enabled: isSupabaseLeadsEnabled(),
   });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState([]);
@@ -72,7 +83,14 @@ export default function FloorPlanPage() {
   }, [membersQuery.data, showToast]);
 
   const floor = useMemo(() => applyWorkspaceRecordsToFloor(workspaces), [workspaces]);
-  const data = useMemo(() => workspaceRecordsToAreaData(workspaces, members), [workspaces, members]);
+  const invoiceRecipientIds = useMemo(
+    () => {
+      if (!isSupabaseLeadsEnabled()) return null;
+      return new Set((automationQuery.data?.memberIds || []).map((id) => String(id)));
+    },
+    [automationQuery.data]
+  );
+  const data = useMemo(() => workspaceRecordsToAreaData(workspaces, members, invoiceRecipientIds), [workspaces, members, invoiceRecipientIds]);
   const rentableAreas = floor.areas.filter((area) => area.kind === "office" || area.kind === "seat" || area.kind === "cabin");
   const occupied = data.filter((row) => row.occupancy === "occupied").length;
   const available = data.filter((row) => row.occupancy === "available").length;
@@ -114,6 +132,15 @@ export default function FloorPlanPage() {
     }
   }
 
+  function viewCompanyMembers(companyName) {
+    const company = (companiesQuery.data?.companies || []).find((item) => String(item.name || "").trim().toLowerCase() === String(companyName || "").trim().toLowerCase());
+    if (company?.id) {
+      router.push(`/companies/${encodeURIComponent(String(company.id))}`);
+      return;
+    }
+    showToast({ variant: "error", title: "Company page unavailable", message: "This workspace is not linked to a company record." });
+  }
+
   return (
       <div className="module-content floor-plan-page">
         <div className="module-header">
@@ -132,7 +159,7 @@ export default function FloorPlanPage() {
           <KpiCard icon={<DoorOpen size={18} />} label="Available spaces" value={available} detail="Ready for assignment" />
         </section>
 
-          <FloorPlanViewer floor={floor} data={data} members={members} assigningAreaId={assigningAreaId} onAssignMember={assignEmployee} demo filtersOpen={filtersOpen} onFiltersOpenChange={setFiltersOpen} onMaintenanceAction={(workspaceId) => router.push(`/workspaces?workspaceId=${encodeURIComponent(workspaceId)}`)} />
+          <FloorPlanViewer floor={floor} data={data} members={members} assigningAreaId={assigningAreaId} onAssignMember={assignEmployee} demo filtersOpen={filtersOpen} onFiltersOpenChange={setFiltersOpen} onMaintenanceAction={(workspaceId) => router.push(`/workspaces?workspaceId=${encodeURIComponent(workspaceId)}`)} onViewMembers={viewCompanyMembers} />
       </div>
   );
 }

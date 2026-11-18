@@ -1,4 +1,7 @@
 export const queryKeys = {
+  dashboard: {
+    leads: ["dashboard", "leads"] as const,
+  },
   leads: {
     all: ["leads"] as const,
   },
@@ -22,6 +25,9 @@ export const queryKeys = {
   invoices: {
     all: ["invoices"] as const,
     automation: ["invoices", "automation"] as const,
+  },
+  memberLedgers: {
+    all: ["member-ledgers"] as const,
   },
   proposals: {
     all: ["proposals"] as const,

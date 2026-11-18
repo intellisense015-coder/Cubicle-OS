@@ -136,6 +136,7 @@ const OS_ROUTE_PERMISSIONS: Record<string, string> = {
   "/workspaces": "workspaces.read",
   "/floor-plan": "workspaces.read",
   "/invoices": "invoices.read",
+  "/member-ledgers": "invoices.read",
   "/quotations": "quotations.read",
   "/proposals": "proposals.read",
   "/employees": "admin_users.read",

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
 
 .invoice-page {
   position: relative;
@@ -11,7 +11,94 @@
   overflow: hidden;
   color: #3f3f3f;
   background: #fff;
-  font-family: 'Montserrat', Arial, sans-serif;
+  font-family: 'DM Sans', Arial, sans-serif;
+}
+
+/* Force summary values to the extreme right edge of the green box. */
+.invoice-page .invoice-summary-box {
+  padding-right: 6mm !important;
+}
+
+.invoice-page .invoice-summary-box > div {
+  display: flex !important;
+  width: 100% !important;
+}
+
+.invoice-page .invoice-summary-box > div > :last-child {
+  margin-left: auto !important;
+  justify-self: auto !important;
+  text-align: right !important;
+}
+
+.invoice-page .invoice-summary-box {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  padding-right: 6mm !important;
+}
+
+.invoice-page .invoice-summary-box .invoice-summary-row {
+  position: relative !important;
+  display: block !important;
+  width: 100% !important;
+  min-height: 1.2em !important;
+}
+
+.invoice-page .invoice-summary-box .invoice-summary-row > :first-child {
+  text-align: left !important;
+}
+
+.invoice-page .invoice-summary-box .invoice-summary-row > :last-child {
+  position: absolute !important;
+  top: 0 !important;
+  right: 0 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+  text-align: right !important;
+}
+
+/* The simple one-row total is a centered label/value group. */
+.invoice-page .invoice-summary-box-simple .invoice-summary-total {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 3.5mm !important;
+  min-height: 100% !important;
+}
+
+.invoice-page .invoice-summary-box-simple .invoice-summary-total > :last-child {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  margin: 0 !important;
+  text-align: left !important;
+}
+
+.invoice-page .invoice-summary-box-simple {
+  box-sizing: border-box !important;
+  height: 10mm !important;
+  min-height: 10mm !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  justify-content: center !important;
+}
+
+.invoice-page .invoice-summary-box-simple .invoice-summary-total {
+  height: 100% !important;
+  min-height: 0 !important;
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+/* html2canvas centers the font line box, whose glyphs sit optically low in
+   this short export box. Lift the rendered group without changing the preview. */
+.invoice-page.pdf-exporting .invoice-summary-box-simple .invoice-summary-total {
+  transform: translateY(-1mm) !important;
+}
+
+.invoice-page.pdf-exporting .items-table th > .invoice-table-heading {
+  display: inline-block;
+  transform: translateY(-1mm);
 }
 
 .invoice-page::before,
@@ -25,7 +112,7 @@
 .invoice-page::before {
   top: 0;
   height: 54mm;
-  background: #c7e1d9;
+  background: #c6e1da;
 }
 
 .invoice-page::after {
@@ -35,7 +122,8 @@
 }
 
 .invoice-header,
-.billing-row,
+.billing-heading-row,
+.billing-details-row,
 .bottom-section {
   display: flex;
   justify-content: space-between;
@@ -43,41 +131,204 @@
 
 .invoice-header { align-items: flex-start; }
 .company-block { width: 58%; }
-.company-logo { position: relative; width: 74mm; height: 15mm; margin: 0 0 5mm; overflow: hidden; }
+.company-logo { position: relative; width: 74mm; height: 15mm; margin: 0 0 1mm; overflow: hidden; }
 /* The supplied logo PNG includes white canvas above and below the mark. Crop that canvas
-   deliberately so the visible logo starts on the same header line as INVOICE/QUOTATION. */
-.company-logo img { position: absolute; top: -13.1mm; left: -10.5%; display: block; width: 100%; height: auto; max-width: none; }
+   deliberately so the visible logo starts on the same header line as INVOICE/QUOTATION.
+   The image is oversized inside the crop so the visible wordmark fills the reference width. */
+.company-logo img { position: absolute; top: -18.2mm; left: -9.7mm; display: block; width: 94mm; height: auto; max-width: none; }
 .company-logo .green { color: #006b35; }
-.company-details { margin: 0; font-size: 10.2pt; line-height: 1.55; letter-spacing: .55px; }
+.company-details { margin: 0; color: #626b68; font-size: 10pt; line-height: 1.42; letter-spacing: .45px; }
 .company-tax { margin-top: 7mm; }
 .invoice-title { width: 34%; text-align: right; }
-.invoice-title h1 { margin: 2mm 0; color: #080808; font-size: 21pt; line-height: 1; font-weight: 700; letter-spacing: .7px; white-space: nowrap; }
-.invoice-meta { font-size: 11pt; line-height: 1.45; letter-spacing: 1px; }
-.billing-row { gap: 12mm; margin-top: 22mm; padding-bottom: 2.5mm; border-bottom: 1.1px solid #555; }
+.invoice-title h1 { margin: 4mm 0 2mm; color: #080808; font-size: 18px; line-height: 1; font-weight: 700; letter-spacing: 1.35px; white-space: nowrap; }
+.invoice-meta { color: #555d5a; font-size: 11px; line-height: 1.45; letter-spacing: 1px; }
+.billing-row { margin-top: 22mm; }
+.billing-heading-row,
+.billing-details-row { gap: 12mm; }
+.billing-divider { display: block; width: calc(100% - 2mm); height: 2px; margin: 4mm 1mm 1mm; background: #777; }
 .billing-col { flex: 1; }
 .billing-col.right { text-align: right; }
-.single-party-row .billing-col { width: 100%; }
-.section-label { margin: 0 0 5mm; font-size: 12.5pt; line-height: 1; font-weight: 700; letter-spacing: .9px; }
-.customer-line, .period-line { margin: 0 0 3mm; font-size: 12pt; line-height: 1.35; letter-spacing: 1px; }
+.single-party-row .billing-col { width: 50%; }
+.quotation-page .quotation-billing-row .billing-col { width: 100%; }
+.section-label { margin: 0; color: #3b3b3b; font-size: 9pt; line-height: 1; font-weight: 700; letter-spacing: 1.024px; }
+.customer-line, .period-line { margin: 0 0 2.5mm; color: #595959; font-size: 14pt; line-height: 1.35; letter-spacing: 1.157px; }
 .billing-col { padding: 0 2mm; }
 .billing-col:first-child { padding-left: 1mm; }
 .invoice-period-card { padding-right: 1mm; }
 .period-line { margin-bottom: 0; }
-.items-table { width: 100%; margin-top: 6mm; border-collapse: collapse; table-layout: fixed; }
-.items-table th { padding: 4mm 5mm; color: #fff; background: #006b35; font-size: 12.5pt; font-weight: 700; letter-spacing: 1.2px; }
+.items-table { width: 100%; margin-top: 4.5mm; border-collapse: collapse; table-layout: fixed; }
+.items-table th { padding: 3.8mm 12mm; color: #fff; background: #006b35; font-size: 14pt; line-height: 1.2; font-weight: 700; letter-spacing: 1.755px; vertical-align: middle; }
 .items-table th:first-child { width: 68%; text-align: left; }
 .items-table th:last-child { width: 32%; text-align: right; }
-.items-table td { padding: 4mm 5mm; border-bottom: 1px solid #444; font-size: 11.5pt; line-height: 1.35; letter-spacing: .5px; vertical-align: top; }
+.items-table td { padding: 3.5mm 12mm; border-bottom: 0; color: #595959; font-size: 12pt; line-height: 1.35; letter-spacing: 1.024px; vertical-align: middle; }
 .items-table td:last-child { text-align: right; white-space: nowrap; }
+.items-divider { width: 100%; height: 2px; background: #777; }
 .bottom-section { align-items: flex-start; gap: 10mm; margin-top: 28mm; }
 .payment-info { width: 53%; }
-.payment-info h2 { margin: 0 0 1mm; font-size: 12.5pt; line-height: 1.1; font-weight: 700; letter-spacing: .8px; }
-.payment-info p { margin: 0; font-size: 9.5pt; line-height: 1.55; }
+.payment-info h2 { margin: 0 0 1mm; color: #3b3b3b; font-size: 9pt; line-height: 1.1; font-weight: 700; letter-spacing: 1.024px; }
+.payment-info p { margin: 0; color: #595959; font-size: 10pt; line-height: 1.55; letter-spacing: .45px; }
 .payment-advice { margin-top: 7mm !important; }
-.total-box { width: 43%; min-height: 15mm; padding: 5mm 8mm; display: flex; align-items: center; justify-content: space-between; color: #111; background: #c7e1d9; font-size: 12pt; font-weight: 700; letter-spacing: .8px; }
+.total-box { width: 43%; min-height: 15mm; padding: 5mm 8mm; display: flex; align-items: center; justify-content: space-between; color: #000; background: #c1ded7; font-size: 12pt; font-weight: 700; letter-spacing: 1.024px; }
 .total-only-section { justify-content: flex-end; }
 .footer-message { position: absolute; right: 21mm; bottom: 29mm; left: 24mm; margin: 0; color: #111; font-size: 9.7pt; line-height: 1.65; letter-spacing: .55px; text-align: center; }
 .system-note { position: absolute; right: 21mm; bottom: 12mm; left: 24mm; margin: 0; color: #111; font-size: 9.2pt; letter-spacing: .4px; text-align: center; }
+
+/* Full-height invoice drawer: the document stays on its own paper surface while
+   preview controls live in a separate toolbar beside it. */
+@media screen and (min-width: 801px) {
+  .erp-main:has(.invoice-preview-dialog) {
+    position: relative;
+    z-index: 2000 !important;
+  }
+
+  .erp-page-frame:has(.invoice-preview-dialog) {
+    position: relative;
+    z-index: 2001 !important;
+  }
+
+  .dialog-backdrop:has(.invoice-detail-only) {
+    align-items: stretch;
+    justify-content: flex-end;
+    padding: 16px;
+  }
+
+  .dialog-card:has(.invoice-detail-only) {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    column-gap: 16px;
+    width: min(920px, calc(100vw - 32px)) !important;
+    height: calc(100vh - 32px);
+    max-height: calc(100vh - 32px) !important;
+    overflow: hidden !important;
+    border: 0;
+    border-radius: 24px;
+    padding: 24px;
+    background: var(--paper-strong);
+    box-shadow: -18px 0 48px rgba(0, 0, 0, .22);
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-detail-only {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 24px 0;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-preview-frame {
+    flex: 0 0 auto;
+    max-width: none;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-preview-actions {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    position: static;
+    display: flex;
+    width: 132px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin: 48px 0 0;
+    padding: 0;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-preview-actions > .button {
+    width: 100%;
+    min-height: 36px;
+    justify-content: center;
+    padding: 8px 10px;
+    white-space: normal;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-zoom-controls {
+    width: 100%;
+    justify-content: space-between;
+    margin: 0;
+    box-sizing: border-box;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .dialog-close {
+    top: 16px;
+    right: 16px;
+  }
+}
+
+/* Keep the quotation close control red after the shared preview-toolbar rules. */
+.invoice-preview-dialog .quotation-preview-actions > .quotation-preview-cancel,
+.invoice-preview-dialog .quotation-preview-actions > .quotation-preview-cancel:hover {
+  color: #fff !important;
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
+}
+
+/* Match the document section headings to the invoice title and keep every
+   summary amount flush to the same right edge of the green box. */
+.invoice-page .section-label,
+.invoice-page .payment-info h2 {
+  font-size: 18px;
+}
+
+.invoice-page .invoice-summary-box {
+  padding-right: 6mm;
+}
+
+.invoice-page .invoice-summary-box > div > :last-child {
+  justify-self: end;
+  text-align: right;
+}
+
+@media screen and (max-width: 800px) {
+  .dialog-backdrop:has(.invoice-detail-only) {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .dialog-card:has(.invoice-detail-only) {
+    display: flex;
+    width: 100% !important;
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px) !important;
+    overflow: hidden !important;
+    border-radius: 20px;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-detail-only {
+    min-height: 0;
+    overflow: auto;
+    padding: 72px 16px 24px;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-preview-actions {
+    position: absolute;
+    z-index: 3;
+    top: 16px;
+    right: 60px;
+    left: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-preview-actions > .button {
+    flex: 0 0 auto;
+    min-height: 36px;
+    white-space: nowrap;
+  }
+
+  .dialog-card:has(.invoice-detail-only) .invoice-zoom-controls {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+}
 
 @page { size: A4; margin: 0; }
 
@@ -161,6 +412,16 @@
     max-height: none !important;
     overflow: visible !important;
   }
+
+  .invoice-preview-sheet {
+    width: 210mm !important;
+    height: auto !important;
+    transform: none !important;
+  }
+
+  .invoice-preview-sheet .invoice-page {
+    transform: none !important;
+  }
 }
 
 @media screen {
@@ -181,13 +442,17 @@
     overflow: visible;
   }
 
-  .invoice-preview-frame .invoice-page {
+  .invoice-preview-sheet {
+    width: 210mm;
+    transform: scale(0.5);
+    transform-origin: top left;
+  }
+
+  .invoice-preview-sheet .invoice-page {
     width: 210mm;
     max-width: none;
     min-height: 297mm;
     margin: 0;
-    transform: scale(0.5);
-    transform-origin: top left;
   }
 
   #printable-invoice.pdf-exporting {
@@ -197,9 +462,9 @@
 
 @media screen and (max-width: 800px) {
   .invoice-page { width: 100%; min-height: auto; margin: 0; padding: 36px 28px 180px 38px; }
-  .invoice-header, .billing-row, .bottom-section { gap: 24px; }
+  .invoice-header, .billing-heading-row, .billing-details-row, .bottom-section { gap: 24px; }
   .invoice-title { width: 42%; }
-  .invoice-meta { font-size: 10px; }
+  .invoice-meta { font-size: 11px; }
   .company-logo { width: 74mm; }
   .company-details, .customer-line, .period-line, .items-table td { font-size: 10px; }
   .items-table th { font-size: 10px; }
@@ -221,7 +486,7 @@
     height: 449px;
   }
 
-  .invoice-preview-frame .invoice-page {
+  .invoice-preview-sheet {
     transform: scale(0.4);
   }
 
@@ -230,7 +495,8 @@
   }
 
   .invoice-header,
-  .billing-row,
+  .billing-heading-row,
+  .billing-details-row,
   .bottom-section {
     gap: 14px;
   }
@@ -248,7 +514,7 @@
   }
 
   .invoice-title h1 {
-    font-size: 17px;
+    font-size: 18px;
   }
 
   .invoice-meta,
@@ -257,12 +523,15 @@
   .period-line,
   .items-table td,
   .payment-info p {
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .section-label,
+  .payment-info h2 {
+    font-size: 9pt;
+  }
+
   .items-table th,
-  .payment-info h2,
   .total-box {
     font-size: 9px;
   }
@@ -284,10 +553,36 @@
   }
 }
 
+/* Keep the price column and invoice summary columns aligned to a shared edge. */
+.invoice-page .items-table th.invoice-price-heading,
+.invoice-page .items-table td.invoice-price-cell {
+  text-align: left;
+}
+
+.invoice-page .invoice-summary-box > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 3.5mm;
+  width: 100%;
+  text-align: left;
+}
+
+.invoice-page .invoice-summary-box > div > :first-child {
+  justify-self: start;
+  min-width: 0;
+  text-align: left;
+}
+
+.invoice-page .invoice-summary-box > div > :last-child {
+  justify-self: end;
+  white-space: nowrap;
+  text-align: right;
+}
+
 /* Quotation layout matched to the supplied The Cubicle A4 quotation. */
 .quotation-page .billing-row {
   margin-top: 22mm;
-  padding-bottom: 0;
 }
 
 .quotation-page .items-table {
@@ -295,15 +590,19 @@
 }
 
 .quotation-page .section-label {
-  letter-spacing: normal;
+  letter-spacing: 1.024px;
 }
 
 .invoice-page:not(.quotation-page) .section-label {
-  letter-spacing: normal;
+  letter-spacing: 1.024px;
 }
 
 .quotation-page .billing-col .customer-line:last-child {
   margin-bottom: 0;
+}
+
+.quotation-page .customer-line {
+  color: #000;
 }
 
 .quotation-page .items-table tbody tr {
@@ -361,21 +660,23 @@
 
 .quotation-terms h2 {
   margin: 0 0 2mm;
-  font-size: 12.5pt;
-  line-height: 1.1;
+  font-size: 11px;
+  line-height: 1;
   font-weight: 700;
-  letter-spacing: .8px;
+  letter-spacing: 1px;
 }
 
 .quotation-terms ul {
   margin: 0;
   padding-left: 5mm;
+  list-style: disc;
   font-size: 9.7pt;
   line-height: 1.55;
   letter-spacing: .35px;
 }
 
 .quotation-terms li {
+  display: list-item;
   padding-left: 1mm;
 }
 
@@ -718,7 +1019,7 @@ html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .butto
 }
 
 .dialog-card:has(.invoice-send-dialog) {
-  width: min(480px, calc(100vw - 32px));
+  width: min(600px, calc(100vw - 32px));
   max-height: min(86vh, 520px);
   overflow: visible;
 }
@@ -726,6 +1027,18 @@ html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .butto
 .invoice-send-dialog {
   width: 100%;
   box-sizing: border-box;
+}
+
+.invoice-send-dialog .card-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.invoice-send-dialog .card-heading .muted-copy {
+  margin-top: 0;
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .invoice-send-options {
@@ -789,6 +1102,79 @@ html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .butto
   width: 100%;
 }
 
+.invoice-send-actions .button-danger {
+  color: #fff;
+  border-color: var(--danger);
+  background: var(--danger);
+  box-shadow: none;
+}
+
+.invoice-send-actions .button-danger:hover {
+  color: #fff;
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 86%, var(--ink));
+}
+
+.invoice-send-progress {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 142px;
+  padding: 24px 18px;
+  text-align: center;
+  border-radius: 16px;
+  background: var(--surface-soft-2);
+}
+
+.invoice-send-progress strong {
+  font-size: 14px;
+}
+
+.invoice-send-progress p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.invoice-send-error {
+  display: grid;
+  gap: 8px;
+  min-height: 142px;
+  align-content: center;
+  padding: 24px 18px;
+  text-align: center;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--danger) 10%, var(--paper));
+}
+
+.invoice-send-error strong {
+  color: var(--danger);
+  font-size: 14px;
+}
+
+.invoice-send-error p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.invoice-send-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: invoice-send-spin .8s linear infinite;
+}
+
+@keyframes invoice-send-spin {
+  to { transform: rotate(360deg); }
+}
+
 .quotation-preview-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -804,15 +1190,19 @@ html[data-theme="dark"] .dialog-card:has(.quotation-form) .dialog-actions .butto
 }
 
 .quotation-preview-actions .quotation-preview-cancel {
-  color: var(--danger) !important;
-  border-color: color-mix(in srgb, var(--danger) 52%, var(--line)) !important;
-  background: color-mix(in srgb, var(--danger) 13%, transparent) !important;
+  color: #fff !important;
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
 }
 
 .quotation-preview-actions .quotation-preview-cancel:hover {
-  color: var(--danger) !important;
+  color: #fff !important;
   border-color: var(--danger) !important;
-  background: color-mix(in srgb, var(--danger) 20%, transparent) !important;
+  background: color-mix(in srgb, var(--danger) 84%, #000) !important;
+}
+
+.dialog-card:has(.quotation-preview-actions) > .dialog-close {
+  display: none;
 }
 
 html[data-theme="dark"] .quotation-preview-actions .quotation-preview-print,
@@ -869,12 +1259,12 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 
 /* Shared clean document treatment for quotations and invoices. */
 .invoice-page .items-table th {
-  background: #0a714e;
-  border-bottom: 3px solid #b8dca9;
+  background: #006b35;
+  border-bottom: 0;
 }
 
 .invoice-page .items-table td {
-  border-bottom-color: #cbd9d2;
+  border-bottom-color: #777;
 }
 
 .quotation-summary-box,
@@ -933,6 +1323,20 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 .invoice-summary-box {
   flex: 0 0 43%;
   font-weight: 400;
+}
+
+.invoice-summary-box-simple {
+  min-height: 10mm;
+  padding: 2.5mm 6mm;
+  background: #c6e1da;
+}
+
+.invoice-summary-box-simple .invoice-summary-total {
+  margin: 0;
+  padding: 0;
+  border-top: 0;
+  font-size: 10.5pt;
+  font-weight: 700;
 }
 
 .quotation-summary-box > div,
@@ -1258,6 +1662,10 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   text-align: right;
 }
 
+.invoice-period-card .customer-line {
+  white-space: nowrap;
+}
+
 .period-subline {
   margin: -1mm 0 0;
   color: #666;
@@ -1267,6 +1675,122 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
 
 .invoice-bottom-section {
   margin-top: 28mm;
+}
+
+/* Explicit class overrides the shared dialog sizing for the invoice viewer. */
+@media screen and (min-width: 801px) {
+  .invoice-preview-dialog {
+    position: fixed !important;
+    top: 16px !important;
+    right: 16px !important;
+    bottom: 16px !important;
+    left: auto !important;
+    display: grid !important;
+    grid-template-columns: 132px minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    width: min(920px, calc(100vw - 32px)) !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 24px !important;
+    padding: 0 !important;
+    background: var(--paper-strong) !important;
+    box-shadow: -18px 0 48px rgba(0, 0, 0, .22) !important;
+  }
+
+  .invoice-preview-dialog > .invoice-detail-only {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    display: flex !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    position: static !important;
+    align-self: start !important;
+    display: flex !important;
+    width: 48px !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    margin: 48px 0 0 !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button {
+    width: 100% !important;
+    min-height: 36px !important;
+    justify-content: center !important;
+    padding: 8px 10px !important;
+    white-space: normal !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls {
+    width: 100% !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .invoice-preview-dialog > .dialog-close {
+    top: 16px !important;
+    right: 16px !important;
+  }
+}
+
+@media screen and (max-width: 800px) {
+  .invoice-preview-dialog {
+    position: fixed !important;
+    top: 12px !important;
+    right: 12px !important;
+    bottom: 12px !important;
+    left: 12px !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    border-radius: 20px !important;
+  }
+}
+
+/* Quotation preview overrides must come after the shared invoice toolbar rules. */
+.invoice-preview-dialog > .dialog-close {
+  display: none !important;
+}
+
+.invoice-preview-dialog > .invoice-detail-only .quotation-preview-actions > .quotation-preview-cancel,
+.invoice-preview-dialog > .invoice-detail-only .quotation-preview-actions > .quotation-preview-cancel:hover {
+  color: #fff !important;
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
+}
+
+/* Invoice previews use the dialog close control as the left-side close button. */
+.invoice-preview-dialog:not(:has(.quotation-preview-actions)) > .dialog-close {
+  display: grid !important;
+  top: 16px !important;
+  right: auto !important;
+  left: 8px !important;
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  color: #fff !important;
+  background: var(--danger) !important;
+  place-items: center !important;
+}
+
+.invoice-preview-dialog:not(:has(.quotation-preview-actions)) > .dialog-close:hover {
+  color: #fff !important;
+  background: color-mix(in srgb, var(--danger) 84%, #000) !important;
 }
 
 @media screen and (max-width: 560px) {
@@ -1287,4 +1811,265 @@ html[data-theme="dark"] .quotation-preview-actions .quotation-preview-send,
   .charge-editor-heading .button {
     width: 100%;
   }
+}
+
+/* The invoice itself owns the entire modal canvas. The action rail is detached
+   from the document so it cannot reduce or crop the invoice width. */
+@media screen and (min-width: 801px) {
+  .dialog-backdrop:has(.invoice-detail-only) {
+    padding: 0 !important;
+    z-index: 2000 !important;
+  }
+
+  .invoice-preview-dialog {
+    display: grid !important;
+    position: fixed !important;
+    z-index: 2001 !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: auto !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    width: fit-content !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    border-radius: 24px 0 0 24px !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .invoice-preview-dialog > .invoice-detail-only {
+    display: flex !important;
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    box-sizing: border-box !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-frame {
+    min-width: 0 !important;
+    min-height: 0 !important;
+    flex: 0 0 auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: hidden !important;
+    margin: 0 0 0 auto !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-sheet {
+    width: 210mm !important;
+    height: auto !important;
+    transform-origin: top left;
+  }
+
+  .invoice-preview-dialog .invoice-preview-sheet .invoice-page {
+    width: 210mm !important;
+    height: auto !important;
+    min-height: 297mm !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    position: static !important;
+    align-self: start !important;
+    display: flex !important;
+    width: 180px !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    margin: 48px 0 0 !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 36px !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    padding: 10px 12px !important;
+    font-size: 12px !important;
+    white-space: normal !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button[aria-label="Download PDF"]::after {
+    content: "Download PDF";
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button[aria-label="Send invoice"]::after {
+    content: "Send invoice";
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button[aria-label="Record payment"]::after {
+    content: "Record payment";
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls {
+    width: 100% !important;
+    min-height: 44px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 4px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls > .button {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls > span {
+    min-width: 0;
+    font-size: 10px;
+  }
+}
+
+/* Invoice controls match the compact action buttons used in data tables. */
+@media screen and (min-width: 801px) {
+  .invoice-preview-dialog {
+    grid-template-columns: 56px minmax(0, 1fr) !important;
+  }
+
+  .invoice-preview-dialog > .invoice-detail-only {
+    grid-column: 2 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    position: static !important;
+    display: flex !important;
+    width: 36px !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin: 48px 0 0 !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button,
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls > .button {
+    display: grid !important;
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 !important;
+    place-items: center !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    color: var(--brand) !important;
+    background: var(--brand-soft) !important;
+    font-size: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions > .button:hover,
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls > .button:hover {
+    color: var(--brand) !important;
+    background: color-mix(in srgb, var(--brand-soft) 70%, var(--brand) 30%) !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls {
+    display: contents !important;
+  }
+
+  .invoice-preview-dialog > .invoice-preview-actions .invoice-zoom-controls > span,
+  .invoice-preview-dialog > .invoice-preview-actions > .button::after {
+    display: none !important;
+    content: none !important;
+  }
+}
+
+/* The action rail is nested inside the invoice detail content. Keep it before
+   the document and use the same compact square treatment as table actions. */
+@media screen and (min-width: 801px) {
+  .invoice-preview-dialog .invoice-detail-only {
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    justify-content: flex-end !important;
+    gap: 10px !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-actions {
+    position: static !important;
+    order: -1 !important;
+    display: flex !important;
+    width: 40px !important;
+    flex: 0 0 40px !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-frame {
+    margin: 0 !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-actions > .button,
+  .invoice-preview-dialog .invoice-preview-actions .invoice-zoom-controls > .button {
+    display: grid !important;
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    place-items: center !important;
+    border: 0 !important;
+    border-radius: 12px !important;
+    color: var(--brand) !important;
+    background: var(--brand-soft) !important;
+    font-size: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-actions > .button:hover,
+  .invoice-preview-dialog .invoice-preview-actions .invoice-zoom-controls > .button:hover {
+    color: var(--brand) !important;
+    background: color-mix(in srgb, var(--brand-soft) 70%, var(--brand) 30%) !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-actions .invoice-zoom-controls {
+    display: contents !important;
+  }
+
+  .invoice-preview-dialog .invoice-preview-actions .invoice-zoom-controls > span,
+  .invoice-preview-dialog .invoice-preview-actions > .button::after {
+    display: none !important;
+    content: none !important;
+  }
+}
+
+/* Final quotation-only overrides after all shared preview-toolbar rules. */
+.invoice-preview-dialog > .dialog-close {
+  display: none !important;
+}
+
+.invoice-preview-dialog > .invoice-detail-only .quotation-preview-actions > .quotation-preview-cancel,
+.invoice-preview-dialog > .invoice-detail-only .quotation-preview-actions > .quotation-preview-cancel:hover {
+  color: #fff !important;
+  border-color: var(--danger) !important;
+  background: var(--danger) !important;
 }

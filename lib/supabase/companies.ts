@@ -49,6 +49,12 @@ export async function createSupabaseCompany(name: string) {
   }
 }
 
-export async function updateSupabaseCompanyStatus(id: string, status: "active" | "inactive") {
-  return secureOsMutation<SupabaseCompanyRow>("company.status", { id, status });
+export async function updateSupabaseCompanyStatus(id: string, status: "active" | "inactive", workspaceId?: string, monthlyRent?: number, invoiceRecipientId?: string | null) {
+  return secureOsMutation<SupabaseCompanyRow>("company.status", {
+    id,
+    status,
+    workspaceId: workspaceId || null,
+    monthlyRent: monthlyRent ?? null,
+    invoiceRecipientId: invoiceRecipientId || null,
+  });
 }

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTheme } from "@/components/theme-provider";
 import {
   Search,
   Bell,
@@ -13,8 +14,6 @@ import {
   Settings2,
   LogOut,
   X,
-  Sun,
-  Moon,
   Menu,
   Check,
   CalendarDays,
@@ -34,6 +33,7 @@ import { getDemoValue } from "@/lib/demo-session";
 import { fetchLeadsSnapshot } from "@/lib/lead-query";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
 import { queryKeys } from "@/lib/query-keys";
+import { LiquidToggle, NimbusToggleIcons } from "@/components/nimbus/liquid-toggle";
 
 // ==========================================
 // Types
@@ -188,7 +188,8 @@ export function OsHeader({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [branchSearch, setBranchSearch] = useState("");
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const { theme, toggleTheme } = useTheme();
+  const isDarkMode = theme === "dark";
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [searchIndex, setSearchIndex] = useState<SearchResultItem[]>(DEFAULT_SEARCH_MODULES);
   const leadsNotificationQuery = useQuery({
@@ -229,25 +230,6 @@ export function OsHeader({
       window.removeEventListener("focus", refreshSearchIndex);
     };
   }, []);
-
-  // Sync dark mode state with document
-  useEffect(() => {
-    const isDark = document.documentElement.classList.contains("dark") || 
-                   document.documentElement.getAttribute("data-theme") === "dark";
-    setIsDarkMode(isDark);
-  }, []);
-
-  const toggleTheme = () => {
-    const nextState = !isDarkMode;
-    setIsDarkMode(nextState);
-    if (nextState) {
-      document.documentElement.classList.add("dark");
-      document.documentElement.setAttribute("data-theme", "dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-      document.documentElement.setAttribute("data-theme", "light");
-    }
-  };
 
   // Keyboard shortcut: Ctrl + K (or Cmd + K) to search, Esc to close
   useEffect(() => {
@@ -406,16 +388,17 @@ export function OsHeader({
           </button>
 
           {/* Theme Light/Dark Mode Switcher */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="action-icon-btn theme-switch"
-            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            aria-label="Toggle theme"
-          >
-            <span className={isDarkMode ? "theme-option" : "theme-option is-active"}><Sun size={13} /><span>Light</span></span>
-            <span className={isDarkMode ? "theme-option is-active" : "theme-option"}><Moon size={13} /><span>Dark</span></span>
-          </button>
+          <LiquidToggle
+            checked={isDarkMode}
+            onCheckedChange={(nextTheme) => {
+              if (nextTheme !== isDarkMode) toggleTheme();
+            }}
+            tone={isDarkMode ? "dark" : "light"}
+            size={40}
+            icons={{ off: NimbusToggleIcons.sun, on: NimbusToggleIcons.moon }}
+            label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+            className="header-theme-liquid-toggle"
+          />
 
           {/* Branch Switcher Popover */}
           <div className="dropdown-anchor branch-switcher-wrapper">
@@ -641,40 +624,40 @@ export function OsHeader({
       <style jsx global>{`
         /* Design Variables */
         :root {
-          --hdr-bg: rgba(255, 255, 255, 0.85);
-          --hdr-card: #ffffff;
-          --hdr-soft: #E7F2EE;
-          --hdr-soft-hover: #D4E9E0;
-          --hdr-border: #e2e8f0;
-          --hdr-text: #151515;
-          --hdr-muted: #64748b;
-          --hdr-brand: #004C39;
-          --hdr-brand-soft: #E7F2EE;
-          --hdr-brand-text: #ffffff;
-          --hdr-danger: #ea6b78;
-          --hdr-danger-soft: rgba(234, 107, 120, 0.12);
-          --hdr-shadow: 0 16px 45px rgba(62, 54, 122, 0.08);
-          --hdr-popover-shadow: 0 24px 60px rgba(45, 42, 78, 0.18);
+          --hdr-bg: color-mix(in srgb, var(--surface) 92%, transparent);
+          --hdr-card: var(--surface);
+          --hdr-soft: var(--surface-soft-2);
+          --hdr-soft-hover: var(--surface-soft);
+          --hdr-border: var(--line);
+          --hdr-text: var(--ink);
+          --hdr-muted: var(--muted);
+          --hdr-brand: var(--brand);
+          --hdr-brand-soft: var(--brand-soft);
+          --hdr-brand-text: var(--on-brand);
+          --hdr-danger: var(--danger);
+          --hdr-danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+          --hdr-shadow: var(--shadow-md);
+          --hdr-popover-shadow: var(--shadow-lg);
           --hdr-radius: 18px;
           --hdr-transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .dark,
         html[data-theme="dark"] {
-          --hdr-bg: rgba(26, 26, 34, 0.88);
-          --hdr-card: #1f1f28;
-          --hdr-soft: #2a302e;
-          --hdr-soft-hover: #35453f;
-          --hdr-border: #2f2f3f;
-          --hdr-text: #f8fafc;
-          --hdr-muted: #94a3b8;
-          --hdr-brand: #72D3A9;
-          --hdr-brand-soft: #19382F;
-          --hdr-brand-text: #06251B;
-          --hdr-danger: #f07e89;
-          --hdr-danger-soft: rgba(240, 126, 137, 0.16);
-          --hdr-shadow: 0 16px 45px rgba(0, 0, 0, 0.4);
-          --hdr-popover-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+          --hdr-bg: color-mix(in srgb, var(--surface) 92%, transparent);
+          --hdr-card: var(--surface);
+          --hdr-soft: var(--surface-soft-2);
+          --hdr-soft-hover: var(--surface-soft);
+          --hdr-border: var(--line);
+          --hdr-text: var(--ink);
+          --hdr-muted: var(--muted);
+          --hdr-brand: var(--brand);
+          --hdr-brand-soft: var(--brand-soft);
+          --hdr-brand-text: var(--on-brand);
+          --hdr-danger: var(--danger);
+          --hdr-danger-soft: color-mix(in srgb, var(--danger) 16%, transparent);
+          --hdr-shadow: var(--shadow-md);
+          --hdr-popover-shadow: var(--shadow-lg);
         }
 
         /* Top Header Container */

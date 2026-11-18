@@ -1,6 +1,5 @@
-import { getDemoValue, saveDemoValue } from "@/lib/demo-session";
 import { isSupabaseLeadsEnabled } from "@/lib/supabase/client";
-import { createSupabaseVisit, mapSupabaseVisitToOsVisit } from "@/lib/supabase/visits";
+import { createSupabaseVisit, fetchSupabaseVisits, mapSupabaseVisitToOsVisit } from "@/lib/supabase/visits";
 
 function getVisitTimeMinutes(value: unknown) {
   const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})(?:\s*(am|pm))?$/i);
@@ -52,24 +51,18 @@ export async function scheduleLeadVisit({ lead, date, time, host }: { lead: any;
   if (!visit.leadId || !visit.date || !visit.time || !visit.host) throw new Error("Visit details are incomplete.");
   if (isPastVisitTime(visit)) throw new Error("Choose a current or future time.");
 
-  const cachedVisits = getDemoValue("visits");
-  const visits = Array.isArray(cachedVisits) ? cachedVisits : [];
+  if (!isSupabaseLeadsEnabled()) throw new Error("Supabase is required for visit scheduling.");
+  if (!isUuid(visit.leadId)) throw new Error("The selected lead is not ready for visit scheduling.");
+  const visits = (await fetchSupabaseVisits()).map(mapSupabaseVisitToOsVisit);
   if (visits.some((existingVisit) => sameScheduledSlot(existingVisit, visit))) {
     throw new Error(`${visit.host} is already booked at that time.`);
   }
 
-  let savedVisit: any = visit;
-  if (isSupabaseLeadsEnabled()) {
-    if (!isUuid(visit.leadId)) throw new Error("The selected lead is not ready for visit scheduling.");
-    try {
-      const row = await createSupabaseVisit(visit);
-      savedVisit = mapSupabaseVisitToOsVisit(row);
-    } catch (error: any) {
-      if (error?.code === "23505") throw new Error(`${visit.host} is already booked at that time.`);
-      throw error;
-    }
+  try {
+    const row = await createSupabaseVisit(visit);
+    return mapSupabaseVisitToOsVisit(row);
+  } catch (error: any) {
+    if (error?.code === "23505") throw new Error(`${visit.host} is already booked at that time.`);
+    throw error;
   }
-
-  saveDemoValue("visits", [savedVisit, ...visits]);
-  return savedVisit;
 }

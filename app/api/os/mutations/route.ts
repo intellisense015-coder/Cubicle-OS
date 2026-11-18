@@ -22,6 +22,7 @@ const actionValues = [
   "lead.journey.update",
   "member.create",
   "member.update",
+  "member.lifecycle",
   "visit.create",
   "visit.status",
   "maintenance.category.create",
@@ -55,9 +56,9 @@ const mutationRequestSchema = z.object({
 const companyColumns = "id,name,status,created_at,updated_at";
 const leadColumns = "id,person_name,contact_number,email,team_size,shift,visit_date,visit_time,message,created_at,visited,workspace_option,os_stage";
 const memberColumns = [
-  "id", "lead_id", "member_name", "phone", "email", "cnic", "gender", "vehicle_license_plate", "company_name", "team", "assigned_space",
-  "monthly_rent", "security_deposit", "billing_start_date", "due_day", "joined_date", "status",
-  "membership_status", "notice_start_date", "expected_leaving_date", "notice_notes", "membership_periods",
+  "id", "lead_id", "member_name", "phone", "email", "cnic", "gender", "vehicle_make", "vehicle_model", "vehicle_variant", "vehicle_color", "vehicle_license_plate", "company_name", "team", "assigned_space",
+  "monthly_rent", "security_deposit", "wht_enabled", "wht_rate", "sales_tax_enabled", "sales_tax_rate", "billing_start_date", "due_day", "joined_date", "status",
+  "membership_status", "notice_start_date", "expected_leaving_date", "notice_reason", "notice_notes", "deactivated_at", "deactivation_reason", "deactivation_description", "membership_periods",
   "contact_history", "created_at", "updated_at",
 ].join(",");
 const visitColumns = [
@@ -270,6 +271,12 @@ function lastDayOfMonth(value: string) {
   return year && month ? `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}` : value;
 }
 
+function validDateKey(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 function missingSalesTaxColumn(error: any) {
   const message = String(error?.message || error || "").toLowerCase();
   return message.includes("sales_tax_enabled") || message.includes("sales_tax_rate") || message.includes("sales_tax_amount");
@@ -343,6 +350,13 @@ function proposalPayload(input: any, actorUserId: string, proposalNumber: string
 
 function invoiceCreatePayload(input: any, actorUserId: string) {
   const issueDate = dateOrDefault(input.issueDate || input.billingStartDate);
+  const periodStartOverride = dateValue(input.periodStart);
+  const periodEndOverride = dateValue(input.periodEnd);
+  if (Boolean(periodStartOverride) !== Boolean(periodEndOverride)) throw new Error("Invoice period requires both a start and end date.");
+  if ((periodStartOverride && !validDateKey(periodStartOverride)) || (periodEndOverride && !validDateKey(periodEndOverride))) throw new Error("Invoice period dates are invalid.");
+  if (periodStartOverride && periodEndOverride && periodEndOverride < periodStartOverride) throw new Error("Invoice period end cannot be before its start.");
+  const periodStart = periodStartOverride || `${issueDate.slice(0, 7)}-01`;
+  const periodEnd = periodEndOverride || lastDayOfMonth(periodStart);
   const charges = Array.isArray(input.charges) && input.charges.length ? input.charges : [{ description: input.itemDescription || "Workspace monthly rent", amount: input.subtotal || input.amount }];
   const subtotal = parseAmount(input.subtotal || input.amount);
   const salesTaxEnabled = Boolean(input.salesTaxEnabled);
@@ -363,8 +377,8 @@ function invoiceCreatePayload(input: any, actorUserId: string) {
       member_id: uuid(input.memberId),
       workspace_id: workspaceIdValue(input.workspaceId),
       account_name: text(input.account, 200, true),
-      period_start: `${issueDate.slice(0, 7)}-01`,
-      period_end: lastDayOfMonth(`${issueDate.slice(0, 7)}-01`),
+      period_start: periodStart,
+      period_end: periodEnd,
       issue_date: issueDate,
       due_date: dateValue(input.dueDate, true),
       billing_start_date: dateValue(input.billingStartDate),
@@ -440,9 +454,14 @@ function safeDatabaseMessage(error: any) {
   const message = String(error?.message || "").toLowerCase();
   if (error instanceof MutationConflictError) return error.message;
   if (code === "23514" && message.includes("active maintenance ticket")) return "This category cannot be deactivated while it has an active maintenance ticket.";
+  if (code === "23514" && message.includes("members_active_requires_workspace_and_rent")) return "Active members must have an assigned workspace and monthly rent greater than PKR 0.";
   if (code === "23505" && message.includes("members_email_unique_idx")) return "A member with this email already exists.";
   if (code === "23505") return "That record already exists.";
+  if (code === "22023" && /(notice|deactivation|recipient|workspace|monthly rent|rent|inactive|active)/.test(message)) return String(error?.message || "The lifecycle change is invalid.");
+  if (code === "40901") return "That workspace is no longer available.";
+  if (code === "PGRST202" && (message.includes("member_lifecycle") || message.includes("deactivate_company_members") || message.includes("reactivate_company_members"))) return "The company/member lifecycle migration has not been applied yet. Run `supabase db push`, then reload the app.";
   if (code === "PGRST202") return "The opportunity-loss feature is not configured yet.";
+  if (code === "PGRST204" && /(membership_status|notice_start_date|expected_leaving_date|notice_reason|notice_notes|deactivated_at|deactivation_reason|deactivation_description)/.test(message)) return "The member lifecycle columns are missing from Supabase. Run `supabase db push`, then reload the app.";
   if (code === "PGRST205" && message.includes("os_lead_journey")) return "The lead journey feature is not configured yet.";
   if (code === "22023" && message.includes("invalid lead stage")) return "The Supabase lead-stage migration has not been applied yet.";
   if (code === "42501") return "You are not allowed to perform this action.";
@@ -463,6 +482,10 @@ function sameMemberCreate(existing: any, input: Record<string, any>) {
     && sameText(existing.phone, input.phone)
     && sameText(existing.cnic, input.cnic)
     && sameText(existing.gender, input.gender)
+    && sameText(existing.vehicle_make, input.vehicle_make)
+    && sameText(existing.vehicle_model, input.vehicle_model)
+    && sameText(existing.vehicle_variant, input.vehicle_variant)
+    && sameText(existing.vehicle_color, input.vehicle_color)
     && sameText(existing.vehicle_license_plate, input.vehicle_license_plate)
     && sameText(existing.company_name, input.company_name)
     && sameText(existing.team, input.team)
@@ -491,7 +514,20 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
   if (action === "company.status") {
     const id = uuid(payload.id);
     const status = statusValue(payload.status, ["active", "inactive"]);
-    const { data, error } = await client.from("companies").update({ status }).eq("id", id).select(companyColumns).single();
+    if (status === "inactive") {
+      const { data, error } = await client.rpc("deactivate_company_members", { p_company_id: id });
+      if (error) throw error;
+      return data;
+    }
+    const workspaceId = optionalText(payload.workspaceId, 160);
+    const monthlyRent = numeric(payload.monthlyRent ?? 0);
+    const invoiceRecipientId = uuid(payload.invoiceRecipientId, false);
+    const { data, error } = await client.rpc("reactivate_company_members", {
+      p_company_id: id,
+      p_workspace_id: workspaceId,
+      p_monthly_rent: monthlyRent,
+      p_invoice_recipient_id: invoiceRecipientId,
+    });
     if (error) throw error;
     return data;
   }
@@ -610,12 +646,20 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       email: emailValue(input.email),
       cnic: optionalText(input.cnic, 40),
       gender: optionalText(input.gender, 40),
+      vehicle_make: optionalText(input.vehicle_make, 80),
+      vehicle_model: optionalText(input.vehicle_model, 80),
+      vehicle_variant: optionalText(input.vehicle_variant, 80),
+      vehicle_color: optionalText(input.vehicle_color, 80),
       vehicle_license_plate: optionalText(input.vehicle_license_plate, 40),
       company_name: optionalText(input.company_name, 160),
       team: optionalText(input.team, 120),
       assigned_space: optionalText(input.assigned_space, 160),
       monthly_rent: numeric(input.monthly_rent),
       security_deposit: numeric(input.security_deposit),
+      wht_enabled: input.wht_enabled === true,
+      wht_rate: Math.min(100, Math.max(0, numeric(input.wht_rate))),
+      sales_tax_enabled: input.sales_tax_enabled === true,
+      sales_tax_rate: Math.min(99.9999, Math.max(0, numeric(input.sales_tax_rate))),
       billing_start_date: dateValue(input.billing_start_date, true),
       due_day: Math.min(31, Math.max(1, Math.floor(numeric(input.due_day || 5, 31, true)))),
       joined_date: dateValue(input.joined_date, true),
@@ -623,11 +667,58 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       membership_status: statusValue(input.membership_status || "active", ["active", "notice_period"]),
       notice_start_date: dateValue(input.notice_start_date),
       expected_leaving_date: dateValue(input.expected_leaving_date),
+      notice_reason: optionalText(input.notice_reason, 160),
       notice_notes: optionalText(input.notice_notes, 2000),
+      deactivated_at: input.deactivated_at ? new Date(String(input.deactivated_at)).toISOString() : null,
+      deactivation_reason: optionalText(input.deactivation_reason, 160),
+      deactivation_description: optionalText(input.deactivation_description, 2000),
       membership_periods: optionalArray(input.membership_periods, 100),
       contact_history: optionalObject(input.contact_history),
     };
     if (action.endsWith("create")) {
+      memberInput.status = "active";
+      memberInput.membership_status = "active";
+      memberInput.notice_start_date = null;
+      memberInput.expected_leaving_date = null;
+      memberInput.notice_reason = null;
+      memberInput.notice_notes = null;
+      memberInput.deactivated_at = null;
+      memberInput.deactivation_reason = null;
+      memberInput.deactivation_description = null;
+      if (!memberInput.assigned_space || String(memberInput.assigned_space).trim().toLowerCase() === "unassigned") throw Object.assign(new Error("Active members must have an assigned workspace."), { code: "22023" });
+      if (Number(memberInput.monthly_rent) <= 0) throw Object.assign(new Error("Active members must have monthly rent greater than PKR 0."), { code: "22023" });
+      if (memberInput.lead_id) {
+        const { data: existingLeadMembers, error: existingLeadError } = await client
+          .from("members")
+          .select("id")
+          .eq("lead_id", memberInput.lead_id)
+          .limit(1);
+        if (existingLeadError) throw existingLeadError;
+        if (existingLeadMembers?.length) throw new MutationConflictError("This lead has already been converted into a member.");
+
+        // Read the source quotation with the server client. Conversion is
+        // authorized by members.write; it should not additionally require the
+        // caller to have quotations.read just to carry tax settings forward.
+        const quotationClient = serviceClient();
+        const { data: leadQuotations, error: quotationError } = await quotationClient
+          .from("quotations")
+          .select("status,wht_enabled,wht_rate,sales_tax_enabled,sales_tax_rate,updated_at,created_at")
+          .eq("lead_id", memberInput.lead_id)
+          .order("updated_at", { ascending: false });
+        if (quotationError) throw quotationError;
+        const quotation = [...(leadQuotations || [])].sort((left, right) => {
+          const leftAccepted = String(left.status || "").toLowerCase() === "accepted" ? 1 : 0;
+          const rightAccepted = String(right.status || "").toLowerCase() === "accepted" ? 1 : 0;
+          if (leftAccepted !== rightAccepted) return rightAccepted - leftAccepted;
+          return new Date(String(right.updated_at || right.created_at || "")).getTime() - new Date(String(left.updated_at || left.created_at || "")).getTime();
+        })[0];
+        if (quotation) {
+          memberInput.wht_enabled = quotation.wht_enabled === true;
+          memberInput.wht_rate = Math.min(100, Math.max(0, numeric(quotation.wht_rate)));
+          memberInput.sales_tax_enabled = quotation.sales_tax_enabled === true;
+          memberInput.sales_tax_rate = Math.min(99.9999, Math.max(0, numeric(quotation.sales_tax_rate)));
+        }
+      }
       const { data, error } = await client.from("members").insert({ ...memberInput, created_by: actorUserId, updated_by: actorUserId }).select(memberColumns).single();
       if (error) {
         // A double-click, network retry, or concurrent identical request can
@@ -650,9 +741,55 @@ async function runMutation(action: string, rawPayload: unknown, client: Supabase
       }
       return data;
     }
+    const { data: existingLifecycle, error: existingLifecycleError } = await client.from("members").select("status,membership_status,notice_start_date,expected_leaving_date,notice_reason,notice_notes,deactivated_at,deactivation_reason,deactivation_description,membership_periods,contact_history").eq("id", id).single();
+    if (existingLifecycleError) throw existingLifecycleError;
+    Object.assign(memberInput, {
+      status: existingLifecycle.status,
+      membership_status: existingLifecycle.membership_status,
+      notice_start_date: existingLifecycle.notice_start_date,
+      expected_leaving_date: existingLifecycle.expected_leaving_date,
+      notice_reason: existingLifecycle.notice_reason,
+      notice_notes: existingLifecycle.notice_notes,
+      deactivated_at: existingLifecycle.deactivated_at,
+      deactivation_reason: existingLifecycle.deactivation_reason,
+      deactivation_description: existingLifecycle.deactivation_description,
+      membership_periods: existingLifecycle.membership_periods,
+      contact_history: existingLifecycle.contact_history,
+    });
+    if (String(memberInput.status).toLowerCase() === "active" || String(memberInput.status).toLowerCase() === "activated") {
+      if (!memberInput.assigned_space || String(memberInput.assigned_space).trim().toLowerCase() === "unassigned") throw Object.assign(new Error("Active members must have an assigned workspace."), { code: "22023" });
+      if (Number(memberInput.monthly_rent) <= 0) throw Object.assign(new Error("Active members must have monthly rent greater than PKR 0."), { code: "22023" });
+    }
     const { data, error } = await client.from("members").update({ ...memberInput, updated_by: actorUserId }).eq("id", id).select(memberColumns).single();
     if (error) throw error;
     return data;
+  }
+  if (action === "member.lifecycle") {
+    const memberId = uuid(payload.memberId);
+    const lifecycleAction = statusValue(payload.action, ["start_notice", "cancel_notice", "deactivate", "reactivate"]);
+    const lifecycleRpc = lifecycleAction === "reactivate" ? "reactivate_member_lifecycle" : "transition_member_lifecycle";
+    const lifecycleArgs = lifecycleAction === "reactivate"
+      ? {
+        p_member_id: memberId,
+        p_workspace_id: optionalText(payload.workspaceId, 160),
+      }
+      : {
+        p_member_id: memberId,
+        p_action: lifecycleAction,
+        p_expected_leaving_date: dateValue(payload.expectedLeavingDate),
+        p_notice_reason: optionalText(payload.noticeReason, 160),
+        p_notice_details: optionalText(payload.noticeDetails, 2000),
+        p_deactivation_reason: optionalText(payload.deactivationReason, 160),
+        p_deactivation_description: optionalText(payload.deactivationDescription, 2000),
+        p_replacement_invoice_recipient_id: uuid(payload.replacementInvoiceRecipientId, false),
+        p_workspace_id: optionalText(payload.workspaceId, 160),
+        p_system: false,
+      };
+    const result = await client.rpc(lifecycleRpc, lifecycleArgs);
+    if (result.error) throw result.error;
+    const row = Array.isArray(result.data) ? result.data[0] : result.data;
+    if (!row) throw new Error("The member lifecycle change was not saved.");
+    return row;
   }
   if (action === "visit.create") {
     const { data, error } = await client.from("visits").insert({

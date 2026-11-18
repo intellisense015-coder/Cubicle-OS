@@ -7,18 +7,28 @@ import { AuthShell } from "@/components/ui/auth-shell";
 import { Button } from "@/components/ui/button";
 import { InputOTP } from "@/components/ui/input-otp";
 import { clearDeviceMaterial, DeviceCryptoError, signDeviceChallenge, unlockDeviceMaterial } from "@/lib/device-crypto";
+import { clearDemoSession } from "@/lib/demo-session";
+import { BROWSER_SESSION_HANDOFF_KEY, getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 function safeNextPath(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
   return value;
 }
 
+function displayName(name: unknown, email: unknown) {
+  const configuredName = String(name || "").trim();
+  const emailName = String(email || "").split("@")[0].replace(/[._-]+/g, " ").trim();
+  return configuredName || emailName;
+}
+
 export default function PinLockPage() {
   const router = useRouter();
   const [pin, setPin] = useState("");
+  const [userName, setUserName] = useState("");
   const [error, setError] = useState("");
   const [isChecking, setIsChecking] = useState(true);
   const [isUnlocking, setIsUnlocking] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [nextPath, setNextPath] = useState("/dashboard");
 
   useEffect(() => {
@@ -34,6 +44,7 @@ export default function PinLockPage() {
         if (response.status === 401) return router.replace("/login");
         if (response.status === 403 && payload?.mfaRequired) return router.replace(`/mfa?next=${encodeURIComponent(`/pin-lock?next=${encodeURIComponent(requestedPath)}`)}`);
         if (!response.ok) throw new Error(payload?.error || "Unable to verify this trusted browser.");
+        setUserName(displayName(payload?.user?.name, payload?.user?.email));
         if (payload?.device?.status === "reauth_required") {
           await fetch("/api/auth/device/revoke", { method: "POST", credentials: "include" }).catch(() => undefined);
           return router.replace("/login");
@@ -50,6 +61,24 @@ export default function PinLockPage() {
     void checkState();
     return () => { cancelled = true; };
   }, [router]);
+
+  const signOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await fetch("/api/auth/device/revoke", { method: "POST", credentials: "include" }).catch(() => undefined);
+      await getSupabaseBrowserClient().auth.signOut();
+    } finally {
+      try {
+        window.sessionStorage.removeItem(BROWSER_SESSION_HANDOFF_KEY);
+      } catch {
+        // Ignore storage cleanup failures during sign-out.
+      }
+      await clearDeviceMaterial().catch(() => undefined);
+      clearDemoSession();
+      router.replace("/splash");
+    }
+  };
 
   const unlock = async () => {
     if (pin.length !== 4 || isUnlocking) {
@@ -127,12 +156,13 @@ export default function PinLockPage() {
 
   return (
     <AuthShell
-      title="Welcome back."
+      title={userName ? `Welcome back, ${userName}.` : "Welcome back."}
       description="Enter your 4-digit PIN to unlock this trusted browser."
       asideTitle="Quick access, securely held."
       asideCopy="The account verifies a protected PIN verifier, then the OS verifies this browser's encrypted device key."
       step={3}
       variant="login"
+      showGlassPattern
     >
       <div className="auth-form">
         {isChecking ? <div className="auth-form" aria-live="polite"><LoaderCircle size={24} className="sign-in-spinner" /><p className="muted-copy">Checking trusted-device status...</p></div> : <>
@@ -141,6 +171,9 @@ export default function PinLockPage() {
           {error ? <p className="field-error">{error}</p> : null}
           <Button type="button" size="lg" className="w-full" onClick={() => void unlock()} loading={isUnlocking}>{isUnlocking ? "Unlocking..." : "Unlock workspace"}</Button>
         </>}
+        <Button type="button" variant="danger" size="lg" className="w-full" onClick={() => void signOut()} loading={isSigningOut} disabled={isChecking || isUnlocking}>
+          {isSigningOut ? "Signing out..." : "Sign out"}
+        </Button>
       </div>
     </AuthShell>
   );

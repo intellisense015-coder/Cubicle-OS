@@ -278,6 +278,7 @@ export default function MfaPage() {
       asideCopy="Use your authenticator app to generate a 6-digit code and securely verify your identity."
       step={2}
       variant="login"
+      showGlassPattern
     >
       {mode === "loading" ? (
         <div className="auth-form" aria-live="polite">

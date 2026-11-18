@@ -25,7 +25,7 @@ export const notificationRows = [
 export const memberLedger = {
   "Sana Ahmed": [
     { id: "ledger-1", date: "2026-10-01", description: "October workspace rent", type: "Charge", amount: "PKR 48,000", status: "Open" },
-    { id: "ledger-2", date: "2026-09-05", description: "September rent payment", type: "Payment", amount: "PKR 48,000", status: "Settled" },
+    { id: "ledger-2", date: "2026-09-05", description: "September rent payment", type: "Payment", amount: "PKR 48,000", status: "Paid" },
     { id: "ledger-3", date: "2026-01-12", description: "Security deposit", type: "Deposit", amount: "PKR 48,000", status: "Held" }
   ],
   "Bilal Raza": [
@@ -34,7 +34,7 @@ export const memberLedger = {
   ],
   "Hira Mahmood": [
     { id: "ledger-6", date: "2026-10-01", description: "October workspace rent", type: "Charge", amount: "PKR 42,000", status: "Open" },
-    { id: "ledger-7", date: "2026-09-05", description: "September rent payment", type: "Payment", amount: "PKR 42,000", status: "Settled" }
+    { id: "ledger-7", date: "2026-09-05", description: "September rent payment", type: "Payment", amount: "PKR 42,000", status: "Paid" }
   ],
   "Usman Tariq": [
     { id: "ledger-8", date: "2026-10-01", description: "October workspace rent", type: "Charge", amount: "PKR 48,000", status: "Open" },
